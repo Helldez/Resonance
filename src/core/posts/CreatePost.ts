@@ -63,21 +63,28 @@ export async function createPost(
 
   const digest = await canonicalDigest(body);
   const signature = await deps.identity.sign(digest);
-  const feedIndex = await deps.mailbox.append({
+
+  // The mailbox assigns the authoritative feed index; we fold it back into
+  // the final record so consumers (UI, network) see a consistent shape.
+  const provisional: SignedRecord = {
     author: deps.self,
-    feedIndex: -1, // assigned by mailbox; we fill it back below
+    feedIndex: -1,
     body,
     digest,
     signature,
-  });
+  };
+  const feedIndex = await deps.mailbox.append(provisional);
 
   const record: SignedRecord = signRecord({
-    author: deps.self,
+    ...provisional,
     feedIndex,
-    body,
-    digest,
-    signature,
   });
-  await deps.network.publish(record);
+  try {
+    await deps.network.publish(record);
+  } catch {
+    // Publishing is best-effort at MVP; the record is durable in the
+    // mailbox and will be re-broadcast on the next sync cycle. Surfacing
+    // this as a hard error would break the single-device flow before M3.
+  }
   return { record };
 }

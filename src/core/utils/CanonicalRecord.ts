@@ -1,13 +1,16 @@
+import { sha256 } from '@noble/hashes/sha256';
 import type { RecordBody, SignedRecord } from '@core/domain/types';
 
 /**
- * Canonical serialisation of a record body, used as the input to the
- * signing hash. Stable key order, no whitespace, embeddings encoded as a
- * base64 of the underlying little-endian byte buffer.
+ * Canonical serialisation + SHA-256 digest of a record body, used as the
+ * input to the signing key. Stable key order, no whitespace, embeddings
+ * encoded as base64 of the little-endian byte buffer.
  *
- * NB: the actual SHA-256 lives in the platform adapter (no crypto in the
- * core). This file is canonical encoding only.
+ * @noble/hashes/sha256 is a pure-JS implementation that runs identically
+ * in Hermes (RN), Bare and Node — so this code is safe to keep in the
+ * platform-agnostic core.
  */
+
 export function canonicalBytes(body: RecordBody): Uint8Array {
   if (body.kind === 'post') {
     const embeddingB64 = base64FromFloat32(body.embedding);
@@ -29,15 +32,8 @@ export function canonicalBytes(body: RecordBody): Uint8Array {
   return utf8(JSON.stringify(obj));
 }
 
-/**
- * Stub for the SHA-256 digest. The platform adapter swaps this out by
- * importing its own `sha256` (bare-crypto on mobile, Web Crypto in tests).
- * Until then, callers receive a clear error.
- */
-export async function canonicalDigest(_body: RecordBody): Promise<Uint8Array> {
-  throw new Error(
-    'canonicalDigest: not wired. Inject sha256 via the platform container.',
-  );
+export async function canonicalDigest(body: RecordBody): Promise<Uint8Array> {
+  return sha256(canonicalBytes(body));
 }
 
 /** Identity helper: useful when we mutate `feedIndex` after a mailbox append. */
@@ -81,7 +77,5 @@ function base64FromFloat32(v: Float32Array): string {
   for (let i = 0; i < bytes.length; i++) {
     bin += String.fromCharCode(bytes[i]);
   }
-  // `btoa` is available in all our runtimes (RN, Bare, Node 22+).
-  // eslint-disable-next-line no-undef
   return btoa(bin);
 }

@@ -1,11 +1,49 @@
+import { useCallback, useEffect, useState } from 'react';
 import { View, FlatList } from 'react-native';
 import { Text, Button, Card, useTheme } from 'react-native-paper';
-import { Link } from 'expo-router';
-import { useInboxStore } from '@domain/InboxStore';
+import { Link, useFocusEffect } from 'expo-router';
+import { useRequireContainer } from '@ui/AppContainerContext';
+
+interface InboxRow {
+  readonly address: string;
+  readonly text: string;
+  readonly similarity: number | null;
+  readonly createdAt: number;
+}
 
 export default function InboxScreen() {
-  const items = useInboxStore((s) => s.items);
+  const container = useRequireContainer();
   const theme = useTheme();
+  const [rows, setRows] = useState<InboxRow[]>([]);
+
+  const load = useCallback(async (): Promise<void> => {
+    const data = await container.database.query<{
+      address: string;
+      text: string;
+      similarity: number | null;
+      created_at: number;
+    }>(
+      'SELECT address, text, similarity, created_at FROM posts ORDER BY created_at DESC LIMIT 100',
+    );
+    setRows(
+      data.map((d) => ({
+        address: d.address,
+        text: d.text,
+        similarity: d.similarity,
+        createdAt: d.created_at,
+      })),
+    );
+  }, [container]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load]),
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background, padding: 12 }}>
@@ -18,21 +56,30 @@ export default function InboxScreen() {
         </Link>
       </View>
 
-      {items.length === 0 ? (
+      {rows.length === 0 ? (
         <Text style={{ opacity: 0.6, marginTop: 24, textAlign: 'center' }}>
-          No incoming posts match your interest profile yet.
+          No posts yet. Tap "New post" to write your first one — it will be
+          embedded on-device and (in M3) broadcast to peers in the same
+          semantic bucket.
         </Text>
       ) : (
         <FlatList
-          data={items}
+          data={rows}
           keyExtractor={(it) => it.address}
           renderItem={({ item }) => (
-            <Link href={{ pathname: '/thread/[id]', params: { id: item.address } }} asChild>
+            <Link
+              href={{ pathname: '/thread/[id]', params: { id: item.address } }}
+              asChild
+            >
               <Card style={{ marginBottom: 8 }}>
                 <Card.Content>
-                  <Text numberOfLines={3}>{item.post.text}</Text>
+                  <Text numberOfLines={3}>{item.text}</Text>
                   <Text style={{ marginTop: 4, opacity: 0.6, fontSize: 12 }}>
-                    similarity {item.similarity.toFixed(2)}
+                    {item.similarity === null
+                      ? 'your post'
+                      : `similarity ${item.similarity.toFixed(2)}`}
+                    {' · '}
+                    {new Date(item.createdAt).toLocaleString()}
                   </Text>
                 </Card.Content>
               </Card>

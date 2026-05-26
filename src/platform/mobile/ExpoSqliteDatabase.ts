@@ -27,13 +27,13 @@ export class ExpoSqliteDatabase implements IDatabase {
     params: ReadonlyArray<unknown> = [],
   ): Promise<T[]> {
     const db = this.must();
-    const rows = await db.getAllAsync<T>(sql, params as unknown[]);
+    const rows = await db.getAllAsync<T>(sql, params as SQLite.SQLiteBindValue[]);
     return rows;
   }
 
   async exec(sql: string, params: ReadonlyArray<unknown> = []): Promise<void> {
     const db = this.must();
-    await db.runAsync(sql, params as unknown[]);
+    await db.runAsync(sql, params as SQLite.SQLiteBindValue[]);
   }
 
   async transaction(fn: () => Promise<void>): Promise<void> {

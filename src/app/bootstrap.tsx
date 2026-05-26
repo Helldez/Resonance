@@ -37,11 +37,23 @@ export default function BootstrapScreen() {
 }
 
 function labelFor(stage: string): string {
-  if (stage === 'identity') return 'Creating your identity…';
-  if (stage === 'embedding-model') return 'Downloading the embedding model…';
-  if (stage === 'llm-model') return 'Downloading the language model…';
-  if (stage === 'network') return 'Connecting to the network…';
-  if (stage === 'ready') return 'Ready.';
-  if (stage === 'error') return 'Something went wrong.';
+  if (stage === 'identity') {
+    return 'Creating your identity…';
+  }
+  if (stage === 'embedding-model') {
+    return 'Loading the embedding model…';
+  }
+  if (stage === 'llm-model') {
+    return 'Loading the language model…';
+  }
+  if (stage === 'network') {
+    return 'Connecting to the network…';
+  }
+  if (stage === 'ready') {
+    return 'Ready.';
+  }
+  if (stage === 'error') {
+    return 'Something went wrong.';
+  }
   return 'Starting…';
 }

@@ -1,3 +1,12 @@
+// Buffer polyfill — @qvac/sdk pulls in bare-rpc → bare-stream which calls
+// Buffer.from(...) unconditionally. Hermes has TextEncoder but NOT Buffer,
+// so SDK calls crash without this polyfill. Must run before any @qvac/sdk
+// import is evaluated downstream.
+import { Buffer } from 'buffer';
+if (typeof (globalThis as { Buffer?: unknown }).Buffer === 'undefined') {
+  (globalThis as { Buffer?: unknown }).Buffer = Buffer;
+}
+
 import type { AppContainer } from '@core/bootstrap/AppContainer';
 import { AsyncStorageKv } from './AsyncStorageKv';
 import { BareWorkletMailbox } from './BareWorkletMailbox';
@@ -5,19 +14,34 @@ import { BareWorkletNetwork } from './BareWorkletNetwork';
 import { ConsoleLogger } from './ConsoleLogger';
 import { Ed25519Identity } from './Ed25519Identity';
 import { ExpoFileSystem } from './ExpoFileSystem';
-import { ExpoModelRegistry } from './ExpoModelRegistry';
 import { ExpoSqliteDatabase } from './ExpoSqliteDatabase';
 import { QvacEmbeddingService } from './QvacEmbeddingService';
 import { QvacLlmService } from './QvacLlmService';
 import { SystemClock } from './SystemClock';
 import { bootstrapIdentity } from '@core/identity/IdentityManager';
+import { PostRepository } from '@data/PostRepository';
+import { ResponseRepository } from '@data/ResponseRepository';
+import { PeerRepository } from '@data/PeerRepository';
+
+export interface MobileContainer extends AppContainer {
+  readonly posts: PostRepository;
+  readonly responses: ResponseRepository;
+  readonly peers: PeerRepository;
+  readonly embedderConcrete: QvacEmbeddingService;
+  readonly llmConcrete: QvacLlmService;
+}
+
+let cached: MobileContainer | null = null;
 
 /**
- * The single place where concrete adapters are instantiated and wired into
- * an `AppContainer`. Anything else that imports an Expo/RN/Bare module
- * outside this file is a layering violation.
+ * Single place where concrete adapters are instantiated and wired into a
+ * container. Idempotent — `bootstrapMobile()` can be called multiple times
+ * and only does the work once.
  */
-export async function bootstrapMobile(): Promise<AppContainer> {
+export async function bootstrapMobile(): Promise<MobileContainer> {
+  if (cached !== null) {
+    return cached;
+  }
   const logger = new ConsoleLogger();
   const clock = new SystemClock();
   const fileSystem = new ExpoFileSystem();
@@ -25,19 +49,24 @@ export async function bootstrapMobile(): Promise<AppContainer> {
   const database = new ExpoSqliteDatabase();
   await database.initialize();
 
+  const posts = new PostRepository(database);
+  await posts.createSchema();
+  const responses = new ResponseRepository(database);
+  await responses.createSchema();
+  const peers = new PeerRepository(database);
+  await peers.createSchema();
+
   const identity = new Ed25519Identity(keyValue);
   const { self } = await bootstrapIdentity({ identity });
-
-  // Checksum verifier is injected so the adapter doesn't import crypto.
-  // TODO M1: replace stub with real SHA-256 over file contents.
-  const modelRegistry = new ExpoModelRegistry(fileSystem, async () => false);
 
   const embedder = new QvacEmbeddingService();
   const llm = new QvacLlmService();
   const network = new BareWorkletNetwork();
+  await network.initialize();
   const mailbox = new BareWorkletMailbox();
+  await mailbox.initialize();
 
-  return {
+  cached = {
     self,
     clock,
     logger,
@@ -45,10 +74,22 @@ export async function bootstrapMobile(): Promise<AppContainer> {
     keyValue,
     database,
     identity,
-    modelRegistry,
     embedder,
     llm,
     network,
     mailbox,
+    posts,
+    responses,
+    peers,
+    embedderConcrete: embedder,
+    llmConcrete: llm,
   };
+  return cached;
+}
+
+export function getContainer(): MobileContainer {
+  if (cached === null) {
+    throw new Error('bootstrapMobile has not finished yet');
+  }
+  return cached;
 }

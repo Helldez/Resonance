@@ -1,28 +1,42 @@
-import * as ExpoFs from 'expo-file-system';
+import { Directory, File, Paths } from 'expo-file-system';
 import type { IFileSystem } from '@core/ports/IFileSystem';
 
+/**
+ * expo-file-system v19 uses an object-oriented API (Paths/File/Directory)
+ * rather than free functions. We expose only the small surface the core
+ * needs.
+ */
 export class ExpoFileSystem implements IFileSystem {
-  readonly appDataDir: string = ExpoFs.documentDirectory ?? '';
+  readonly appDataDir: string = Paths.document.uri;
 
   async exists(path: string): Promise<boolean> {
-    const info = await ExpoFs.getInfoAsync(path);
-    return info.exists;
+    return new File(path).exists;
   }
 
   async makeDir(path: string): Promise<void> {
-    await ExpoFs.makeDirectoryAsync(path, { intermediates: true });
+    const dir = new Directory(path);
+    if (!dir.exists) {
+      dir.create({ intermediates: true });
+    }
   }
 
   async remove(path: string): Promise<void> {
-    await ExpoFs.deleteAsync(path, { idempotent: true });
+    const file = new File(path);
+    if (file.exists) {
+      file.delete();
+      return;
+    }
+    const dir = new Directory(path);
+    if (dir.exists) {
+      dir.delete();
+    }
   }
 
   async size(path: string): Promise<number> {
-    const info = await ExpoFs.getInfoAsync(path, { size: true });
-    if (!info.exists) {
+    const file = new File(path);
+    if (!file.exists) {
       return 0;
     }
-    const size = (info as { size?: number }).size;
-    return size ?? 0;
+    return file.size ?? 0;
   }
 }

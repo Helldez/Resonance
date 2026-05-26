@@ -2,8 +2,12 @@ import { useState } from 'react';
 import { View } from 'react-native';
 import { TextInput, Button, useTheme, HelperText } from 'react-native-paper';
 import { useRouter } from 'expo-router';
+import { useRequireContainer } from '@ui/AppContainerContext';
+import { createPost } from '@core/posts/CreatePost';
+import { addressOf } from '@core/utils/AddressOf';
 
 export default function ComposeScreen() {
+  const container = useRequireContainer();
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -14,8 +18,30 @@ export default function ComposeScreen() {
     setSubmitting(true);
     setError(null);
     try {
-      // TODO M2: invoke createPost use case via app container.
-      throw new Error('Compose flow not wired yet (M2).');
+      const { record } = await createPost(
+        {
+          embedder: container.embedder,
+          mailbox: container.mailbox,
+          network: container.network,
+          identity: container.identity,
+          clock: container.clock,
+          self: container.self,
+        },
+        { text },
+      );
+      if (record.body.kind === 'post') {
+        await container.posts.upsert(
+          addressOf(record.author, record.feedIndex),
+          record.author,
+          record.feedIndex,
+          record.body,
+          null,
+        );
+      }
+      router.replace({
+        pathname: '/thread/[id]',
+        params: { id: addressOf(record.author, record.feedIndex) },
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
