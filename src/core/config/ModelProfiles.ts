@@ -17,19 +17,19 @@ export interface ModelDescriptor {
  */
 export const ModelProfiles = {
   embedding: {
-    id: 'embeddinggemma-300m-q5_k_m',
+    id: 'embeddinggemma-300m-q8_0',
     kind: 'embedding' as const,
-    url: HttpModelSources.embeddingGemma300mQ5.url,
-    sha256: HttpModelSources.embeddingGemma300mQ5.sha256,
-    sizeBytes: HttpModelSources.embeddingGemma300mQ5.sizeBytes,
+    url: HttpModelSources.embeddingGemma300mQ8.url,
+    sha256: HttpModelSources.embeddingGemma300mQ8.sha256,
+    sizeBytes: HttpModelSources.embeddingGemma300mQ8.sizeBytes,
     nativeDim: 768,
   } satisfies ModelDescriptor,
 
   llm: {
-    id: 'qwen3-4b-instruct-q4_k_m',
+    id: 'qwen3-1.7b-q4_0',
     kind: 'llm' as const,
-    url: HttpModelSources.qwen3_4bInstructQ4.url,
-    sha256: HttpModelSources.qwen3_4bInstructQ4.sha256,
-    sizeBytes: HttpModelSources.qwen3_4bInstructQ4.sizeBytes,
+    url: HttpModelSources.qwen3_1_7bQ4_0.url,
+    sha256: HttpModelSources.qwen3_1_7bQ4_0.sha256,
+    sizeBytes: HttpModelSources.qwen3_1_7bQ4_0.sizeBytes,
   } satisfies ModelDescriptor,
 } as const;

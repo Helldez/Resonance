@@ -70,10 +70,11 @@ export class BareWorkletNetwork implements IPeerNetwork {
     this.joined = this.joined.filter((b) => b !== bucket);
   }
 
-  async publish(record: SignedRecord): Promise<void> {
-    // Publishing IS the append to the local outbox — replication propagates
-    // automatically through Corestore once peers are connected.
-    await this.worklet.append(record);
+  async publish(_record: SignedRecord): Promise<void> {
+    // Publishing is implicit: the record is already in our outbox after
+    // IMailbox.append(), and Hypercore replication propagates it. Calling
+    // append twice (once via mailbox, once via network) writes duplicate
+    // blocks, so this path is intentionally a no-op.
   }
 
   onRecord(handler: (record: SignedRecord) => void): () => void {

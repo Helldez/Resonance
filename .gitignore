@@ -35,3 +35,7 @@ tmp/
 .idea/
 .vscode/
 *.swp
+
+android/local.properties
+tmp-screenshot*.png
+tmp-release-build*.log

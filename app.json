@@ -18,6 +18,8 @@
     },
     "plugins": [
       "expo-router",
+      "expo-sqlite",
+      "@qvac/sdk/expo-plugin",
       [
         "expo-build-properties",
         {

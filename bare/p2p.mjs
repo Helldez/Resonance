@@ -80,43 +80,74 @@ async function watchCore(core) {
   await core.ready()
   const peerId = bytesToHex(core.key)
   knownRemoteCores.set(peerId, core)
+  console.log(`[p2p] watchCore start peer=${peerId.slice(0, 12)} length=${core.length}`)
+
+  // Force a metadata refresh so the local replica learns the writer's current length.
+  try {
+    await core.update({ wait: false })
+    console.log(`[p2p] core.update() done peer=${peerId.slice(0, 12)} length=${core.length}`)
+  } catch (err) {
+    console.warn('[p2p] core.update failed', err)
+  }
+
   let cursor = 0
-  core.on('append', async () => {
-    while (cursor < core.length) {
+  const drain = async (reason) => {
+    const length = core.length
+    if (length <= cursor) return
+    console.log(`[p2p] drain peer=${peerId.slice(0, 12)} reason=${reason} cursor=${cursor} length=${length}`)
+    while (cursor < length) {
       try {
         const block = await core.get(cursor, { wait: true, timeout: 30000 })
+        console.log(`[p2p] block read peer=${peerId.slice(0, 12)} index=${cursor} bytes=${block.length}`)
         const record = recordFromBlock(block, peerId)
         if (record !== null) {
           rpc.emit('record', { record })
+          console.log(`[p2p] emitted record peer=${peerId.slice(0, 12)} index=${cursor} kind=${record.body && record.body.kind}`)
+        } else {
+          console.warn(`[p2p] recordFromBlock returned null index=${cursor}`)
         }
       } catch (err) {
-        console.warn('[p2p] read error', err)
+        console.warn(`[p2p] read error peer=${peerId.slice(0, 12)} index=${cursor}`, err)
       }
       cursor++
     }
+  }
+
+  // Backfill any blocks that exist before our subscription.
+  await drain('initial')
+
+  core.on('append', () => {
+    void drain('append')
   })
 }
 
 async function onConnection(conn, info) {
+  console.log('[p2p] peer connected, remote noise key:', bytesToHex(info.publicKey).slice(0, 12))
   const mux = Protomux.from(conn)
 
+  // Single 32-byte message = the peer's outbox Hypercore key. compact-encoding
+  // doesn't expose `struct`; for a single fixed field we use `c.fixed32`
+  // directly and pass the raw buffer.
   const dir = mux.createChannel({
     protocol: 'resonance-directory/v1',
     onopen: () => {
-      dirMsg.send({ outboxKey: outbox.key })
+      console.log('[p2p] directory channel open, sending our outbox key')
+      dirMsg.send(outbox.key)
     },
     onclose: () => {},
     ondestroy: () => {}
   })
 
   const dirMsg = dir.addMessage({
-    encoding: c.struct({ outboxKey: c.fixed32 }),
-    onmessage: async ({ outboxKey }) => {
+    encoding: c.fixed32,
+    onmessage: async (outboxKey) => {
       const peerId = bytesToHex(outboxKey)
+      console.log('[p2p] received remote outbox key:', peerId.slice(0, 12))
       if (knownRemoteCores.has(peerId)) return
       const remote = store.get({ key: outboxKey })
       try {
         await watchCore(remote)
+        console.log('[p2p] now replicating remote core:', peerId.slice(0, 12))
         rpc.emit('presence', { peerId, present: true })
       } catch (err) {
         console.warn('[p2p] failed to track remote core', err)
@@ -138,27 +169,40 @@ async function initialize({ storagePath }) {
   store = new Corestore(storagePath)
   outbox = store.get({ name: 'outbox' })
   await outbox.ready()
+  console.log(`[p2p] initialized; outbox key=${bytesToHex(outbox.key).slice(0, 12)} length=${outbox.length}`)
 
   swarm = new Hyperswarm()
   swarm.on('connection', onConnection)
+  swarm.on('update', () => {
+    console.log(`[p2p] swarm update: connecting=${swarm.connecting} connections=${swarm.connections.size}`)
+  })
 
   return { outboxKey: bytesToHex(outbox.key) }
 }
 
 async function append({ record }) {
-  const json = JSON.stringify(record)
-  const feedIndex = await outbox.append(b4a.from(json, 'utf8'))
+  // outbox.append() returns { length, byteLength } in Hypercore 10+, not the
+  // index. Pre-compute the index from the current length, stamp it onto the
+  // record so peers receive the real feedIndex, then append.
+  const feedIndex = outbox.length
+  const finalRecord = { ...record, feedIndex }
+  const json = JSON.stringify(finalRecord)
+  const result = await outbox.append(b4a.from(json, 'utf8'))
+  console.log(`[p2p] own outbox append feedIndex=${feedIndex} newLength=${result.length} kind=${finalRecord.body && finalRecord.body.kind} bytes=${json.length}`)
   return { feedIndex }
 }
 
 async function joinBucket({ bucketId, topicSeed }) {
   if (joinedBuckets.has(bucketId)) {
+    console.log(`[p2p] joinBucket already joined bucket=${bucketId}`)
     return { ok: true }
   }
   const topic = topicForBucket(topicSeed, bucketId)
+  console.log(`[p2p] joining bucket=${bucketId} topic=${bytesToHex(topic).slice(0, 16)}`)
   const discovery = swarm.join(topic, { server: true, client: true })
   joinedBuckets.set(bucketId, { discovery, topic })
   await discovery.flushed()
+  console.log(`[p2p] joined bucket=${bucketId} (announce flushed to DHT)`)
   return { ok: true }
 }
 

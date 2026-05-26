@@ -15,10 +15,18 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const entry = resolve(__dirname, 'p2p.mjs')
 const out = resolve(__dirname, 'p2p.bundle.mjs')
 
+// Without --host the bundler picks the build machine's platform (e.g.
+// win32-x64) and ends up trying to dlopen .dll files at runtime on Android.
+// We bundle for every Android ABI the APK supports so a single bundle is
+// runtime-portable across devices.
 const args = [
   '-o', out,
   '-f', 'bundle.mjs',
   '--linked',
+  '--host', 'android-arm64',
+  '--host', 'android-arm',
+  '--host', 'android-ia32',
+  '--host', 'android-x64',
   entry,
 ]
 

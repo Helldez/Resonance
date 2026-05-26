@@ -1,3 +1,8 @@
+// crypto.getRandomValues polyfill — Hermes does not implement the Web Crypto
+// API; @noble/ed25519 v2 needs crypto.getRandomValues for randomPrivateKey().
+// Must be the very first import so it's installed before any code uses it.
+import 'react-native-get-random-values';
+
 // Buffer polyfill — @qvac/sdk pulls in bare-rpc → bare-stream which calls
 // Buffer.from(...) unconditionally. Hermes has TextEncoder but NOT Buffer,
 // so SDK calls crash without this polyfill. Must run before any @qvac/sdk

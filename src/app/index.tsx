@@ -3,6 +3,7 @@ import { View, FlatList } from 'react-native';
 import { Text, Button, Card, useTheme } from 'react-native-paper';
 import { Link, useFocusEffect } from 'expo-router';
 import { useRequireContainer } from '@ui/AppContainerContext';
+import { useSettingsStore } from '@domain/SettingsStore';
 
 interface InboxRow {
   readonly address: string;
@@ -14,16 +15,20 @@ interface InboxRow {
 export default function InboxScreen() {
   const container = useRequireContainer();
   const theme = useTheme();
+  const threshold = useSettingsStore((s) => s.similarityThreshold);
   const [rows, setRows] = useState<InboxRow[]>([]);
 
   const load = useCallback(async (): Promise<void> => {
+    // Own posts have similarity NULL and are always shown. Remote posts are
+    // gated by the user-tunable threshold from the Settings store.
     const data = await container.database.query<{
       address: string;
       text: string;
       similarity: number | null;
       created_at: number;
     }>(
-      'SELECT address, text, similarity, created_at FROM posts ORDER BY created_at DESC LIMIT 100',
+      'SELECT address, text, similarity, created_at FROM posts WHERE similarity IS NULL OR similarity >= ? ORDER BY created_at DESC LIMIT 100',
+      [threshold],
     );
     setRows(
       data.map((d) => ({
@@ -33,7 +38,7 @@ export default function InboxScreen() {
         createdAt: d.created_at,
       })),
     );
-  }, [container]);
+  }, [container, threshold]);
 
   useEffect(() => {
     void load();
