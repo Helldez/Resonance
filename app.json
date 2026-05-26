@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "Resonance",
+    "slug": "resonance",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "resonance",
+    "newArchEnabled": true,
+    "platforms": ["android"],
+    "android": {
+      "package": "com.helldez.resonance",
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.POST_NOTIFICATIONS"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "compileSdkVersion": 35,
+            "targetSdkVersion": 35,
+            "minSdkVersion": 26
+          }
+        }
+      ]
+    ]
+  }
+}
