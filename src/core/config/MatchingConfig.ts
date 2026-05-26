@@ -51,6 +51,21 @@ export const MatchingConfig = {
   inboxMaxResults: 100,
 
   /**
+   * Interval at which the Inbox and Thread screens re-poll SQLite to
+   * surface newly-replicated records. P2P records arrive asynchronously
+   * via the network event handler — without this re-poll the UI would
+   * only update on screen focus.
+   */
+  uiRefreshIntervalMs: 3000,
+
+  /**
+   * Hard cap on how many responses a single peer can post under a given
+   * post. The MVP semantic is "one perspective per peer per post" —
+   * publishing a second response is rejected until the first is deleted.
+   */
+  maxResponsesPerPeerPerPost: 1,
+
+  /**
    * Used as the user's interest text when "About you" is empty. Drives
    * both the LSH bucket and (until the user has posted anything) the
    * fallback similarity computation in `ScoreIncomingPost`.

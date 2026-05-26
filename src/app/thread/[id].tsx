@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { View, ScrollView } from 'react-native';
+import { View, ScrollView, Alert, Pressable } from 'react-native';
 import {
   Text,
   Card,
@@ -17,6 +17,7 @@ import { publishResponse } from '@core/responses/PublishResponse';
 import type { RecordAddress, ScoredPost } from '@core/domain/types';
 import { cosineOnUnit } from '@core/matching/CosineSimilarity';
 import { addressOf } from '@core/utils/AddressOf';
+import { MatchingConfig } from '@core/config/MatchingConfig';
 
 interface ThreadPost {
   readonly address: string;
@@ -95,6 +96,12 @@ export default function ThreadScreen() {
   useFocusEffect(
     useCallback(() => {
       void load();
+      const id = setInterval(() => {
+        void load();
+      }, MatchingConfig.uiRefreshIntervalMs);
+      return () => {
+        clearInterval(id);
+      };
     }, [load]),
   );
 
@@ -143,6 +150,16 @@ export default function ThreadScreen() {
     setPublishing(true);
     setError(null);
     try {
+      const existing = await container.responses.countByAuthorAndPost(
+        container.self,
+        post.address as RecordAddress,
+      );
+      if (existing >= MatchingConfig.maxResponsesPerPeerPerPost) {
+        setError(
+          'You already responded to this post. Long-press your existing response to delete it before publishing a new one.',
+        );
+        return;
+      }
       const record = await publishResponse(
         {
           mailbox: container.mailbox,
@@ -201,14 +218,33 @@ export default function ThreadScreen() {
       </Text>
 
       {responses.map((r) => (
-        <Card key={r.address} style={{ marginTop: 8 }}>
-          <Card.Content>
-            <Text>{r.text}</Text>
-            <Text style={{ marginTop: 4, opacity: 0.6, fontSize: 12 }}>
-              {shortPeer(r.author)}
-            </Text>
-          </Card.Content>
-        </Card>
+        <Pressable
+          key={r.address}
+          onLongPress={() => {
+            Alert.alert('Delete this response?', 'Removes from your local DB only.', [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Delete',
+                style: 'destructive',
+                onPress: () => {
+                  void (async () => {
+                    await container.responses.delete(r.address as RecordAddress);
+                    await load();
+                  })();
+                },
+              },
+            ]);
+          }}
+        >
+          <Card style={{ marginTop: 8 }}>
+            <Card.Content>
+              <Text>{r.text}</Text>
+              <Text style={{ marginTop: 4, opacity: 0.6, fontSize: 12 }}>
+                {shortPeer(r.author)} · long-press to delete
+              </Text>
+            </Card.Content>
+          </Card>
+        </Pressable>
       ))}
 
       {responses.length === 0 && (
@@ -217,13 +253,22 @@ export default function ThreadScreen() {
 
       {post !== null && post.author !== container.self && (
         <View style={{ marginTop: 24 }}>
+          {responses.some((r) => r.author === container.self) ? (
+            <HelperText type="info">
+              You already responded to this post. Long-press your response above
+              to delete it before drafting a new one.
+            </HelperText>
+          ) : null}
           <Button
             mode="outlined"
             onPress={() => {
               void generateDraft();
             }}
             loading={drafting}
-            disabled={drafting || publishing}
+            disabled={
+              drafting || publishing ||
+              responses.some((r) => r.author === container.self)
+            }
           >
             Draft a response
           </Button>

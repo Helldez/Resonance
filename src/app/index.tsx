@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { View, FlatList } from 'react-native';
+import { View, FlatList, Alert, Pressable } from 'react-native';
 import { Text, Button, Card, useTheme } from 'react-native-paper';
 import { Link, useFocusEffect } from 'expo-router';
 import { useRequireContainer } from '@ui/AppContainerContext';
 import { useSettingsStore } from '@domain/SettingsStore';
+import { MatchingConfig } from '@core/config/MatchingConfig';
+import type { RecordAddress } from '@core/domain/types';
 
 interface InboxRow {
   readonly address: string;
@@ -59,7 +61,37 @@ export default function InboxScreen() {
   useFocusEffect(
     useCallback(() => {
       void load();
+      // Auto-refresh while the Inbox is focused so newly-replicated posts
+      // surface without the user having to navigate away and back.
+      const id = setInterval(() => {
+        void load();
+      }, MatchingConfig.uiRefreshIntervalMs);
+      return () => {
+        clearInterval(id);
+      };
     }, [load]),
+  );
+
+  const askDelete = useCallback(
+    (address: string, isOwn: boolean) => {
+      const detail = isOwn
+        ? 'Removes the post from your local DB. Peers who already replicated it still have a copy in their Hypercore.'
+        : 'Removes from your inbox. The author still has it; it may show again on next replication if the threshold allows.';
+      Alert.alert('Delete this post?', detail, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              await container.posts.delete(address as RecordAddress);
+              await load();
+            })();
+          },
+        },
+      ]);
+    },
+    [container, load],
   );
 
   return (
@@ -102,16 +134,19 @@ export default function InboxScreen() {
                 href={{ pathname: '/thread/[id]', params: { id: item.address } }}
                 asChild
               >
-                <Card style={{ marginBottom: 8 }}>
-                  <Card.Content>
-                    <Text numberOfLines={3}>{item.text}</Text>
-                    <Text style={{ marginTop: 4, opacity: 0.6, fontSize: 12 }}>
-                      {meta}
-                      {' · '}
-                      {new Date(item.createdAt).toLocaleString()}
-                    </Text>
-                  </Card.Content>
-                </Card>
+                <Pressable onLongPress={() => askDelete(item.address, isOwn)}>
+                  <Card style={{ marginBottom: 8 }}>
+                    <Card.Content>
+                      <Text numberOfLines={3}>{item.text}</Text>
+                      <Text style={{ marginTop: 4, opacity: 0.6, fontSize: 12 }}>
+                        {meta}
+                        {' · '}
+                        {new Date(item.createdAt).toLocaleString()}
+                        {' · long-press to delete'}
+                      </Text>
+                    </Card.Content>
+                  </Card>
+                </Pressable>
               </Link>
             );
           }}

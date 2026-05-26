@@ -51,6 +51,15 @@ export class PostRepository {
   }
 
   /**
+   * Remove a post from the local DB. Does not propagate to peers — their
+   * outbox Hypercore still has the block. Use to hide a post from your
+   * own inbox.
+   */
+  async delete(address: RecordAddress): Promise<void> {
+    await this.db.exec('DELETE FROM posts WHERE address = ?', [address]);
+  }
+
+  /**
    * Returns the embeddings of posts authored by `self`, used to score
    * incoming remote posts against the user's actual posting history.
    * The expected dimension comes from `MatchingConfig.embeddingDim` and
