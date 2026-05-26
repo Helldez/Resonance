@@ -15,9 +15,6 @@ import type { ModelProgressUpdate } from '@qvac/sdk';
 
 const AppContainerContext = createContext<MobileContainer | null>(null);
 
-const FALLBACK_INTEREST_TEXT =
-  'general interest in technology, life, and meaningful conversations';
-
 export function AppContainerProvider({ children }: { children: ReactNode }) {
   const [container, setContainer] = useState<MobileContainer | null>(null);
   const setStage = useBootstrapStore((s) => s.setStage);
@@ -26,6 +23,7 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
   const setSelf = useBootstrapStore((s) => s.setSelf);
   const inboxAdd = useInboxStore((s) => s.add);
   const interestProfileRef = useRef<Float32Array | null>(null);
+  const ownEmbeddingsRef = useRef<Float32Array[]>([]);
   const currentBucketRef = useRef<BucketId | null>(null);
 
   useEffect(() => {
@@ -52,10 +50,22 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
         setStage('network');
         const receiverContext = useSettingsStore.getState().receiverContext;
         const interestText = receiverContext.trim().length === 0
-          ? FALLBACK_INTEREST_TEXT
+          ? MatchingConfig.fallbackInterestText
           : receiverContext;
         const interestProfile = await c.embedder.embed(interestText);
         interestProfileRef.current = interestProfile;
+
+        // Load own posts' embeddings so the receiver-side similarity can
+        // be computed against the user's actual posting history rather
+        // than a static "About you" description. Mirror to the
+        // module-level ref so Compose can append new embeddings as the
+        // user posts.
+        const ownFromDb = await c.posts.getOwnEmbeddings(
+          c.self,
+          MatchingConfig.embeddingDim,
+        );
+        ownEmbeddingsRef.current = ownFromDb;
+        externalOwnEmbeddings.current = ownFromDb;
 
         const bucket = lshBucketOf(
           interestProfile,
@@ -76,10 +86,16 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
         }).stop;
 
         // Persist incoming records (including own re-receives) to SQLite for
-        // the Thread view. persistRecord uses the latest interest profile to
-        // compute similarity, which is then stored alongside the post.
+        // the Thread view. persistRecord uses the latest own-posts cache to
+        // compute similarity as max(cosine vs each own post); when the user
+        // has no posts yet (cold start) we fall back to the interest profile.
         c.network.onRecord((record) => {
-          void persistRecord(c, record, interestProfileRef.current);
+          void persistRecord(
+            c,
+            record,
+            externalOwnEmbeddings.current,
+            interestProfileRef.current,
+          );
         });
 
         setStage('ready');
@@ -115,9 +131,27 @@ export function useRequireContainer(): MobileContainer {
   return c;
 }
 
+/**
+ * The list of the local user's post embeddings, used by the receiver-side
+ * similarity scorer. Mutated in place when the user composes a new post.
+ *
+ * Exposed via a module-level ref because the Compose screen needs to push
+ * into it without going through the React tree.
+ */
+const externalOwnEmbeddings: { current: Float32Array[] } = { current: [] };
+
+export function appendOwnEmbedding(v: Float32Array): void {
+  externalOwnEmbeddings.current.push(v);
+}
+
+export function getOwnEmbeddingsSnapshot(): Float32Array[] {
+  return externalOwnEmbeddings.current;
+}
+
 async function persistRecord(
   c: MobileContainer,
   record: import('@core/domain/types').SignedRecord,
+  ownEmbeddings: ReadonlyArray<Float32Array>,
   interestProfile: Float32Array | null,
 ): Promise<void> {
   const shortAuthor = String(record.author).slice(0, 12);
@@ -138,17 +172,10 @@ async function persistRecord(
   }
   const address = addressOf(record.author, record.feedIndex);
   if (record.body.kind === 'post') {
-    // Similarity is only meaningful for posts from OTHER peers. Our own posts
-    // are stored with NULL similarity so they always show in the Inbox
-    // regardless of threshold.
     const isOwn = record.author === c.self;
     let similarity: number | null = null;
-    if (!isOwn && interestProfile !== null) {
-      try {
-        similarity = cosineOnUnit(record.body.embedding, interestProfile);
-      } catch (e) {
-        console.warn(`[rn] cosine failed for ${shortAuthor}`, e);
-      }
+    if (!isOwn) {
+      similarity = scoreRemotePost(record.body.embedding, ownEmbeddings, interestProfile);
     }
     await c.posts.upsert(address, record.author, record.feedIndex, record.body, similarity);
     console.log(
@@ -159,6 +186,49 @@ async function persistRecord(
     console.log(`[rn] persisted response address=${address} author=${shortAuthor}`);
   }
   await c.peers.touch(record.author, c.clock.now());
+}
+
+/**
+ * Receiver-side scoring for an incoming post.
+ *
+ * Primary signal: max cosine against the user's own post embeddings — what
+ * the user has actually written about is a stronger signal than what they
+ * declared in "About you".
+ *
+ * Cold-start fallback: cosine against the interest profile (embedding of
+ * the "About you" text). Used until the user has at least one post.
+ *
+ * Returns null only if neither signal is available.
+ */
+function scoreRemotePost(
+  postEmbedding: Float32Array,
+  ownEmbeddings: ReadonlyArray<Float32Array>,
+  interestProfile: Float32Array | null,
+): number | null {
+  if (ownEmbeddings.length > 0) {
+    let best = -Infinity;
+    for (let i = 0; i < ownEmbeddings.length; i++) {
+      try {
+        const s = cosineOnUnit(postEmbedding, ownEmbeddings[i]);
+        if (s > best) {
+          best = s;
+        }
+      } catch (e) {
+        // Skip embeddings that don't match the expected dimension.
+      }
+    }
+    if (best > -Infinity) {
+      return best;
+    }
+  }
+  if (interestProfile !== null) {
+    try {
+      return cosineOnUnit(postEmbedding, interestProfile);
+    } catch (e) {
+      return null;
+    }
+  }
+  return null;
 }
 
 function bytesToHexShort(bytes: Uint8Array): string {

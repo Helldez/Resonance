@@ -32,7 +32,7 @@ export function scoreIncomingPost(
   }
   const post: PostBody = record.body;
   const similarity = cosineOnUnit(post.embedding, deps.interestProfile);
-  if (similarity < MatchingConfig.inboxSimilarityThreshold) {
+  if (similarity < MatchingConfig.defaultInboxSimilarityThreshold) {
     return null;
   }
   const address: RecordAddress = addressOf(record.author, record.feedIndex);

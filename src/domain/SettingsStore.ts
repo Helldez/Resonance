@@ -11,7 +11,7 @@ interface SettingsStore extends SettingsState {
 export const useSettingsStore = create<SettingsStore>((set) => ({
   responseMode: 'draft-confirm',
   receiverContext: '',
-  similarityThreshold: MatchingConfig.inboxSimilarityThreshold,
+  similarityThreshold: MatchingConfig.defaultInboxSimilarityThreshold,
   setResponseMode: (responseMode) => set({ responseMode }),
   setReceiverContext: (receiverContext) => set({ receiverContext }),
   setSimilarityThreshold: (similarityThreshold) => set({ similarityThreshold }),

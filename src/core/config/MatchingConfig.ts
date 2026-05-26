@@ -26,17 +26,45 @@ export const MatchingConfig = {
   lshSeed: 0xa57e_b3c1,
 
   /**
-   * Minimum cosine similarity (= dot product on L2-normalised vectors)
-   * for an incoming post to be surfaced to the receiving user. Below
-   * this we silently drop it. Calibrated by `scripts/calibration`.
+   * Default minimum cosine similarity for an incoming post to be surfaced
+   * in the inbox. 0 = show every replicated post (MVP default). Users
+   * raise it in Settings once they have enough peers to want filtering.
    */
-  inboxSimilarityThreshold: 0.78,
+  defaultInboxSimilarityThreshold: 0.0,
 
   /**
-   * Cap on inbox results per sync cycle. Prevents one chatty bucket from
+   * Preset choices exposed in the Settings UI for the similarity
+   * threshold. Keep the labels short — they're rendered as chips.
+   */
+  thresholdPresets: [
+    { label: 'Show all', value: 0.0, hint: 'No filter — every replicated post lands in the inbox' },
+    { label: 'Very loose', value: 0.3, hint: 'Drop only obviously unrelated posts' },
+    { label: 'Loose', value: 0.5, hint: 'Posts that share a clear theme with your interests' },
+    { label: 'Balanced', value: 0.7, hint: 'Strongly related posts only' },
+    { label: 'Strict', value: 0.85, hint: 'Near-identical interests only' },
+  ] as ReadonlyArray<{ label: string; value: number; hint: string }>,
+
+  /**
+   * Cap on inbox results per query. Prevents one chatty bucket from
    * flooding the UI.
    */
-  inboxMaxResults: 50,
+  inboxMaxResults: 100,
+
+  /**
+   * Used as the user's interest text when "About you" is empty. Drives
+   * both the LSH bucket and (until the user has posted anything) the
+   * fallback similarity computation in `ScoreIncomingPost`.
+   */
+  fallbackInterestText:
+    'general interest in technology, life, and meaningful conversations',
+
+  /**
+   * Filtering model: each incoming remote post is scored as the
+   * MAX cosine similarity against the current user's own posts. With
+   * zero own posts (cold start) we fall back to similarity against the
+   * embedding of the user's "About you" text.
+   */
+  similarityAggregation: 'max-vs-own-posts' as 'max-vs-own-posts',
 
   /**
    * Prompts used by the response draft pipeline. Kept here, not at call

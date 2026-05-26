@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { View } from 'react-native';
 import { TextInput, Button, useTheme, HelperText } from 'react-native-paper';
 import { useRouter } from 'expo-router';
-import { useRequireContainer } from '@ui/AppContainerContext';
+import { useRequireContainer, appendOwnEmbedding } from '@ui/AppContainerContext';
 import { createPost } from '@core/posts/CreatePost';
 import { addressOf } from '@core/utils/AddressOf';
 
@@ -37,6 +37,9 @@ export default function ComposeScreen() {
           record.body,
           null,
         );
+        // Push into the in-memory cache so future incoming posts are scored
+        // against THIS post too, without waiting for an app restart.
+        appendOwnEmbedding(record.body.embedding);
       }
       router.replace({
         pathname: '/thread/[id]',

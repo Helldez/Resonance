@@ -1,20 +1,24 @@
+import { useState } from 'react';
 import { View, ScrollView } from 'react-native';
-import { Text, RadioButton, TextInput, Chip, useTheme, Divider, HelperText } from 'react-native-paper';
+import {
+  Text,
+  RadioButton,
+  TextInput,
+  Chip,
+  Button,
+  ProgressBar,
+  useTheme,
+  Divider,
+  HelperText,
+} from 'react-native-paper';
 import { useSettingsStore } from '@domain/SettingsStore';
+import { useRequireContainer } from '@ui/AppContainerContext';
+import { ModelProfiles } from '@core/config/ModelProfiles';
+import { MatchingConfig } from '@core/config/MatchingConfig';
 
-interface ThresholdPreset {
-  readonly label: string;
-  readonly value: number;
-  readonly hint: string;
-}
+type ThresholdPreset = (typeof MatchingConfig.thresholdPresets)[number];
 
-const THRESHOLD_PRESETS: ReadonlyArray<ThresholdPreset> = [
-  { label: 'Very loose', value: 0.5, hint: 'Show almost everything from the bucket' },
-  { label: 'Loose', value: 0.65, hint: 'Show posts loosely related to your interests' },
-  { label: 'Balanced', value: 0.78, hint: 'Default: clearly related posts' },
-  { label: 'Strict', value: 0.85, hint: 'Only strongly related posts' },
-  { label: 'Very strict', value: 0.92, hint: 'Near-identical interests only' },
-];
+const THRESHOLD_PRESETS = MatchingConfig.thresholdPresets;
 
 function presetForValue(v: number): ThresholdPreset {
   let best = THRESHOLD_PRESETS[0];
@@ -31,6 +35,7 @@ function presetForValue(v: number): ThresholdPreset {
 
 export default function SettingsScreen() {
   const theme = useTheme();
+  const container = useRequireContainer();
   const responseMode = useSettingsStore((s) => s.responseMode);
   const setResponseMode = useSettingsStore((s) => s.setResponseMode);
   const receiverContext = useSettingsStore((s) => s.receiverContext);
@@ -39,6 +44,27 @@ export default function SettingsScreen() {
   const setSimilarityThreshold = useSettingsStore((s) => s.setSimilarityThreshold);
 
   const activePreset = presetForValue(similarityThreshold);
+
+  const [llmLoading, setLlmLoading] = useState(false);
+  const [llmReady, setLlmReady] = useState(container.llmConcrete.isLoaded);
+  const [llmProgress, setLlmProgress] = useState<{ downloaded: number; total: number } | null>(null);
+  const [llmError, setLlmError] = useState<string | null>(null);
+
+  const downloadLlm = async (): Promise<void> => {
+    setLlmLoading(true);
+    setLlmError(null);
+    setLlmProgress({ downloaded: 0, total: ModelProfiles.llm.sizeBytes });
+    try {
+      await container.llmConcrete.load((p) => {
+        setLlmProgress({ downloaded: p.downloaded ?? 0, total: p.total ?? 0 });
+      });
+      setLlmReady(true);
+    } catch (e) {
+      setLlmError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLlmLoading(false);
+    }
+  };
 
   return (
     <ScrollView
@@ -85,6 +111,46 @@ export default function SettingsScreen() {
 
       <Divider style={{ marginVertical: 16 }} />
 
+      <Text variant="titleMedium">Language model (for drafting replies)</Text>
+      <HelperText type="info">
+        {`Qwen3 1.7B Q4_0 — about ${formatMb(ModelProfiles.llm.sizeBytes)} MB. ` +
+          'Required to draft responses. Downloaded once, kept on disk.'}
+      </HelperText>
+      {llmReady ? (
+        <Chip icon="check" style={{ alignSelf: 'flex-start', marginTop: 4 }}>
+          Language model ready
+        </Chip>
+      ) : (
+        <>
+          <Button
+            mode="contained"
+            onPress={() => {
+              void downloadLlm();
+            }}
+            loading={llmLoading}
+            disabled={llmLoading}
+            style={{ marginTop: 4, alignSelf: 'flex-start' }}
+          >
+            {llmLoading ? 'Downloading…' : 'Download language model'}
+          </Button>
+          {llmProgress !== null && llmProgress.total > 0 && (
+            <View style={{ marginTop: 8 }}>
+              <ProgressBar
+                progress={Math.min(1, llmProgress.downloaded / llmProgress.total)}
+              />
+              <Text style={{ marginTop: 4, fontSize: 12, opacity: 0.7 }}>
+                {`${formatMb(llmProgress.downloaded)} / ${formatMb(llmProgress.total)} MB`}
+              </Text>
+            </View>
+          )}
+          {llmError !== null && (
+            <HelperText type="error">{llmError}</HelperText>
+          )}
+        </>
+      )}
+
+      <Divider style={{ marginVertical: 16 }} />
+
       <Text variant="titleMedium">Response mode</Text>
       <RadioButton.Group
         onValueChange={(v) => setResponseMode(v as typeof responseMode)}
@@ -106,4 +172,8 @@ export default function SettingsScreen() {
       <View style={{ height: 32 }} />
     </ScrollView>
   );
+}
+
+function formatMb(bytes: number): string {
+  return (bytes / (1024 * 1024)).toFixed(0);
 }
