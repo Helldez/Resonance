@@ -1,14 +1,29 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { View, ScrollView } from 'react-native';
-import { Text, Card, Button, ActivityIndicator, useTheme } from 'react-native-paper';
-import { useLocalSearchParams } from 'expo-router';
+import {
+  Text,
+  Card,
+  Button,
+  TextInput,
+  ActivityIndicator,
+  HelperText,
+  useTheme,
+} from 'react-native-paper';
+import { useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useRequireContainer } from '@ui/AppContainerContext';
+import { useSettingsStore } from '@domain/SettingsStore';
+import { draftResponse } from '@core/responses/DraftResponse';
+import { publishResponse } from '@core/responses/PublishResponse';
+import type { RecordAddress, ScoredPost } from '@core/domain/types';
+import { cosineOnUnit } from '@core/matching/CosineSimilarity';
+import { addressOf } from '@core/utils/AddressOf';
 
 interface ThreadPost {
   readonly address: string;
   readonly author: string;
   readonly text: string;
   readonly createdAt: number;
+  readonly embedding: Uint8Array | null;
 }
 
 interface ThreadResponse {
@@ -22,58 +37,138 @@ export default function ThreadScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const container = useRequireContainer();
   const theme = useTheme();
+  const receiverContext = useSettingsStore((s) => s.receiverContext);
+
   const [post, setPost] = useState<ThreadPost | null>(null);
   const [responses, setResponses] = useState<ThreadResponse[]>([]);
   const [loading, setLoading] = useState(true);
+  const [drafting, setDrafting] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async (): Promise<void> => {
+    const postRows = await container.database.query<{
+      address: string;
+      author: string;
+      text: string;
+      created_at: number;
+      embedding: Uint8Array | null;
+    }>(
+      'SELECT address, author, text, created_at, embedding FROM posts WHERE address = ? LIMIT 1',
+      [id],
+    );
+    if (postRows.length > 0) {
+      const r = postRows[0];
+      setPost({
+        address: r.address,
+        author: r.author,
+        text: r.text,
+        createdAt: r.created_at,
+        embedding: r.embedding,
+      });
+    }
+    const respRows = await container.database.query<{
+      address: string;
+      author: string;
+      text: string;
+      created_at: number;
+    }>(
+      'SELECT address, author, text, created_at FROM responses WHERE in_reply_to = ? ORDER BY created_at ASC',
+      [id],
+    );
+    setResponses(
+      respRows.map((r) => ({
+        address: r.address,
+        author: r.author,
+        text: r.text,
+        createdAt: r.created_at,
+      })),
+    );
+    setLoading(false);
+  }, [container, id]);
 
   useEffect(() => {
-    let cancelled = false;
-    const run = async (): Promise<void> => {
-      const postRows = await container.database.query<{
-        address: string;
-        author: string;
-        text: string;
-        created_at: number;
-      }>('SELECT address, author, text, created_at FROM posts WHERE address = ? LIMIT 1', [id]);
-      if (cancelled) {
-        return;
-      }
-      if (postRows.length > 0) {
-        const r = postRows[0];
-        setPost({
-          address: r.address,
-          author: r.author,
-          text: r.text,
-          createdAt: r.created_at,
-        });
-      }
-      const respRows = await container.database.query<{
-        address: string;
-        author: string;
-        text: string;
-        created_at: number;
-      }>(
-        'SELECT address, author, text, created_at FROM responses WHERE in_reply_to = ? ORDER BY created_at ASC',
-        [id],
+    void load();
+  }, [load]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load]),
+  );
+
+  const generateDraft = async (): Promise<void> => {
+    if (post === null || post.embedding === null) {
+      setError('Post has no embedding stored locally; cannot draft.');
+      return;
+    }
+    setDrafting(true);
+    setError(null);
+    try {
+      const embedding = new Float32Array(
+        post.embedding.buffer,
+        post.embedding.byteOffset,
+        post.embedding.byteLength / Float32Array.BYTES_PER_ELEMENT,
       );
-      if (cancelled) {
-        return;
-      }
-      setResponses(
-        respRows.map((r) => ({
-          address: r.address,
-          author: r.author,
-          text: r.text,
-          createdAt: r.created_at,
-        })),
+      const scored: ScoredPost = {
+        address: post.address as RecordAddress,
+        author: post.author as ScoredPost['author'],
+        post: {
+          kind: 'post',
+          text: post.text,
+          embedding,
+          bucket: '' as ScoredPost['post']['bucket'],
+          createdAt: post.createdAt,
+        },
+        similarity: cosineOnUnit(embedding, embedding),
+      };
+
+      const { draftText } = await draftResponse(
+        { llm: container.llm },
+        { post: scored, receiverContext },
       );
-      setLoading(false);
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [container, id]);
+      setDraft(draftText);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDrafting(false);
+    }
+  };
+
+  const publish = async (): Promise<void> => {
+    if (post === null) {
+      return;
+    }
+    setPublishing(true);
+    setError(null);
+    try {
+      const record = await publishResponse(
+        {
+          mailbox: container.mailbox,
+          network: container.network,
+          identity: container.identity,
+          clock: container.clock,
+          self: container.self,
+        },
+        { text: draft, inReplyTo: post.address as RecordAddress },
+      );
+      if (record.body.kind === 'response') {
+        await container.responses.upsert(
+          addressOf(record.author, record.feedIndex),
+          record.author,
+          record.feedIndex,
+          record.body,
+        );
+      }
+      setDraft('');
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPublishing(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -117,15 +212,48 @@ export default function ThreadScreen() {
       ))}
 
       {responses.length === 0 && (
-        <Text style={{ marginTop: 8, opacity: 0.6 }}>
-          Waiting for peers to answer. This flow wires up in M3 (network) and
-          M4 (response drafting).
-        </Text>
+        <Text style={{ marginTop: 8, opacity: 0.6 }}>No responses yet.</Text>
       )}
 
-      <Button mode="outlined" style={{ marginTop: 24 }} disabled>
-        Draft a response (M4)
-      </Button>
+      {post !== null && post.author !== container.self && (
+        <View style={{ marginTop: 24 }}>
+          <Button
+            mode="outlined"
+            onPress={() => {
+              void generateDraft();
+            }}
+            loading={drafting}
+            disabled={drafting || publishing}
+          >
+            Draft a response
+          </Button>
+
+          {draft.length > 0 && (
+            <>
+              <TextInput
+                mode="outlined"
+                multiline
+                numberOfLines={6}
+                value={draft}
+                onChangeText={setDraft}
+                style={{ marginTop: 12 }}
+              />
+              {error !== null && <HelperText type="error">{error}</HelperText>}
+              <Button
+                mode="contained"
+                onPress={() => {
+                  void publish();
+                }}
+                loading={publishing}
+                disabled={publishing || draft.trim().length === 0}
+                style={{ marginTop: 8 }}
+              >
+                Publish response
+              </Button>
+            </>
+          )}
+        </View>
+      )}
     </ScrollView>
   );
 }

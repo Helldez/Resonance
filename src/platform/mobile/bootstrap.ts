@@ -15,6 +15,7 @@ import { ConsoleLogger } from './ConsoleLogger';
 import { Ed25519Identity } from './Ed25519Identity';
 import { ExpoFileSystem } from './ExpoFileSystem';
 import { ExpoSqliteDatabase } from './ExpoSqliteDatabase';
+import { P2pWorklet } from './P2pWorklet';
 import { QvacEmbeddingService } from './QvacEmbeddingService';
 import { QvacLlmService } from './QvacLlmService';
 import { SystemClock } from './SystemClock';
@@ -29,14 +30,14 @@ export interface MobileContainer extends AppContainer {
   readonly peers: PeerRepository;
   readonly embedderConcrete: QvacEmbeddingService;
   readonly llmConcrete: QvacLlmService;
+  readonly p2p: P2pWorklet;
 }
 
 let cached: MobileContainer | null = null;
 
 /**
  * Single place where concrete adapters are instantiated and wired into a
- * container. Idempotent — `bootstrapMobile()` can be called multiple times
- * and only does the work once.
+ * container. Idempotent.
  */
 export async function bootstrapMobile(): Promise<MobileContainer> {
   if (cached !== null) {
@@ -61,9 +62,11 @@ export async function bootstrapMobile(): Promise<MobileContainer> {
 
   const embedder = new QvacEmbeddingService();
   const llm = new QvacLlmService();
-  const network = new BareWorkletNetwork();
+
+  const p2p = new P2pWorklet();
+  const network = new BareWorkletNetwork(p2p);
   await network.initialize();
-  const mailbox = new BareWorkletMailbox();
+  const mailbox = new BareWorkletMailbox(p2p);
   await mailbox.initialize();
 
   cached = {
@@ -83,6 +86,7 @@ export async function bootstrapMobile(): Promise<MobileContainer> {
     peers,
     embedderConcrete: embedder,
     llmConcrete: llm,
+    p2p,
   };
   return cached;
 }

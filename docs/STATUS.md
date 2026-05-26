@@ -7,84 +7,116 @@ code.
 
 - **Project scaffold**: Expo + RN + Bare worklet stack, strict TS,
   hexagonal layout (`src/core` → `src/platform/mobile`).
-- **Config modules**: every tunable lives in `src/core/config/`
-  (`AppConfig`, `MatchingConfig`, `ModelProfiles`, `HttpModelSources`,
-  `NetworkConfig`, `StorageConfig`). No hardcoded constants at call sites.
-- **Domain types**: `Post`, `Response`, `Peer`, `SignedRecord`,
-  `BucketId`, `RecordAddress` — all branded TS types in
-  `src/core/domain/types.ts`.
-- **Matching primitives** (real, not stubs):
-  - `src/core/matching/LshBucket.ts` — LSH via signed random hyperplanes
-    with deterministic seed.
-  - `src/core/matching/CosineSimilarity.ts` — dot product on
-    L2-normalised vectors.
-  - `src/core/matching/L2Normalize.ts` — in-place unit-norm.
-- **Crypto** (real, not stubs):
-  - `src/platform/mobile/Ed25519Identity.ts` — @noble/ed25519, keypair
-    persisted via `AsyncStorage`, public key = `PeerId`.
-  - `src/core/utils/CanonicalRecord.ts` — SHA-256 via @noble/hashes over
-    canonical-JSON record bodies.
-- **QVAC inference** (real wiring):
-  - `src/platform/mobile/QvacEmbeddingService.ts` — `@qvac/sdk` `embed`,
-    Matryoshka truncation, L2-normalise, deferred load.
-  - `src/platform/mobile/QvacLlmService.ts` — `@qvac/sdk` `completion`
-    with streaming `tokenStream`.
-  - `src/core/utils/LoadWithFallback.ts` — stall watchdog + optional
-    HTTPS fallback for `loadModel`.
-- **Storage** (real wiring):
-  - `src/platform/mobile/ExpoSqliteDatabase.ts` — expo-sqlite, lazy
-    open, transactions.
-  - `src/platform/mobile/ExpoFileSystem.ts` — expo-file-system v19 API
-    (`Paths`/`File`/`Directory`).
-  - `src/data/{Post,Response,Peer}Repository.ts` — schemas + upserts.
-- **AppContainer + bootstrap** (real wiring):
-  - `src/platform/mobile/bootstrap.ts` — Buffer polyfill, async DI,
-    idempotent.
-  - `src/ui/AppContainerContext.tsx` — drives the bootstrap stages,
-    surfaces progress to the Bootstrap screen.
-- **UI shell** (functional, navigates):
-  - Bootstrap → Inbox → Compose → Thread → Settings, all real screens.
-  - Compose runs `createPost` end-to-end: text → embed → bucket → sign →
-    mailbox.
-  - Inbox lists from `posts` table, refreshes on focus.
-  - Thread reads post + responses from SQLite.
-- **Mailbox in-memory** — `BareWorkletMailbox` provides ordered
-  append/iterate semantics that match the future Hypercore-backed
-  version, so use cases stay unchanged when M3 swaps the backend.
-- **Typecheck passes**: `npm run typecheck` clean.
+- **Config modules**: every tunable lives in `src/core/config/`.
+- **Domain types**: branded `PeerId`, `BucketId`, `RecordAddress`,
+  `SignedRecord`.
+- **Matching primitives** (real): LSH random hyperplanes (deterministic
+  seed), cosine via dot product, L2-normalisation.
+- **Crypto** (real): Ed25519 via @noble/ed25519 (RN side), SHA-256 via
+  @noble/hashes. Keypair persists through AsyncStorage; public key = PeerId.
+- **QVAC inference** (real wiring): EmbeddingService and LlmService call
+  @qvac/sdk directly. Matryoshka truncation to 256 dims, L2-normalised.
+- **Storage** (real): expo-sqlite repositories, expo-file-system v19,
+  AsyncStorage key-value.
+- **AppContainer + bootstrap**: Buffer polyfill, async DI, idempotent.
+  `AppContainerContext` drives stages and exposes the container.
+- **UI shell**: Bootstrap → Inbox → Compose → Thread → Settings, all
+  functional.
+- **Compose**: runs `createPost` end-to-end. Text → embed → bucket →
+  sign → mailbox append → SQLite projection → P2P publish.
+- **Thread**: shows post + responses, drafts a response via the LLM
+  (`DraftResponse`), publishes it to the local outbox and the swarm
+  (`PublishResponse`).
+- **Inbox**: queries the `posts` table, refreshes on focus.
 
-## Not yet done (with milestone tag)
+## P2P layer (real, untested on-device)
 
-- **M0 — Calibration gate**: corpus + human eval. `scripts/calibration/`
-  has the scaffold and README; the corpus and the evaluation are your
-  call.
-- **M1 — Model checksum verification**: SHA-256 fields in
-  `HttpModelSources.ts` are placeholders. Fill them on first download.
-- **M3 — P2P**: `BareWorkletNetwork` is a no-op event source; needs the
-  Hyperswarm/Hypercore Bare worker. Replace `BareWorkletMailbox` with a
-  Hypercore-backed implementation at the same time.
-- **M4 — Response drafting**: Thread screen has the "Draft a response"
-  button disabled. The `DraftResponse` use case is ready; just needs
-  wiring to a screen state machine and a publish path through the
-  network.
-- **M5 — Polish**: foreground service decision, real similarity slider,
-  threshold calibration from M0, multi-device QA, push relay opt-in.
+- **`bare/p2p.mjs`**: Bare worker that owns a Corestore, a writable
+  outbox Hypercore, a Hyperswarm instance, and a Protomux directory
+  channel for outbox-key exchange. Bundled by `npm run build:bare` into
+  `bare/p2p.bundle.mjs`.
+- **`src/platform/mobile/P2pWorklet.ts`**: RN-side facade. Mounts the
+  worker via `react-native-bare-kit`, framed JSON RPC over IPC, exposes
+  `joinBucket`, `leaveBucket`, `append`, `onRecord`, `onPresence`.
+- **`SyncEngine`**: mounted in `AppContainerContext`. Embeds the user's
+  "About you" string (or a fallback) on boot, derives the LSH bucket id,
+  joins it, and routes incoming records to the inbox.
+- **Signature verification**: every received record is verified
+  (`canonicalDigest` + `identity.verify`) before being persisted.
 
-## How to run (local single-device flow)
+## Not yet done
+
+- **M0 — Calibration gate**: corpus + human eval still required.
+- **Model checksum verification**: `HttpModelSources.sha256` fields are
+  placeholders; @qvac/sdk handles downloads but does not yet check
+  these.
+- **Multi-perspective synthesis**: responses render individually; no
+  "summary of N replies" aggregator.
+- **Foreground service / push wake-up**: app-open only for the MVP.
+- **iOS**: Android target only.
+- **Auto-publish mode** (Settings toggle exists; flow gated off).
+- **Reputation / helpful counts**: schema column exists, no UI.
+
+## How to build and run (USB-attached Android device)
 
 ```powershell
 cd C:\Users\raffa\Documents\Resonance
 npm install --legacy-peer-deps
-npx qvac bundle sdk            # regenerates qvac/worker.entry.mjs if needed
-npx expo prebuild --clean
+npm run build:bare
+npx qvac bundle sdk
+npx expo prebuild --platform android --clean
 npm run android
 ```
 
-On first boot:
-1. Identity keypair is created and persisted.
-2. EmbeddingGemma is downloaded via `@qvac/sdk` (progress shown on the
-   Bootstrap screen).
-3. App lands on the Inbox.
-4. Compose → write a post → tap Post.
-5. The post is embedded, bucketed, stored in SQLite, and shown in the
-   Inbox and Thread views. No peers yet — that's M3.
+What happens on first boot:
+
+1. Identity Ed25519 keypair is generated and persisted.
+2. `bare/p2p.bundle.mjs` is loaded into a Bare worklet. The worker opens
+   a Corestore, creates the outbox Hypercore, and starts Hyperswarm.
+3. EmbeddingGemma is downloaded (~270 MB, one-time) by @qvac/sdk.
+4. The user's interest profile is embedded; the LSH bucket id is
+   computed; the bucket is joined on Hyperswarm.
+5. The app lands on the Inbox.
+
+End-to-end use case with N phones:
+
+1. Two phones on the same Wi-Fi (or both reachable on the DHT) both
+   boot Resonance.
+2. Phone A's "About you" mentions "AI privacy"; phone B's "About you"
+   mentions "on-device AI" → both compute the same (or adjacent) LSH
+   bucket.
+3. Phone A composes a post about a related question. Embed → bucket →
+   outbox append → published.
+4. Phone B's Bare worker receives the record from Phone A's outbox
+   replication, emits it to RN, the SyncEngine scores it with cosine ≥
+   threshold, surfaces it in the inbox.
+5. Phone B opens the thread, taps "Draft a response" → Qwen 3 generates
+   a draft → user edits → publishes. The response propagates back via
+   the swarm.
+6. Phone A receives the response, persists it, shows it in the thread.
+
+## Known unknowns / things likely to need iteration
+
+- **Bare worklet asset loading**: the Worklet constructor in
+  `react-native-bare-kit` expects either a filename (asset path) or a
+  source string. We import the bundle as a JS module (default export is
+  a string). If this trips on Hermes' string-size limit at runtime
+  (~512 MB but shaky), switch to passing the bundle as bytes via
+  `Uint8Array`.
+- **Corestore storage path**: `P2pWorklet.initialize` derives the path
+  from `Paths.document.uri`. On Android the URI starts with `file://` —
+  we strip it. If Corestore complains, prefix or normalise.
+- **Hyperswarm + Bare on Android**: the underlying `udx-native`,
+  `sodium-native`, etc. prebuilds must ship in the APK. The
+  `addons.manifest.json` regenerated by `npx qvac bundle sdk` should
+  cover them. If a native binding is missing at runtime, regenerate
+  the manifest and rerun `expo prebuild`.
+- **First-launch Hypercore replication**: corestore needs both sides to
+  exchange outbox keys before replication will surface records. The
+  Protomux directory channel does this on the same Noise stream — if
+  one side never sees the other's records, that channel is the place
+  to instrument logs.
+- **Bucket density**: with 8 LSH bits we have 256 buckets. With ~2-3
+  early-test users, two devices will likely land in different buckets
+  unless their "About you" texts are very similar. To force a meeting,
+  use the SAME "About you" text on both devices for the first run.

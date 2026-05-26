@@ -1,48 +1,36 @@
 import type { SignedRecord } from '@core/domain/types';
 import type { IMailbox } from '@core/ports/IMailbox';
+import type { P2pWorklet } from './P2pWorklet';
 
 /**
- * Hypercore-backed personal feed, scheduled to live inside the Bare
- * worklet from M3 onward. Until the P2P worker is wired, this adapter
- * provides an in-memory mailbox so the single-device flow works.
+ * The mailbox-as-port view of the local outbox. Append writes to the
+ * Hypercore in the Bare worker; ingest is a no-op because remote records
+ * arrive through `IPeerNetwork.onRecord` already — they are durably
+ * stored in the SQLite projection by the sync engine.
  *
- * The append-order semantics and the `feedIndex` contract match what the
- * Hypercore-backed version will provide, so use cases written against
- * this stub keep working unchanged after the swap.
+ * `iterate` is a future surface for backfill on cold start.
  */
 export class BareWorkletMailbox implements IMailbox {
-  private records: SignedRecord[] = [];
-  private byAddress = new Map<string, number>();
+  constructor(private readonly worklet: P2pWorklet) {}
 
   async initialize(): Promise<void> {
-    // No-op until M3 swaps this for the Hypercore-backed implementation.
+    // P2pWorklet.initialize is owned by the network adapter.
   }
 
-  async shutdown(): Promise<void> {
-    this.records = [];
-    this.byAddress.clear();
-  }
+  async shutdown(): Promise<void> {}
 
   async append(record: SignedRecord): Promise<number> {
-    const feedIndex = this.records.length;
-    const final: SignedRecord = { ...record, feedIndex };
-    this.records.push(final);
-    this.byAddress.set(`${record.author}:${feedIndex}`, feedIndex);
-    return feedIndex;
+    return this.worklet.append(record);
   }
 
-  async ingest(record: SignedRecord): Promise<void> {
-    const key = `${record.author}:${record.feedIndex}`;
-    if (this.byAddress.has(key)) {
-      return;
-    }
-    this.byAddress.set(key, this.records.length);
-    this.records.push(record);
+  async ingest(_record: SignedRecord): Promise<void> {
+    // No-op for now: incoming records are routed through the network port
+    // and persisted into SQLite by `SyncEngine`.
   }
 
   async *iterate(): AsyncIterable<SignedRecord> {
-    for (const r of this.records) {
-      yield r;
-    }
+    // Backfill from the local outbox is not exposed by the worker yet —
+    // it lives in the Hypercore and can be re-read on demand.
+    return;
   }
 }
