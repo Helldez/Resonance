@@ -357,6 +357,75 @@ These are not yet decided.
 | 2026-05    | Use sha256("resonance/v1/" + bucketId) as topic. Accept that this destroys locality at the topic layer — it is fine because the locality lives one level up, in the bucket id itself. |
 | 2026-05    | Receiver-side scoring switches from About-you cosine to `max(cosine vs own posts)` with About-you as cold-start fallback. Fix for the "two phones with same About-you never matched" case. |
 | 2026-05    | Add foreground service so Tier 1 actually works when the app is backgrounded — without it the "always-on P2P" promise is unenforceable. |
+| 2026-05-27 | Ship the semantic map as Option A: a pure UI projection of locally-replicated records, no protocol change. PCA-2 on-device, react-native-svg renderer, anchor = just-published post. Display name stays local-only — no `v1 → v2` topic bump. See §9. |
+| (planned)  | Promote to Tier 1.5 (compose-time per-post probe) if the map shows too few neighbours on the small-cohort test. |
 | (planned)  | Promote to Tier 2 when the small-cohort test exposes the cliff problem.                    |
 | (planned)  | Promote to Tier 3 when one bucket reliably exceeds ~40 concurrent peers in measurement.    |
 | (planned)  | Evaluate Tier 4 only after both above tiers have shipped and a real user base exists.      |
+
+---
+
+## 9. Compose-time view (Option A, Phase 1)
+
+The semantic map is a **UI projection** of the routing geometry that
+Tier 1 has already built up locally. It changes nothing on the wire.
+
+### What the map shows
+
+After publishing a post the user lands on a starfield screen:
+
+- The just-published post is the bright anchor near the origin.
+- Up to `MatchingConfig.mapMaxCandidates` of the most recent
+  non-self posts already in the local `posts` table become smaller stars,
+  positioned by PCA-2 of the 256-dim embedding cloud.
+- Star colour is interpolated by cosine similarity to the anchor; the
+  similarity number itself is shown when the user taps a star.
+
+### Why Option A
+
+The alternative would be to *probe* extra Hyperswarm buckets at compose
+time (Tier 1.5, §4) so the map can include peers whose posts the device
+has not received yet. Option A defers that: the map is built from what
+the device already has on disk, which means
+
+- zero new protocol behaviour to verify on real devices,
+- the routing layer is unchanged and remains the source of truth,
+- the map *itself* will surface whether Tier 1's recall is good enough
+  by being either rich or sparse on a real two-device run.
+
+### Per-peer vs per-post bucketing — only the *display* anchor changed
+
+§7 lists this as an open question. Phase 1 takes a narrow stance:
+
+- **Routing** (which Hyperswarm topic the user joins) stays *per-peer*:
+  the user's interest profile drives bucket membership.
+- **Visualisation** (where the map centres) is *per-post*: the anchor is
+  the embedding of the post the user just wrote.
+
+If the small-cohort test shows that the map is mostly empty because the
+user's post drifted out of their residence bucket, Tier 1.5 is the
+incremental fix — same map, richer candidate set.
+
+### Projection algorithm
+
+`src/core/matching/Project2D.ts`. Deterministic PCA-2 via deflated power
+iteration. Pure TypeScript, no platform imports, runs in the calibration
+Node harness too. Roughly:
+
+1. Centre the candidate set on the global mean.
+2. Find the leading eigenvector of the covariance via power iteration
+   (`MatchingConfig.mapPcaPowerIterations`).
+3. Deflate, find the second.
+4. Project all centred vectors onto those two axes, rescale to
+   `[-1, 1]`.
+
+Upgrade path: replace the body with a UMAP call inside the Bare worklet
+without touching the screen or `GetMapCandidates`.
+
+### Identity in the map
+
+Display names are local-only. The user's own anchor renders with
+`SettingsStore.displayName` (or fingerprint if empty); remote stars
+render with the truncated public-key fingerprint. No `authorDisplayName`
+field is added to `PostBody`, so the topic stays at `resonance/v1/` and
+the network is not partitioned.

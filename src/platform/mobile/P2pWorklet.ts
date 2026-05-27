@@ -9,6 +9,7 @@ import type { BucketId, PeerId, SignedRecord } from '@core/domain/types';
 
 interface InitResult {
   readonly outboxKey: string;
+  readonly noiseKey: string;
 }
 
 interface AppendResult {
@@ -26,6 +27,11 @@ interface RecordEvent {
 interface PresenceEvent {
   readonly peerId: string;
   readonly present: boolean;
+}
+
+interface PeerNoiseEvent {
+  readonly peerId: string;
+  readonly noiseKey: string;
 }
 
 interface WirePostBody {
@@ -62,8 +68,10 @@ export class P2pWorklet {
   private worklet: Worklet | null = null;
   private rpc: FramedRpcClient | null = null;
   private outboxKey: string | null = null;
+  private noiseKey: string | null = null;
   private recordHandlers: Array<(r: SignedRecord) => void> = [];
   private presenceHandlers: Array<(peerId: PeerId, present: boolean) => void> = [];
+  private peerNoiseHandlers: Array<(peerId: string, noiseKey: string) => void> = [];
 
   get isReady(): boolean {
     return this.outboxKey !== null;
@@ -95,6 +103,14 @@ export class P2pWorklet {
         h(peer, evt.present);
       }
     });
+    rpc.on<PeerNoiseEvent>('peerNoise', (evt) => {
+      if (evt === undefined) {
+        return;
+      }
+      for (const h of this.peerNoiseHandlers) {
+        h(evt.peerId, evt.noiseKey);
+      }
+    });
 
     const storagePath = `${Paths.document.uri.replace(/^file:\/\//, '')}${StorageConfig.corestoreDir}`;
     const initResult = await rpc.request<InitResult>('init', { storagePath });
@@ -102,6 +118,11 @@ export class P2pWorklet {
     this.worklet = worklet;
     this.rpc = rpc;
     this.outboxKey = initResult.outboxKey;
+    this.noiseKey = initResult.noiseKey;
+  }
+
+  get localNoiseKey(): string | null {
+    return this.noiseKey;
   }
 
   async shutdown(): Promise<void> {
@@ -138,6 +159,25 @@ export class P2pWorklet {
   async leaveBucket(bucket: BucketId): Promise<void> {
     const rpc = this.requireRpc();
     await rpc.request<OkResult>('leaveBucket', { bucketId: String(bucket) });
+  }
+
+  /**
+   * Tell the swarm to maintain a direct connection to a peer identified
+   * by their Hyperswarm noise public key (hex). Used for sticky peers:
+   * once we have learned a peer's noise key during a swarm topic
+   * connection, we call this on every boot so the connection survives
+   * bucket changes on either side.
+   */
+  async joinPeer(noiseKey: string): Promise<void> {
+    const rpc = this.requireRpc();
+    await rpc.request<OkResult>('joinPeer', { noiseKey });
+  }
+
+  onPeerNoise(handler: (peerId: string, noiseKey: string) => void): () => void {
+    this.peerNoiseHandlers.push(handler);
+    return () => {
+      this.peerNoiseHandlers = this.peerNoiseHandlers.filter((h) => h !== handler);
+    };
   }
 
   onRecord(handler: (record: SignedRecord) => void): () => void {

@@ -19,11 +19,21 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@core/*": ["src/core/*"],
-      "@data/*": ["src/data/*"],
-      "@domain/*": ["src/domain/*"],
-      "@platform/*": ["src/platform/*"],
-      "@ui/*": ["src/ui/*"]
+      "@core/*": [
+        "src/core/*"
+      ],
+      "@data/*": [
+        "src/data/*"
+      ],
+      "@domain/*": [
+        "src/domain/*"
+      ],
+      "@platform/*": [
+        "src/platform/*"
+      ],
+      "@ui/*": [
+        "src/ui/*"
+      ]
     }
   },
   "include": [
@@ -37,5 +47,6 @@
     "ios",
     "build",
     "qvac/worker.bundle.js"
-  ]
+  ],
+  "extends": "expo/tsconfig.base"
 }

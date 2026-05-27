@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { View, ScrollView, Alert, Pressable } from 'react-native';
+import { View, ScrollView, Alert, Pressable, RefreshControl } from 'react-native';
 import {
   Text,
   Card,
@@ -9,7 +9,7 @@ import {
   HelperText,
   useTheme,
 } from 'react-native-paper';
-import { useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { useLocalSearchParams, useFocusEffect, useRouter } from 'expo-router';
 import { useRequireContainer } from '@ui/AppContainerContext';
 import { useSettingsStore } from '@domain/SettingsStore';
 import { draftResponse } from '@core/responses/DraftResponse';
@@ -37,6 +37,7 @@ interface ThreadResponse {
 export default function ThreadScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const container = useRequireContainer();
+  const router = useRouter();
   const theme = useTheme();
   const receiverContext = useSettingsStore((s) => s.receiverContext);
 
@@ -45,6 +46,7 @@ export default function ThreadScreen() {
   const [loading, setLoading] = useState(true);
   const [drafting, setDrafting] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [composing, setComposing] = useState(false);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -136,6 +138,7 @@ export default function ThreadScreen() {
         { post: scored, receiverContext },
       );
       setDraft(draftText);
+      setComposing(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -179,6 +182,7 @@ export default function ThreadScreen() {
         );
       }
       setDraft('');
+      setComposing(false);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -199,6 +203,15 @@ export default function ThreadScreen() {
     <ScrollView
       style={{ flex: 1, backgroundColor: theme.colors.background }}
       contentContainerStyle={{ padding: 12 }}
+      refreshControl={
+        <RefreshControl
+          refreshing={false}
+          onRefresh={() => {
+            void load();
+          }}
+          tintColor={theme.colors.primary}
+        />
+      }
     >
       {post !== null ? (
         <Card>
@@ -207,6 +220,18 @@ export default function ThreadScreen() {
             <Text style={{ marginTop: 8, opacity: 0.6, fontSize: 12 }}>
               {shortPeer(post.author)} · {new Date(post.createdAt).toLocaleString()}
             </Text>
+            {post.author === container.self && (
+              <Button
+                mode="text"
+                icon="graph"
+                style={{ marginTop: 4, alignSelf: 'flex-start' }}
+                onPress={() =>
+                  router.push({ pathname: '/map', params: { anchor: post.address } })
+                }
+              >
+                View on map
+              </Button>
+            )}
           </Card.Content>
         </Card>
       ) : (
@@ -256,24 +281,37 @@ export default function ThreadScreen() {
           {responses.some((r) => r.author === container.self) ? (
             <HelperText type="info">
               You already responded to this post. Long-press your response above
-              to delete it before drafting a new one.
+              to delete it before writing a new one.
             </HelperText>
-          ) : null}
-          <Button
-            mode="outlined"
-            onPress={() => {
-              void generateDraft();
-            }}
-            loading={drafting}
-            disabled={
-              drafting || publishing ||
-              responses.some((r) => r.author === container.self)
-            }
-          >
-            Draft a response
-          </Button>
-
-          {draft.length > 0 && (
+          ) : !composing ? (
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <Button
+                mode="contained"
+                icon="pencil"
+                onPress={() => {
+                  setDraft('');
+                  setError(null);
+                  setComposing(true);
+                }}
+                disabled={drafting || publishing}
+                style={{ flex: 1 }}
+              >
+                Write reply
+              </Button>
+              <Button
+                mode="outlined"
+                icon="robot-outline"
+                onPress={() => {
+                  void generateDraft();
+                }}
+                loading={drafting}
+                disabled={drafting || publishing}
+                style={{ flex: 1 }}
+              >
+                Draft with AI
+              </Button>
+            </View>
+          ) : (
             <>
               <TextInput
                 mode="outlined"
@@ -281,20 +319,57 @@ export default function ThreadScreen() {
                 numberOfLines={6}
                 value={draft}
                 onChangeText={setDraft}
-                style={{ marginTop: 12 }}
+                placeholder="Write what you'd add — first person, specific, no greetings."
+                autoFocus
               />
               {error !== null && <HelperText type="error">{error}</HelperText>}
-              <Button
-                mode="contained"
-                onPress={() => {
-                  void publish();
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  marginTop: 8,
+                  flexWrap: 'wrap',
+                  rowGap: 8,
                 }}
-                loading={publishing}
-                disabled={publishing || draft.trim().length === 0}
-                style={{ marginTop: 8 }}
               >
-                Publish response
-              </Button>
+                <Button
+                  mode="text"
+                  onPress={() => {
+                    setComposing(false);
+                    setDraft('');
+                    setError(null);
+                  }}
+                  disabled={publishing}
+                  compact
+                >
+                  Cancel
+                </Button>
+                <View style={{ flex: 1 }} />
+                <Button
+                  mode="outlined"
+                  icon="robot-outline"
+                  onPress={() => {
+                    void generateDraft();
+                  }}
+                  loading={drafting}
+                  disabled={drafting || publishing}
+                  compact
+                  style={{ marginRight: 8 }}
+                >
+                  {draft.trim().length === 0 ? 'AI' : 'Rewrite'}
+                </Button>
+                <Button
+                  mode="contained"
+                  icon="send"
+                  onPress={() => {
+                    void publish();
+                  }}
+                  loading={publishing}
+                  disabled={publishing || draft.trim().length === 0}
+                >
+                  Publish
+                </Button>
+              </View>
             </>
           )}
         </View>

@@ -74,12 +74,78 @@ export const MatchingConfig = {
     'general interest in technology, life, and meaningful conversations',
 
   /**
+   * Instruction template prefixed to every text submitted to
+   * EmbeddingGemma. The model is task-conditioned; without an explicit
+   * task tag it falls back to a generic embedding that is measurably
+   * worse for similarity comparisons. We pick "sentence similarity"
+   * because every post in Resonance plays both roles — sometimes the
+   * needle, sometimes the haystack. The literal `{text}` placeholder is
+   * substituted at call time.
+   *
+   * Reference: Google's EmbeddingGemma model card on Hugging Face
+   * (`task: sentence similarity | query: <text>`). Keep the literal
+   * exactly as documented — variants like "STS" do not match what the
+   * model was trained on.
+   */
+  embeddingInstruction: 'task: sentence similarity | query: {text}',
+
+  /**
    * Filtering model: each incoming remote post is scored as the
    * MAX cosine similarity against the current user's own posts. With
    * zero own posts (cold start) we fall back to similarity against the
    * embedding of the user's "About you" text.
    */
   similarityAggregation: 'max-vs-own-posts' as 'max-vs-own-posts',
+
+  /**
+   * Hard cap on how many remote posts the semantic map will fetch and
+   * project. PCA-2 over 200 vectors of 256 dims is cheap; beyond that the
+   * map becomes visually crowded before it becomes computationally heavy.
+   */
+  mapMaxCandidates: 200,
+
+  /**
+   * Posts whose similarity to the user's anchor falls below this value are
+   * still plotted on the map (the whole point of the map is to make the
+   * geometry visible, including near-misses). The Inbox keeps its own,
+   * user-controlled filter via `similarityThreshold` in `SettingsStore`.
+   */
+  mapMinSimilarityToPlot: -1.0,
+
+  /**
+   * Dimensionality reduction strategy used by `projectToPlane`. PCA-2 is
+   * deterministic, pure TS, and fast enough on-device. UMAP in the Bare
+   * worklet is the planned upgrade.
+   */
+  mapProjectionMethod: 'radial-sim' as 'pca-2' | 'radial-sim',
+
+  /**
+   * Iterations for the power-iteration step in PCA-2. With L2-normalised
+   * 256-dim vectors and ≤200 samples, convergence is well inside 20 steps.
+   */
+  mapPcaPowerIterations: 24,
+
+  /**
+   * Pinch-zoom clamp on the map. 1.0 = fit-to-screen.
+   */
+  mapZoomMin: 0.5,
+  mapZoomMax: 8.0,
+
+  /**
+   * Edges from the anchor star to peer stars are drawn only above this
+   * similarity. Cosine over L2-unit vectors lives in `[-1, 1]`. Below the
+   * floor the peer is plotted but the line is suppressed, to avoid
+   * obscuring the geometry with low-information strokes.
+   */
+  mapLineMinSimilarity: 0.0,
+
+  /**
+   * Up to K peers — the closest ones by similarity — get a numeric label
+   * drawn next to their star on the canvas. Tapping any star always
+   * surfaces the exact value in the bottom sheet.
+   */
+  mapLabelTopK: 5,
+  mapLabelMinSimilarity: 0.3,
 
   /**
    * Prompts used by the response draft pipeline. Kept here, not at call

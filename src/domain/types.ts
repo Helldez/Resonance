@@ -25,4 +25,11 @@ export interface SettingsState {
   readonly responseMode: ResponseMode;
   readonly receiverContext: string;
   readonly similarityThreshold: number;
+  /**
+   * Local-only display name. Never published in signed records; visible
+   * only to the user themselves. Falls back to a truncated peer id when
+   * empty. Remote peers are always rendered by their truncated peer id
+   * in Phase 1.
+   */
+  readonly displayName: string;
 }

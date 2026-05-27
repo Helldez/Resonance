@@ -9,6 +9,7 @@ interface SettingsStore extends SettingsState {
   setResponseMode: (mode: ResponseMode) => void;
   setReceiverContext: (text: string) => void;
   setSimilarityThreshold: (value: number) => void;
+  setDisplayName: (value: string) => void;
 }
 
 /**
@@ -23,9 +24,11 @@ export const useSettingsStore = create<SettingsStore>()(
       responseMode: 'draft-confirm',
       receiverContext: '',
       similarityThreshold: MatchingConfig.defaultInboxSimilarityThreshold,
+      displayName: '',
       setResponseMode: (responseMode) => set({ responseMode }),
       setReceiverContext: (receiverContext) => set({ receiverContext }),
       setSimilarityThreshold: (similarityThreshold) => set({ similarityThreshold }),
+      setDisplayName: (displayName) => set({ displayName }),
     }),
     {
       name: StorageConfig.settingsKvKey,
@@ -34,6 +37,7 @@ export const useSettingsStore = create<SettingsStore>()(
         responseMode: state.responseMode,
         receiverContext: state.receiverContext,
         similarityThreshold: state.similarityThreshold,
+        displayName: state.displayName,
       }),
     },
   ),

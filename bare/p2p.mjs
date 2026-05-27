@@ -34,6 +34,7 @@ import Protomux from 'protomux'
 import c from 'compact-encoding'
 import b4a from 'b4a'
 import crypto from 'bare-crypto'
+import fs from 'bare-fs'
 
 import { FramedRpc } from './rpc-frame.mjs'
 
@@ -122,7 +123,8 @@ async function watchCore(core) {
 }
 
 async function onConnection(conn, info) {
-  console.log('[p2p] peer connected, remote noise key:', bytesToHex(info.publicKey).slice(0, 12))
+  const remoteNoiseKey = bytesToHex(info.publicKey)
+  console.log('[p2p] peer connected, remote noise key:', remoteNoiseKey.slice(0, 12))
   const mux = Protomux.from(conn)
 
   // Single 32-byte message = the peer's outbox Hypercore key. compact-encoding
@@ -143,6 +145,10 @@ async function onConnection(conn, info) {
     onmessage: async (outboxKey) => {
       const peerId = bytesToHex(outboxKey)
       console.log('[p2p] received remote outbox key:', peerId.slice(0, 12))
+      // Emit the (outboxKey ↔ noiseKey) pairing so the RN side can persist
+      // it and call joinPeer on future boots. Sticky peers survive bucket
+      // changes — see docs/SEMANTIC_ROUTING.md §10 (sticky peers).
+      rpc.emit('peerNoise', { peerId, noiseKey: remoteNoiseKey })
       if (knownRemoteCores.has(peerId)) return
       const remote = store.get({ key: outboxKey })
       try {
@@ -162,6 +168,29 @@ async function onConnection(conn, info) {
   store.replicate(conn)
 }
 
+async function loadOrCreateSwarmKeyPair(storagePath) {
+  const path = storagePath + '/swarm-keypair.json'
+  try {
+    const json = await fs.promises.readFile(path, 'utf8')
+    const obj = JSON.parse(json)
+    return {
+      publicKey: b4a.from(obj.publicKey, 'hex'),
+      secretKey: b4a.from(obj.secretKey, 'hex'),
+    }
+  } catch (err) {
+    return null
+  }
+}
+
+async function persistSwarmKeyPair(storagePath, kp) {
+  const path = storagePath + '/swarm-keypair.json'
+  const json = JSON.stringify({
+    publicKey: bytesToHex(kp.publicKey),
+    secretKey: bytesToHex(kp.secretKey),
+  })
+  await fs.promises.writeFile(path, json, 'utf8')
+}
+
 async function initialize({ storagePath }) {
   if (store !== null) {
     return { outboxKey: bytesToHex(outbox.key) }
@@ -171,13 +200,32 @@ async function initialize({ storagePath }) {
   await outbox.ready()
   console.log(`[p2p] initialized; outbox key=${bytesToHex(outbox.key).slice(0, 12)} length=${outbox.length}`)
 
-  swarm = new Hyperswarm()
+  // Persisted Hyperswarm keypair → stable Noise identity across restarts.
+  // Required for sticky peers: other devices store our noise key and call
+  // joinPeer on it to re-establish direct DHT connections regardless of
+  // which bucket either of us is currently in.
+  const existing = await loadOrCreateSwarmKeyPair(storagePath)
+  if (existing !== null) {
+    swarm = new Hyperswarm({ keyPair: existing })
+    console.log(`[p2p] swarm restored with persisted noise key=${bytesToHex(existing.publicKey).slice(0, 12)}`)
+  } else {
+    swarm = new Hyperswarm()
+    try {
+      await persistSwarmKeyPair(storagePath, swarm.keyPair)
+      console.log(`[p2p] swarm created with new noise key=${bytesToHex(swarm.keyPair.publicKey).slice(0, 12)} (persisted)`)
+    } catch (err) {
+      console.warn('[p2p] failed to persist swarm keypair', err)
+    }
+  }
   swarm.on('connection', onConnection)
   swarm.on('update', () => {
     console.log(`[p2p] swarm update: connecting=${swarm.connecting} connections=${swarm.connections.size}`)
   })
 
-  return { outboxKey: bytesToHex(outbox.key) }
+  return {
+    outboxKey: bytesToHex(outbox.key),
+    noiseKey: bytesToHex(swarm.keyPair.publicKey),
+  }
 }
 
 async function append({ record }) {
@@ -203,6 +251,19 @@ async function joinBucket({ bucketId, topicSeed }) {
   joinedBuckets.set(bucketId, { discovery, topic })
   await discovery.flushed()
   console.log(`[p2p] joined bucket=${bucketId} (announce flushed to DHT)`)
+  return { ok: true }
+}
+
+async function joinPeer({ noiseKey }) {
+  if (swarm === null) {
+    throw new Error('swarm not initialized')
+  }
+  const key = b4a.from(noiseKey, 'hex')
+  if (key.byteLength !== 32) {
+    throw new Error(`joinPeer: noiseKey must be 32 bytes hex, got ${key.byteLength}`)
+  }
+  swarm.joinPeer(key)
+  console.log(`[p2p] joinPeer noise=${noiseKey.slice(0, 12)}`)
   return { ok: true }
 }
 
@@ -237,6 +298,8 @@ rpc = new FramedRpc(IPC, async (method, params) => {
       return append(params)
     case 'joinBucket':
       return joinBucket(params)
+    case 'joinPeer':
+      return joinPeer(params)
     case 'leaveBucket':
       return leaveBucket(params)
     case 'shutdown':

@@ -68,6 +68,35 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
         );
         await c.network.joinBucket(bucket);
         currentBucketRef.current = bucket;
+        setCurrentBucket(bucket);
+
+        // Sticky peers: re-establish direct connections to every peer we
+        // have ever met. Survives About-you / bucket changes — once you
+        // have connected to someone, you keep being connected to them via
+        // a direct DHT lookup on their Hyperswarm noise key.
+        try {
+          const known = await c.peers.listNoiseKeys();
+          for (const noiseKey of known) {
+            try {
+              await c.p2p.joinPeer(noiseKey);
+            } catch (err) {
+              console.warn('[rn] joinPeer failed', noiseKey.slice(0, 12), err);
+            }
+          }
+          if (known.length > 0) {
+            console.log(`[rn] sticky peers restored count=${known.length}`);
+          }
+        } catch (err) {
+          console.warn('[rn] failed to restore sticky peers', err);
+        }
+
+        // Save the noise key of any peer we connect to, so the next boot
+        // can dial them directly.
+        c.p2p.onPeerNoise((peerId, noiseKey) => {
+          void c.peers.setNoiseKey(peerId, noiseKey).catch((err) => {
+            console.warn('[rn] setNoiseKey failed', err);
+          });
+        });
 
         // Single source of truth for incoming records: verify signature,
         // score against own posts, persist into SQLite. The Inbox/Thread
@@ -125,6 +154,22 @@ const externalOwnEmbeddings: { current: Float32Array[] } = { current: [] };
 
 export function appendOwnEmbedding(v: Float32Array): void {
   externalOwnEmbeddings.current.push(v);
+}
+
+/**
+ * The bucket id this device joined at bootstrap, exposed for the Settings
+ * screen to surface as a diagnostic. Two devices that never see each
+ * other's posts almost always have non-matching bucket ids — making this
+ * visible is the cheapest way to confirm it before reaching for logcat.
+ */
+const currentBucketModuleRef: { current: BucketId | null } = { current: null };
+
+export function setCurrentBucket(b: BucketId | null): void {
+  currentBucketModuleRef.current = b;
+}
+
+export function getCurrentBucket(): BucketId | null {
+  return currentBucketModuleRef.current;
 }
 
 export function getOwnEmbeddingsSnapshot(): Float32Array[] {

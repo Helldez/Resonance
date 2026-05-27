@@ -12,7 +12,7 @@ import {
   HelperText,
 } from 'react-native-paper';
 import { useSettingsStore } from '@domain/SettingsStore';
-import { useRequireContainer } from '@ui/AppContainerContext';
+import { useRequireContainer, getCurrentBucket } from '@ui/AppContainerContext';
 import { ModelProfiles } from '@core/config/ModelProfiles';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 
@@ -42,6 +42,8 @@ export default function SettingsScreen() {
   const setReceiverContext = useSettingsStore((s) => s.setReceiverContext);
   const similarityThreshold = useSettingsStore((s) => s.similarityThreshold);
   const setSimilarityThreshold = useSettingsStore((s) => s.setSimilarityThreshold);
+  const displayName = useSettingsStore((s) => s.displayName);
+  const setDisplayName = useSettingsStore((s) => s.setDisplayName);
 
   const activePreset = presetForValue(similarityThreshold);
 
@@ -71,6 +73,20 @@ export default function SettingsScreen() {
       style={{ flex: 1, backgroundColor: theme.colors.background }}
       contentContainerStyle={{ padding: 12 }}
     >
+      <Text variant="titleMedium">Display name</Text>
+      <TextInput
+        mode="outlined"
+        value={displayName}
+        onChangeText={setDisplayName}
+        placeholder="What you'd like to see next to your own posts"
+      />
+      <HelperText type="info">
+        Local only — peers always see your public-key fingerprint. Leave
+        empty to fall back to the truncated fingerprint everywhere.
+      </HelperText>
+
+      <Divider style={{ marginVertical: 16 }} />
+
       <Text variant="titleMedium">About you (stays on-device)</Text>
       <TextInput
         mode="outlined"
@@ -84,6 +100,30 @@ export default function SettingsScreen() {
         Used to compute your interest bucket and to draft replies. Restart the
         app after changing this so the bucket re-routes you.
       </HelperText>
+
+      <View
+        style={{
+          marginTop: 4,
+          padding: 8,
+          borderRadius: 8,
+          backgroundColor: theme.colors.surfaceVariant,
+        }}
+      >
+        <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+          Current bucket
+        </Text>
+        <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, marginTop: 2 }}>
+          {(() => {
+            const b = getCurrentBucket();
+            return b === null ? '— (network not joined yet)' : `0x${b}`;
+          })()}
+        </Text>
+        <HelperText type="info" padding="none">
+          For two devices to see each other, this hex code must match. If it
+          doesn't, your About-you texts are different enough to land in
+          different LSH buckets — align them and restart.
+        </HelperText>
+      </View>
 
       <Divider style={{ marginVertical: 16 }} />
 

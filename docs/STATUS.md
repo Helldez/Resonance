@@ -63,6 +63,32 @@ code.
   Keet's "always on" model. The Kotlin source is rewritten at prebuild
   time to match `android.package`, so there is no hardcoded class FQCN.
 
+## Semantic map (Phase 1, Option A)
+
+- **`src/app/map.tsx`**: starfield UI rendered with `react-native-svg`.
+  After publishing a post, the user lands here. The anchor (own post) is
+  the central white star; up to `MatchingConfig.mapMaxCandidates` recent
+  remote posts are plotted by PCA-2 of their 256-dim embeddings. Pan +
+  pinch via `react-native-gesture-handler`. Tap a peer star → snippet
+  sheet with similarity and "Open thread".
+- **`src/core/matching/Project2D.ts`**: pure-TS deflated power-iteration
+  PCA. Deterministic. Runs in plain Node too.
+- **`src/core/posts/GetMapCandidates.ts`**: use case wiring the anchor
+  fetch + candidate listing + projection. Depends only on a
+  `MapRepository` port, not the SQLite class.
+- **`src/data/PostRepository.ts`**: `getOneWithEmbedding` + `listForMap`
+  read paths; embeddings decoded into `Float32Array` once at the
+  repository boundary.
+- **Dark theme**: `darkTheme` is now the default in `_layout.tsx`. Colors
+  come from `src/core/config/ThemeConfig.ts`.
+- **Display name**: `SettingsStore.displayName`, local-only, never
+  serialised on the wire. Surfaced in the map header and the Inbox "your
+  post" label via `src/domain/AuthorFormatting.ts`.
+
+Routing geometry is unchanged — the map is a UI projection of records
+the device already has via Tier 1 replication. See
+`docs/SEMANTIC_ROUTING.md` §9.
+
 ## Not yet done
 
 - **M0 — Calibration gate**: corpus + human eval still required.
@@ -73,6 +99,9 @@ code.
 - **iOS**: Android target only.
 - **Auto-publish mode** (Settings toggle exists; flow gated off).
 - **Reputation / helpful counts**: schema column exists, no UI.
+- **Compose-time per-post probe (Tier 1.5)**: planned if the Phase 1
+  map turns out too sparse on the small-cohort test — see
+  `docs/SEMANTIC_ROUTING.md` §9.
 - **Multi-table LSH / Hamming-1 neighbor join**: planned for Phase 2 to
   fix the cliff where two close embeddings on opposite sides of a single
   hyperplane never see each other.

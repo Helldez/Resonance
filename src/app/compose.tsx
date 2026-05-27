@@ -42,8 +42,8 @@ export default function ComposeScreen() {
         appendOwnEmbedding(record.body.embedding);
       }
       router.replace({
-        pathname: '/thread/[id]',
-        params: { id: addressOf(record.author, record.feedIndex) },
+        pathname: '/map',
+        params: { anchor: addressOf(record.author, record.feedIndex) },
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

@@ -1,6 +1,15 @@
 import type { IDatabase } from '@core/ports/IDatabase';
 import type { PeerId, PostBody, RecordAddress } from '@core/domain/types';
 
+export interface MapPostRow {
+  readonly address: RecordAddress;
+  readonly author: PeerId;
+  readonly text: string;
+  readonly embedding: Float32Array;
+  readonly createdAt: number;
+  readonly similarity: number | null;
+}
+
 /**
  * Posts are durably stored in SQLite for fast inbox/thread queries.
  * The authoritative record stays in the Hypercore feed (mailbox); this
@@ -84,6 +93,100 @@ export class PostRepository {
     }
     return out;
   }
+
+  /**
+   * One post with its embedding decoded. Used by the semantic map to fetch
+   * the anchor (the user's just-published post) before projection.
+   */
+  async getOneWithEmbedding(
+    address: RecordAddress,
+    expectedDim: number,
+  ): Promise<MapPostRow | null> {
+    const rows = await this.db.query<{
+      address: string;
+      author: string;
+      text: string;
+      embedding: Uint8Array;
+      created_at: number;
+      similarity: number | null;
+    }>(
+      `SELECT address, author, text, embedding, created_at, similarity
+       FROM posts WHERE address = ? LIMIT 1`,
+      [address],
+    );
+    if (rows.length === 0) {
+      return null;
+    }
+    const row = rows[0];
+    const embedding = decodeEmbedding(row.embedding, expectedDim);
+    if (embedding === null) {
+      return null;
+    }
+    return {
+      address: row.address as RecordAddress,
+      author: row.author as PeerId,
+      text: row.text,
+      embedding,
+      createdAt: row.created_at,
+      similarity: row.similarity,
+    };
+  }
+
+  /**
+   * Posts from peers other than `self`, most recent first, capped at
+   * `limit`. Used by the semantic map to populate the candidate set
+   * around the anchor. Embeddings are decoded into Float32Array; rows
+   * whose stored blob does not match `expectedDim` are skipped silently
+   * (they would break cosine math downstream).
+   */
+  async listForMap(
+    self: PeerId,
+    limit: number,
+    expectedDim: number,
+  ): Promise<MapPostRow[]> {
+    const rows = await this.db.query<{
+      address: string;
+      author: string;
+      text: string;
+      embedding: Uint8Array;
+      created_at: number;
+      similarity: number | null;
+    }>(
+      `SELECT address, author, text, embedding, created_at, similarity
+       FROM posts
+       WHERE author != ?
+       ORDER BY created_at DESC
+       LIMIT ?`,
+      [self, limit],
+    );
+    const out: MapPostRow[] = [];
+    for (const row of rows) {
+      const embedding = decodeEmbedding(row.embedding, expectedDim);
+      if (embedding === null) {
+        continue;
+      }
+      out.push({
+        address: row.address as RecordAddress,
+        author: row.author as PeerId,
+        text: row.text,
+        embedding,
+        createdAt: row.created_at,
+        similarity: row.similarity,
+      });
+    }
+    return out;
+  }
+}
+
+function decodeEmbedding(blob: Uint8Array | null | undefined, expectedDim: number): Float32Array | null {
+  if (blob === null || blob === undefined) {
+    return null;
+  }
+  const expectedBytes = expectedDim * Float32Array.BYTES_PER_ELEMENT;
+  if (blob.byteLength !== expectedBytes) {
+    return null;
+  }
+  return new Float32Array(blob.buffer, blob.byteOffset, expectedDim);
 }
 
 function floatToBlob(v: Float32Array): Uint8Array {

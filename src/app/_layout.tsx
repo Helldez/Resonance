@@ -1,21 +1,26 @@
 import { Stack } from 'expo-router';
 import { View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { PaperProvider } from 'react-native-paper';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { lightTheme } from '@ui/theme/theme';
+import { StatusBar } from 'expo-status-bar';
+import { darkTheme } from '@ui/theme/theme';
 import { AppContainerProvider, useAppContainer } from '@ui/AppContainerContext';
 import { useBootstrapStore } from '@domain/BootstrapStore';
 import BootstrapScreen from './bootstrap';
 
 export default function RootLayout() {
   return (
-    <SafeAreaProvider>
-      <PaperProvider theme={lightTheme}>
-        <AppContainerProvider>
-          <Gate />
-        </AppContainerProvider>
-      </PaperProvider>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <PaperProvider theme={darkTheme}>
+          <StatusBar style="light" />
+          <AppContainerProvider>
+            <Gate />
+          </AppContainerProvider>
+        </PaperProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 
@@ -30,9 +35,16 @@ function Gate() {
     );
   }
   return (
-    <Stack>
-      <Stack.Screen name="index" options={{ title: 'Inbox' }} />
+    <Stack
+      screenOptions={{
+        headerStyle: { backgroundColor: darkTheme.colors.surface },
+        headerTintColor: darkTheme.colors.onSurface,
+        contentStyle: { backgroundColor: darkTheme.colors.background },
+      }}
+    >
+      <Stack.Screen name="index" options={{ title: 'Feed' }} />
       <Stack.Screen name="compose" options={{ title: 'New post' }} />
+      <Stack.Screen name="map" options={{ headerShown: false }} />
       <Stack.Screen name="thread/[id]" options={{ title: 'Thread' }} />
       <Stack.Screen name="settings" options={{ title: 'Settings' }} />
       <Stack.Screen name="bootstrap" options={{ headerShown: false }} />
