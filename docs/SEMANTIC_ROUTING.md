@@ -429,3 +429,134 @@ Display names are local-only. The user's own anchor renders with
 render with the truncated public-key fingerprint. No `authorDisplayName`
 field is added to `PostBody`, so the topic stays at `resonance/v1/` and
 the network is not partitioned.
+
+---
+
+## 10. Sticky peers and authorNoiseKey direct routing (Phase 2)
+
+### The problem this section solves
+
+Tier 1 with a single bucket per peer (or even Tier 2 with L buckets)
+has a *deliverability* hole that the *discoverability* layer cannot fix
+by itself: once Alice and Bob have stopped sharing any bucket — because
+one of them changed About-you, drifted to a different post-driven
+centroid, or simply rotated to a new bucket as part of post-driven
+re-bucketing — the Hyperswarm topic connection between them dies.
+Records still in Alice's outbox that Bob has not yet replicated are
+stranded. Future responses Bob writes to one of Alice's posts cannot
+reach her.
+
+Empirically this happens within hours of two users having different
+posting cadences. It is the difference between "we can find each
+other" and "we can keep talking after we found each other".
+
+### Two complementary mechanisms
+
+#### 10.1 Sticky peers (persistent noise-key dial)
+
+Hyperswarm exposes a `joinPeer(noisePublicKey)` API that maintains a
+direct DHT connection to a specific peer regardless of which topics
+either side currently announces. Resonance uses this to keep
+already-established conversations alive:
+
+1. The Bare worker persists the Hyperswarm `keyPair` to
+   `<corestoreDir>/swarm-keypair.json` so the device's noise identity
+   is stable across restarts. Without this, every restart would
+   generate a new noise key and no peer could ever re-find the device.
+2. On every peer connection, the bare worker emits a `peerNoise` event
+   pairing the remote outbox key with the remote noise key.
+3. The RN side persists those pairings in `peers.noise_pubkey`.
+4. At boot, after joining the personal L buckets, the RN side restores
+   every known peer's noise key and calls `swarm.joinPeer(...)` on
+   each. Hyperswarm/HyperDHT then maintains those connections in the
+   background, sharing the device's per-peer connection budget
+   (`maxPeers`) with bucket-discovered peers.
+
+Effect: a conversation between Alice and Bob, once started, continues
+to be replicated even after their bucket sets stop overlapping. The
+LSH layer becomes a pure discovery primitive; persistence is moved to
+direct peer routing.
+
+#### 10.2 `authorNoiseKey` in the signed PostBody
+
+Sticky peers solve the case where a connection was once alive. They do
+not solve the case where Bob downloaded Alice's post indirectly
+(through a third peer's relayed replication) and never directly
+connected to Alice — Bob has no noise key for Alice.
+
+The fix is to ship Alice's noise key *inside the post itself*:
+
+```ts
+interface PostBody {
+  // ...
+  authorNoiseKey?: string;  // hex of Alice's Hyperswarm noise pubkey
+}
+```
+
+The field is part of the canonical signed bytes (`CanonicalRecord`),
+so Bob can verify that the noise key really came from Alice and was
+not injected by a relayer. When Bob writes a response, the RN side
+looks up `post.authorNoiseKey`, calls `swarm.joinPeer(noiseKey)`, and
+the direct DHT dial completes — regardless of whether Bob and Alice
+have ever shared a bucket.
+
+This is the cleanest decomposition of the routing problem:
+
+- **Discoverability** — "how does anyone find Alice in the first
+  place?" — handled by Tier 2 multi-table LSH on Alice's *current*
+  interest vector.
+- **Deliverability** — "how does Bob reach Alice once he has one of
+  her posts?" — handled by the noise key embedded in every post Alice
+  publishes from this point forward.
+
+### Backward compatibility
+
+`authorNoiseKey` is canonicalised only when present, so pre-existing
+posts (older databases, replicated records from peers on a build that
+predates this change) still validate. New posts get the field; old
+posts continue to work via the per-bucket discovery path alone.
+
+### Limits
+
+- The noise key embedded in a post is the device's noise key *at the
+  time of publication*. If the user clears app data and a new noise
+  key is generated, old posts still reference the dead key. No way to
+  retroactively update old posts (Hypercore is append-only). Future
+  remedy: an explicit "key rotation" record kind that current devices
+  can publish to advertise their new noise key.
+- A noise key in a post is public. This is already the case for the
+  Ed25519 author pubkey, so the marginal privacy impact is zero, but
+  it does mean that anyone with a copy of any of your posts can dial
+  you on the DHT. Hyperswarm's `maxPeers` cap and the per-peer
+  connection budget protect against floods; an attacker who acquires a
+  popular post can attempt to fill the author's connection slots.
+  Mitigation: bound the inbound connection budget and prefer
+  connections to peers we have records from.
+
+### Decision log row
+
+| Date       | Decision                                                                                   |
+|------------|--------------------------------------------------------------------------------------------|
+| 2026-05-27 | Persist Hyperswarm keypair (stable noise identity), persist known peer noise keys, joinPeer at boot. Sticky-peers without an explicit "follow" UI. |
+| 2026-05-27 | Embed `authorNoiseKey` in `PostBody`, canonicalised only when present (backwards compatible). Future posts are point-to-point reachable regardless of bucket overlap. |
+
+---
+
+## 11. Tier 2 ship status
+
+Tier 2 is no longer "planned". `MatchingConfig.lshTables = 8` and
+`MatchingConfig.lshSeeds = [...]` are live. Each peer announces in
+8 topics derived from L independent hyperplane families, and the union
+of per-table collisions drives bucket co-membership.
+
+Post-driven re-bucketing is also live: once a user has at least
+`MatchingConfig.postDrivenMinOwnPosts` own posts, the interest vector
+that feeds the L LSH tables switches from `receiverContext` (About-you)
+to the L2-normalised centroid of their most recent
+`MatchingConfig.postDrivenWindow` post embeddings. The bucket re-join
+is diff-based: only the (typically 1-2 of L) tables whose bucket bits
+actually changed see a leave/join cycle, so connection churn is
+bounded.
+
+The §4 Tier 2 description above remains the authoritative analysis of
+why this combination is the right answer for ~10k-scale networks.

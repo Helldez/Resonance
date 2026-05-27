@@ -27,7 +27,13 @@ export default function ComposeScreen() {
           clock: container.clock,
           self: container.self,
         },
-        { text },
+        {
+          text,
+          // Stamp the post with our current DHT noise key so anyone who
+          // receives the post can dial us back directly later, even if
+          // we drift to a different LSH bucket. See SEMANTIC_ROUTING.md §11.
+          authorNoiseKey: container.p2p.localNoiseKey ?? undefined,
+        },
       );
       if (record.body.kind === 'post') {
         await container.posts.upsert(

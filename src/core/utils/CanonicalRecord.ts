@@ -14,13 +14,22 @@ import type { RecordBody, SignedRecord } from '@core/domain/types';
 export function canonicalBytes(body: RecordBody): Uint8Array {
   if (body.kind === 'post') {
     const embeddingB64 = base64FromFloat32(body.embedding);
-    const obj = {
+    // `authorNoiseKey` is optional for backwards-compatibility: if absent
+    // we MUST NOT include it in the canonical bytes, otherwise digests of
+    // pre-existing posts would no longer reproduce on validation. New
+    // posts that include the field have a different digest than they
+    // would without it — that is the point, the key is part of the
+    // signed body so it cannot be tampered with by a relayer.
+    const obj: Record<string, unknown> = {
       kind: body.kind,
       text: body.text,
       embeddingB64,
       bucket: body.bucket,
       createdAt: body.createdAt,
     };
+    if (typeof body.authorNoiseKey === 'string' && body.authorNoiseKey.length > 0) {
+      obj.authorNoiseKey = body.authorNoiseKey;
+    }
     return utf8(JSON.stringify(obj));
   }
   const obj = {

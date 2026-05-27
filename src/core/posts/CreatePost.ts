@@ -23,6 +23,13 @@ export interface CreatePostDeps {
 
 export interface CreatePostInput {
   readonly text: string;
+  /**
+   * The author's Hyperswarm noise public key (hex), if available. When
+   * provided, it is embedded in the signed `PostBody` so any peer that
+   * receives the post can dial the author directly via the DHT, bypassing
+   * bucket co-membership requirements. See `docs/SEMANTIC_ROUTING.md` §11.
+   */
+  readonly authorNoiseKey?: string;
 }
 
 export interface CreatePostResult {
@@ -53,12 +60,16 @@ export async function createPost(
 
   await deps.network.joinBucket(bucket);
 
+  const noiseKey = input.authorNoiseKey;
   const body: PostBody = {
     kind: 'post',
     text: trimmed,
     embedding,
     bucket,
     createdAt: deps.clock.now(),
+    ...(typeof noiseKey === 'string' && noiseKey.length > 0
+      ? { authorNoiseKey: noiseKey }
+      : {}),
   };
 
   const digest = await canonicalDigest(body);

@@ -104,3 +104,29 @@ export function lshBucketOf(
   }
   return toHexBucketId(bits, bitValues);
 }
+
+/**
+ * Multi-table LSH (Tier 2 from `docs/SEMANTIC_ROUTING.md`). Returns one
+ * `BucketId` per seed in `seeds`, so the peer joins L topics instead of
+ * 1. Two peers see each other if they collide in *any* table; with
+ * `L = 8` and `cos_sim = 0.85` the recall jumps from ~20% (Tier 1) to
+ * ~83%.
+ *
+ * Bucket ids are prefixed with the table index in 2-hex-digit form so
+ * `t00-<bits>`, `t01-<bits>` etc. are guaranteed not to collide across
+ * tables — each becomes a distinct Hyperswarm topic.
+ */
+export function lshBucketsOf(
+  embedding: Float32Array,
+  dim: number,
+  bits: number,
+  seeds: ReadonlyArray<number>,
+): BucketId[] {
+  const out: BucketId[] = [];
+  for (let i = 0; i < seeds.length; i++) {
+    const raw = lshBucketOf(embedding, dim, bits, seeds[i]);
+    const idx = (i < 16 ? '0' : '') + i.toString(16);
+    out.push((`t${idx}-${raw}`) as BucketId);
+  }
+  return out;
+}

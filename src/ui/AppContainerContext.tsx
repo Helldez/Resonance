@@ -3,12 +3,14 @@ import type { MobileContainer } from '@platform/mobile/bootstrap';
 import { bootstrapMobile } from '@platform/mobile/bootstrap';
 import { useBootstrapStore } from '@domain/BootstrapStore';
 import { useSettingsStore } from '@domain/SettingsStore';
-import { lshBucketOf } from '@core/matching/LshBucket';
+import { lshBucketsOf } from '@core/matching/LshBucket';
+import { computeInterestVector } from '@core/matching/InterestVector';
+import type { InterestVectorSource } from '@core/matching/InterestVector';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 import { addressOf } from '@core/utils/AddressOf';
 import { canonicalDigest } from '@core/utils/CanonicalRecord';
 import { cosineOnUnit } from '@core/matching/CosineSimilarity';
-import type { BucketId } from '@core/domain/types';
+import type { BucketId, PeerId } from '@core/domain/types';
 import type { ModelProgressUpdate } from '@qvac/sdk';
 
 const AppContainerContext = createContext<MobileContainer | null>(null);
@@ -19,8 +21,8 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
   const setProgress = useBootstrapStore((s) => s.setProgress);
   const setError = useBootstrapStore((s) => s.setError);
   const setSelf = useBootstrapStore((s) => s.setSelf);
-  const interestProfileRef = useRef<Float32Array | null>(null);
-  const currentBucketRef = useRef<BucketId | null>(null);
+  const aboutYouEmbeddingRef = useRef<Float32Array | null>(null);
+  const containerRef = useRef<MobileContainer | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -34,6 +36,8 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
           return;
         }
         setSelf(c.self);
+        containerRef.current = c;
+        setContainerForReBucket(c);
 
         setStage('embedding-model');
         await c.embedderConcrete.load((p: ModelProgressUpdate) => {
@@ -48,8 +52,9 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
         const interestText = receiverContext.trim().length === 0
           ? MatchingConfig.fallbackInterestText
           : receiverContext;
-        const interestProfile = await c.embedder.embed(interestText);
-        interestProfileRef.current = interestProfile;
+        const aboutYouEmbedding = await c.embedder.embed(interestText);
+        aboutYouEmbeddingRef.current = aboutYouEmbedding;
+        setAboutYouEmbeddingForReBucket(aboutYouEmbedding);
 
         // Load own posts' embeddings so the receiver-side similarity can
         // be computed against the user's actual posting history rather
@@ -60,15 +65,7 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
         );
         externalOwnEmbeddings.current = ownFromDb;
 
-        const bucket = lshBucketOf(
-          interestProfile,
-          MatchingConfig.embeddingDim,
-          MatchingConfig.lshBits,
-          MatchingConfig.lshSeed,
-        );
-        await c.network.joinBucket(bucket);
-        currentBucketRef.current = bucket;
-        setCurrentBucket(bucket);
+        await rebucketAndJoin();
 
         // Sticky peers: re-establish direct connections to every peer we
         // have ever met. Survives About-you / bucket changes — once you
@@ -106,7 +103,7 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
             c,
             record,
             externalOwnEmbeddings.current,
-            interestProfileRef.current,
+            aboutYouEmbeddingRef.current,
           );
         });
 
@@ -145,7 +142,8 @@ export function useRequireContainer(): MobileContainer {
 
 /**
  * The list of the local user's post embeddings, used by the receiver-side
- * similarity scorer. Mutated in place when the user composes a new post.
+ * similarity scorer AND by the post-driven bucket computation. Mutated in
+ * place when the user composes a new post.
  *
  * Exposed via a module-level ref because the Compose screen needs to push
  * into it without going through the React tree.
@@ -154,26 +152,113 @@ const externalOwnEmbeddings: { current: Float32Array[] } = { current: [] };
 
 export function appendOwnEmbedding(v: Float32Array): void {
   externalOwnEmbeddings.current.push(v);
-}
-
-/**
- * The bucket id this device joined at bootstrap, exposed for the Settings
- * screen to surface as a diagnostic. Two devices that never see each
- * other's posts almost always have non-matching bucket ids — making this
- * visible is the cheapest way to confirm it before reaching for logcat.
- */
-const currentBucketModuleRef: { current: BucketId | null } = { current: null };
-
-export function setCurrentBucket(b: BucketId | null): void {
-  currentBucketModuleRef.current = b;
-}
-
-export function getCurrentBucket(): BucketId | null {
-  return currentBucketModuleRef.current;
+  // After publishing a new post, the bucket source may switch from
+  // About-you to post-centroid (or update the centroid). Re-bucket and
+  // diff so we leave dropped topics and join new ones without churn.
+  void rebucketAndJoin().catch((err) => {
+    console.warn('[rn] re-bucket after own post failed', err);
+  });
 }
 
 export function getOwnEmbeddingsSnapshot(): Float32Array[] {
   return externalOwnEmbeddings.current;
+}
+
+// ----- Bucket state shared with the Settings screen --------------------------
+
+/**
+ * The L LSH buckets this device is currently joined to (Tier 2 multi-table).
+ * Exposed for the Settings screen to surface as a diagnostic.
+ */
+const currentBucketsRef: { current: ReadonlyArray<BucketId> } = { current: [] };
+const currentBucketSourceRef: { current: InterestVectorSource | null } = {
+  current: null,
+};
+
+export function getCurrentBuckets(): ReadonlyArray<BucketId> {
+  return currentBucketsRef.current;
+}
+
+export function getCurrentBucketSource(): InterestVectorSource | null {
+  return currentBucketSourceRef.current;
+}
+
+/**
+ * Back-compat for code that still asks for "the current bucket" — returns
+ * the first table's bucket as a representative. Prefer
+ * `getCurrentBuckets()` for new code.
+ */
+export function getCurrentBucket(): BucketId | null {
+  const b = currentBucketsRef.current;
+  return b.length === 0 ? null : b[0];
+}
+
+// Module-local refs so the post-publish re-bucket helper can act without
+// reaching back through React context.
+let reBucketContainer: MobileContainer | null = null;
+let reBucketAboutYou: Float32Array | null = null;
+
+function setContainerForReBucket(c: MobileContainer): void {
+  reBucketContainer = c;
+}
+function setAboutYouEmbeddingForReBucket(v: Float32Array | null): void {
+  reBucketAboutYou = v;
+}
+
+/**
+ * Recompute the L bucket ids from the current interest vector (post
+ * centroid if enough own posts, otherwise About-you) and diff against
+ * what we are currently joined to. Leaves topics that are no longer in
+ * the set, joins newly-added ones. No-op for tables whose bucket bits
+ * did not change.
+ */
+async function rebucketAndJoin(): Promise<void> {
+  const c = reBucketContainer;
+  if (c === null) {
+    return;
+  }
+  const ir = computeInterestVector({
+    ownPostEmbeddings: externalOwnEmbeddings.current,
+    aboutYouEmbedding: reBucketAboutYou,
+    minOwnPosts: MatchingConfig.postDrivenMinOwnPosts,
+    windowOwnPosts: MatchingConfig.postDrivenWindow,
+  });
+  if (ir === null) {
+    console.warn('[rn] rebucketAndJoin: no interest vector available');
+    return;
+  }
+  const next = lshBucketsOf(
+    ir.vector,
+    MatchingConfig.embeddingDim,
+    MatchingConfig.lshBits,
+    MatchingConfig.lshSeeds,
+  );
+  const previous = currentBucketsRef.current;
+  const prevSet = new Set(previous);
+  const nextSet = new Set(next);
+
+  for (const b of previous) {
+    if (!nextSet.has(b)) {
+      try {
+        await c.network.leaveBucket(b);
+        console.log(`[rn] left bucket ${b}`);
+      } catch (err) {
+        console.warn('[rn] leaveBucket failed', b, err);
+      }
+    }
+  }
+  for (const b of next) {
+    if (!prevSet.has(b)) {
+      try {
+        await c.network.joinBucket(b);
+        console.log(`[rn] joined bucket ${b}`);
+      } catch (err) {
+        console.warn('[rn] joinBucket failed', b, err);
+      }
+    }
+  }
+  currentBucketsRef.current = next;
+  currentBucketSourceRef.current = ir.source;
 }
 
 async function persistRecord(
@@ -209,11 +294,39 @@ async function persistRecord(
     console.log(
       `[rn] persisted post address=${address} author=${shortAuthor} similarity=${similarity === null ? 'null' : similarity.toFixed(3)}`,
     );
+
+    // The post's body may carry the author's Hyperswarm noise key. If
+    // so, dial it directly so we can receive their follow-ups even when
+    // bucket co-membership drifts apart. This is the key insight of the
+    // §11 "authorNoiseKey direct routing" design: discoverability stays
+    // via buckets, deliverability moves to point-to-point.
+    if (!isOwn) {
+      const noiseKey = record.body.authorNoiseKey;
+      if (typeof noiseKey === 'string' && noiseKey.length > 0) {
+        void rememberAuthorNoiseKey(c, record.author, noiseKey);
+      }
+    }
   } else {
     await c.responses.upsert(address, record.author, record.feedIndex, record.body);
     console.log(`[rn] persisted response address=${address} author=${shortAuthor}`);
   }
   await c.peers.touch(record.author, c.clock.now());
+}
+
+async function rememberAuthorNoiseKey(
+  c: MobileContainer,
+  author: PeerId,
+  noiseKey: string,
+): Promise<void> {
+  try {
+    await c.peers.setNoiseKey(author, noiseKey);
+    await c.p2p.joinPeer(noiseKey);
+    console.log(
+      `[rn] author noise-key dial author=${String(author).slice(0, 12)} noise=${noiseKey.slice(0, 12)}`,
+    );
+  } catch (err) {
+    console.warn('[rn] rememberAuthorNoiseKey failed', err);
+  }
 }
 
 /**

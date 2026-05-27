@@ -40,6 +40,7 @@ interface WirePostBody {
   readonly embedding: number[];
   readonly bucket: string;
   readonly createdAt: number;
+  readonly authorNoiseKey?: string;
 }
 
 interface WireResponseBody {
@@ -206,6 +207,7 @@ function signedRecordToWire(record: SignedRecord): WireRecord {
   const body = record.body;
   if (body.kind === 'post') {
     const embeddingArr = Array.from(body.embedding);
+    const noiseKey = body.authorNoiseKey;
     return {
       author: record.author,
       feedIndex: record.feedIndex,
@@ -215,6 +217,9 @@ function signedRecordToWire(record: SignedRecord): WireRecord {
         embedding: embeddingArr,
         bucket: String(body.bucket),
         createdAt: body.createdAt,
+        ...(typeof noiseKey === 'string' && noiseKey.length > 0
+          ? { authorNoiseKey: noiseKey }
+          : {}),
       },
       digest: bytesToHex(record.digest),
       signature: bytesToHex(record.signature),
@@ -240,6 +245,7 @@ function wireToSignedRecord(wire: WireRecord): SignedRecord {
   const author = wire.author as PeerId;
   if (wire.body.kind === 'post') {
     const embedding = new Float32Array(wire.body.embedding);
+    const noiseKey = wire.body.authorNoiseKey;
     return {
       author,
       feedIndex: wire.feedIndex,
@@ -249,6 +255,9 @@ function wireToSignedRecord(wire: WireRecord): SignedRecord {
         embedding,
         bucket: wire.body.bucket as BucketId,
         createdAt: wire.body.createdAt,
+        ...(typeof noiseKey === 'string' && noiseKey.length > 0
+          ? { authorNoiseKey: noiseKey }
+          : {}),
       },
       digest,
       signature,

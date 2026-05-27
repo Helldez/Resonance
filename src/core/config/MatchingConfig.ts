@@ -26,6 +26,34 @@ export const MatchingConfig = {
   lshSeed: 0xa57e_b3c1,
 
   /**
+   * Number of independent LSH tables. Each peer announces in L topics
+   * (one per table). Two peers see each other if they collide in any
+   * table — recall jumps from ~20% (L=1) to ~83% (L=8) at cos_sim 0.85.
+   * See `docs/SEMANTIC_ROUTING.md` §4 (Tier 2).
+   *
+   * Network-wide constant: changing L partitions the network. Coordinate
+   * with the topic prefix bump in `NetworkConfig.topicPrefix` if you
+   * have to change it.
+   */
+  lshTables: 8,
+
+  /**
+   * Seeds for the L tables — one independent hyperplane family each.
+   * Hard-coded so all peers compute the same partitions. Length MUST
+   * equal `lshTables`.
+   */
+  lshSeeds: [
+    0xa57e_b3c1,
+    0x13c5_9f02,
+    0x9e44_27ad,
+    0x5b86_d31e,
+    0x77a0_8e5b,
+    0xc2f9_4760,
+    0x18df_3a92,
+    0xeb31_b2c7,
+  ] as ReadonlyArray<number>,
+
+  /**
    * Default minimum cosine similarity for an incoming post to be surfaced
    * in the inbox. 0 = show every replicated post (MVP default). Users
    * raise it in Settings once they have enough peers to want filtering.
@@ -96,6 +124,22 @@ export const MatchingConfig = {
    * embedding of the user's "About you" text.
    */
   similarityAggregation: 'max-vs-own-posts' as 'max-vs-own-posts',
+
+  /**
+   * Minimum number of own posts before the bucket membership switches
+   * from "About-you driven" to "centroid of recent own posts" driven.
+   * Below this threshold the bucket is determined by `receiverContext`
+   * (or fallback) so a brand-new user still joins a sensible bucket.
+   */
+  postDrivenMinOwnPosts: 3,
+
+  /**
+   * Rolling window of own posts used to compute the centroid that drives
+   * bucket membership. Older posts beyond this window are ignored, so
+   * the bucket follows the user's recent interests rather than ancient
+   * history.
+   */
+  postDrivenWindow: 10,
 
   /**
    * Hard cap on how many remote posts the semantic map will fetch and

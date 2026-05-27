@@ -15,6 +15,16 @@ export interface PostBody {
   readonly embedding: Float32Array;
   readonly bucket: BucketId;
   readonly createdAt: number;
+  /**
+   * Author's Hyperswarm noise public key (hex), if known at compose time.
+   * Optional for backward compatibility — pre-existing posts in older
+   * databases will not have it. When present, any peer that receives this
+   * post can dial the author directly via `swarm.joinPeer(noiseKey)` and
+   * keep a connection alive regardless of bucket co-membership. This is
+   * the "deliverability layer" that complements the bucket-based
+   * "discoverability layer" — see `docs/SEMANTIC_ROUTING.md` §11.
+   */
+  readonly authorNoiseKey?: string;
 }
 
 export interface ResponseBody {

@@ -12,7 +12,11 @@ import {
   HelperText,
 } from 'react-native-paper';
 import { useSettingsStore } from '@domain/SettingsStore';
-import { useRequireContainer, getCurrentBucket } from '@ui/AppContainerContext';
+import {
+  useRequireContainer,
+  getCurrentBuckets,
+  getCurrentBucketSource,
+} from '@ui/AppContainerContext';
 import { ModelProfiles } from '@core/config/ModelProfiles';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 
@@ -110,18 +114,37 @@ export default function SettingsScreen() {
         }}
       >
         <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-          Current bucket
+          Current buckets (Tier 2 — {(() => {
+            const src = getCurrentBucketSource();
+            if (src === null) {
+              return 'not joined';
+            }
+            if (src.kind === 'post-centroid') {
+              return `from ${src.fromPosts} recent post${src.fromPosts === 1 ? '' : 's'}`;
+            }
+            if (src.kind === 'about-you') {
+              return 'from About-you';
+            }
+            return 'unknown source';
+          })()})
         </Text>
-        <Text variant="bodyMedium" style={{ color: theme.colors.onSurface, marginTop: 2 }}>
+        <Text
+          variant="bodySmall"
+          style={{ color: theme.colors.onSurface, marginTop: 4, fontFamily: 'monospace' }}
+        >
           {(() => {
-            const b = getCurrentBucket();
-            return b === null ? '— (network not joined yet)' : `0x${b}`;
+            const bs = getCurrentBuckets();
+            if (bs.length === 0) {
+              return '— (network not joined yet)';
+            }
+            return bs.join('\n');
           })()}
         </Text>
         <HelperText type="info" padding="none">
-          For two devices to see each other, this hex code must match. If it
-          doesn't, your About-you texts are different enough to land in
-          different LSH buckets — align them and restart.
+          With Tier 2 multi-table LSH, two peers see each other if they
+          collide in ANY of these buckets. Similar About-you / posts on
+          both devices yields high overlap; identical text is no longer
+          required.
         </HelperText>
       </View>
 
