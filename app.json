@@ -20,6 +20,7 @@
       "expo-router",
       "expo-sqlite",
       "@qvac/sdk/expo-plugin",
+      "./plugins/with-foreground-service.js",
       [
         "expo-build-properties",
         {

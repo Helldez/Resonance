@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="resonance_fg_channel_name">Resonance P2P</string>
+    <string name="resonance_fg_channel_description">Keeps Resonance online so semantically matched posts arrive in the background.</string>
+    <string name="resonance_fg_title">Resonance is online</string>
+    <string name="resonance_fg_text">Listening for posts that match your interests.</string>
+</resources>

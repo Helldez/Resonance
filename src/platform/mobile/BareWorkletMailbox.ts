@@ -25,7 +25,8 @@ export class BareWorkletMailbox implements IMailbox {
 
   async ingest(_record: SignedRecord): Promise<void> {
     // No-op for now: incoming records are routed through the network port
-    // and persisted into SQLite by `SyncEngine`.
+    // (`IPostNetwork.onRecord`) and persisted into SQLite by the
+    // `AppContainerProvider` record handler.
   }
 
   async *iterate(): AsyncIterable<SignedRecord> {

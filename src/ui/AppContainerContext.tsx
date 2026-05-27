@@ -3,8 +3,6 @@ import type { MobileContainer } from '@platform/mobile/bootstrap';
 import { bootstrapMobile } from '@platform/mobile/bootstrap';
 import { useBootstrapStore } from '@domain/BootstrapStore';
 import { useSettingsStore } from '@domain/SettingsStore';
-import { useInboxStore } from '@domain/InboxStore';
-import { startSyncEngine } from '@core/net/SyncEngine';
 import { lshBucketOf } from '@core/matching/LshBucket';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 import { addressOf } from '@core/utils/AddressOf';
@@ -21,14 +19,12 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
   const setProgress = useBootstrapStore((s) => s.setProgress);
   const setError = useBootstrapStore((s) => s.setError);
   const setSelf = useBootstrapStore((s) => s.setSelf);
-  const inboxAdd = useInboxStore((s) => s.add);
   const interestProfileRef = useRef<Float32Array | null>(null);
-  const ownEmbeddingsRef = useRef<Float32Array[]>([]);
   const currentBucketRef = useRef<BucketId | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    let stopSync: (() => void) | null = null;
+    let disposeRecordHandler: (() => void) | null = null;
 
     const run = async (): Promise<void> => {
       try {
@@ -57,14 +53,11 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
 
         // Load own posts' embeddings so the receiver-side similarity can
         // be computed against the user's actual posting history rather
-        // than a static "About you" description. Mirror to the
-        // module-level ref so Compose can append new embeddings as the
-        // user posts.
+        // than a static "About you" description.
         const ownFromDb = await c.posts.getOwnEmbeddings(
           c.self,
           MatchingConfig.embeddingDim,
         );
-        ownEmbeddingsRef.current = ownFromDb;
         externalOwnEmbeddings.current = ownFromDb;
 
         const bucket = lshBucketOf(
@@ -76,20 +69,10 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
         await c.network.joinBucket(bucket);
         currentBucketRef.current = bucket;
 
-        stopSync = startSyncEngine({
-          network: c.network,
-          mailbox: c.mailbox,
-          getInterestProfile: () => interestProfileRef.current ?? interestProfile,
-          onInboxItem: (scored) => {
-            void persistAndAnnounce(c, scored, inboxAdd);
-          },
-        }).stop;
-
-        // Persist incoming records (including own re-receives) to SQLite for
-        // the Thread view. persistRecord uses the latest own-posts cache to
-        // compute similarity as max(cosine vs each own post); when the user
-        // has no posts yet (cold start) we fall back to the interest profile.
-        c.network.onRecord((record) => {
+        // Single source of truth for incoming records: verify signature,
+        // score against own posts, persist into SQLite. The Inbox/Thread
+        // screens auto-refresh from SQLite on a setInterval.
+        disposeRecordHandler = c.network.onRecord((record) => {
           void persistRecord(
             c,
             record,
@@ -107,8 +90,8 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
     void run();
     return () => {
       cancelled = true;
-      if (stopSync !== null) {
-        stopSync();
+      if (disposeRecordHandler !== null) {
+        disposeRecordHandler();
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -239,21 +222,6 @@ function bytesToHexShort(bytes: Uint8Array): string {
     hex += (b & 0xf).toString(16);
   }
   return hex;
-}
-
-async function persistAndAnnounce(
-  c: MobileContainer,
-  scored: import('@core/domain/types').ScoredPost,
-  inboxAdd: (item: import('@core/domain/types').ScoredPost) => void,
-): Promise<void> {
-  await c.posts.upsert(
-    scored.address,
-    scored.author,
-    -1,
-    scored.post,
-    scored.similarity,
-  );
-  inboxAdd(scored);
 }
 
 function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
