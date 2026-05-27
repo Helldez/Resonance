@@ -36,7 +36,12 @@ export const ThemeConfig = {
     referenceRingColor: '#2A2F3D',
     referenceRingLabelColor: '#5A6075',
     referenceRingStrokeWidthPx: 0.6,
-    hitRadiusPx: 22,
+    /**
+     * Touch slack around each star, in DP. Material Design recommends
+     * ≥ 24 DP for comfortable touch targets; we use 40 DP because the
+     * stars themselves are tiny (4-6 DP) and finger pads cover ~10 DP.
+     */
+    hitRadiusPx: 40,
   },
 } as const;
 

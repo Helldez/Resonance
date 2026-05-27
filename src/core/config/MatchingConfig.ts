@@ -8,16 +8,14 @@
  */
 export const MatchingConfig = {
   /**
-   * Embedding dimension. EmbeddingGemma's native dim is 768; using it
-   * full (no Matryoshka truncation) gives the best discriminative power.
-   * Going below 768 was an option (256/384 are valid Matryoshka cuts)
-   * but in our two-device test the 256-dim cosines clustered too tightly
-   * — unrelated content (e.g. "I love spaghetti" vs tech posts) showed
-   * inflated baseline similarity ~0.5. 768 spreads the distribution
-   * properly. Tradeoff: 3× wire/storage cost per post embedding (≈3 KB
-   * vs ≈1 KB) — acceptable at this scale.
+   * Embedding dimension. EmbeddingGemma's native dim is 768; we truncate
+   * to 256 via the Matryoshka head. The 768-vs-256 trade-off was tested
+   * empirically and 768 was *worse* on the two-device run — full-dim
+   * cosines clustered higher, not better separated. Reverted to 256.
+   * Calibration (Milestone 0) is the right way to set the right value;
+   * for now 256 is the project-wide convention.
    */
-  embeddingDim: 768,
+  embeddingDim: 256,
 
   /**
    * Bits in the LSH bucket id. With 8 bits we partition the embedding

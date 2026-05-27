@@ -74,11 +74,22 @@ export default function MapScreen() {
   // from the gesture/projection space so the anchor at viewBox (0,0)
   // appears at the visual center of the empty area, not the screen
   // center (which is hidden behind the header).
-  const [svgLayout, setSvgLayout] = useState<{ width: number; height: number } | null>(null);
+  const [svgLayout, setSvgLayout] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
   const onSvgLayout = (e: LayoutChangeEvent): void => {
-    const { width: w, height: h } = e.nativeEvent.layout;
-    if (svgLayout === null || svgLayout.width !== w || svgLayout.height !== h) {
-      setSvgLayout({ width: w, height: h });
+    const { x, y, width: w, height: h } = e.nativeEvent.layout;
+    if (
+      svgLayout === null ||
+      svgLayout.x !== x ||
+      svgLayout.y !== y ||
+      svgLayout.width !== w ||
+      svgLayout.height !== h
+    ) {
+      setSvgLayout({ x, y, width: w, height: h });
     }
   };
 
@@ -117,9 +128,19 @@ export default function MapScreen() {
   // `preserveAspectRatio="xMidYMid meet"` with a 2.4×2.4 viewBox inside
   // the measured `svgLayout`; the smaller of width/height drives the
   // scale, the larger gets padded by SVG's intrinsic centering.
+  // Gesture event e.x/e.y are relative to the View the GestureDetector
+  // attaches to, but in this app the gesture surfaces in a coordinate
+  // space that ALSO accounts for the inner View's offset within its
+  // parent (the MapHeader pushes the SVG down). Empirically: e.y ≈ inner
+  // layout.y + inner-relative y. So we must offset svgCenter by the
+  // inner View's position within the outer container.
   const containerW = svgLayout?.width ?? width;
-  const containerH = svgLayout?.height ?? height;
+  const containerH = svgLayout?.height ?? Math.max(1, height - 220);
+  const offsetX = svgLayout?.x ?? 0;
+  const offsetY = svgLayout?.y ?? 0;
   const sideUnits = Math.min(containerW, containerH) / 2.4;
+  const svgCenterX = offsetX + containerW / 2;
+  const svgCenterY = offsetY + containerH / 2;
 
   // Stable gesture instances — they read transform state via refs so
   // they do not need to be re-created on every pan/pinch frame, which was
@@ -132,6 +153,14 @@ export default function MapScreen() {
   useEffect(() => {
     sideUnitsRef.current = sideUnits;
   }, [sideUnits]);
+  const svgCenterXRef = useRef(svgCenterX);
+  useEffect(() => {
+    svgCenterXRef.current = svgCenterX;
+  }, [svgCenterX]);
+  const svgCenterYRef = useRef(svgCenterY);
+  useEffect(() => {
+    svgCenterYRef.current = svgCenterY;
+  }, [svgCenterY]);
   const containerWRef = useRef(containerW);
   useEffect(() => {
     containerWRef.current = containerW;
@@ -143,20 +172,21 @@ export default function MapScreen() {
 
   const composed = useMemo(() => {
     const tap = Gesture.Tap()
-      .maxDistance(8)
+      .maxDuration(500)
+      .maxDistance(14)
+      .numberOfTaps(1)
+      .shouldCancelWhenOutside(false)
       .onEnd((e, success) => {
-        if (!success) {
-          return;
-        }
         const src = viewRef.current;
-        if (src === null) {
+        if (!success || src === null) {
+          console.log(`[map] tap onEnd fail success=${success} viewReady=${src !== null}`);
           return;
         }
         const sUnits = sideUnitsRef.current;
         const px = e.x;
         const py = e.y;
-        const vbX = (px - containerWRef.current / 2) / sUnits;
-        const vbY = (py - containerHRef.current / 2) / sUnits;
+        const vbX = (px - svgCenterXRef.current) / sUnits;
+        const vbY = (py - svgCenterYRef.current) / sUnits;
         const localX = (vbX - txRef.current) / scaleRef.current;
         const localY = (vbY - tyRef.current) / scaleRef.current;
         const hr = ThemeConfig.map.hitRadiusPx / sUnits / scaleRef.current;
@@ -278,12 +308,6 @@ export default function MapScreen() {
   const peers = view.peers;
   const hasPeers = peers.length > 0;
 
-  // Reserve space above/below the SVG so the floating header and legend
-  // do not visually obscure the centered anchor. Numbers chosen to match
-  // the absolute-positioned Surface heights below.
-  const svgPaddingTop = insets.top + 90;
-  const svgPaddingBottom = insets.bottom + 110;
-
   const peerRadius = ThemeConfig.map.peerStarRadiusPx / sideUnits / scale;
   const peerRadiusSelected = ThemeConfig.map.peerStarSelectedRadiusPx / sideUnits / scale;
   const anchorRadius = ThemeConfig.map.selfStarRadiusPx / sideUnits / scale;
@@ -315,16 +339,28 @@ export default function MapScreen() {
     : [];
 
   return (
-    <View style={{ flex: 1, backgroundColor: ThemeConfig.map.backgroundColor }}>
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: ThemeConfig.map.backgroundColor,
+        paddingTop: insets.top,
+        paddingBottom: insets.bottom,
+      }}
+    >
+      <MapHeader
+        peerCount={peers.length}
+        hasPeers={hasPeers}
+        selfLabel={formatAuthor({
+          self: container.self,
+          peer: container.self,
+          selfDisplayName: displayName,
+        })}
+        onBack={() => router.back()}
+        onInfo={() => setInfoOpen(true)}
+      />
+
       <GestureDetector gesture={composed}>
-        <View
-          style={{
-            flex: 1,
-            paddingTop: svgPaddingTop,
-            paddingBottom: svgPaddingBottom,
-          }}
-          onLayout={onSvgLayout}
-        >
+        <View style={{ flex: 1 }} onLayout={onSvgLayout}>
           <Svg
             width="100%"
             height="100%"
@@ -446,57 +482,19 @@ export default function MapScreen() {
         </View>
       </GestureDetector>
 
-      <Surface
-        style={{
-          position: 'absolute',
-          top: insets.top + 8,
-          left: 12,
-          right: 12,
-          padding: 10,
-          paddingRight: 4,
-          backgroundColor: theme.colors.surface,
-          borderRadius: 12,
-          flexDirection: 'row',
-          alignItems: 'center',
+      <MapLegendBar
+        visible={radialMode}
+        onReset={() => {
+          setTx(0);
+          setTy(0);
+          setScale(1);
         }}
-        elevation={2}
-      >
-        <IconButton
-          icon="arrow-left"
-          size={20}
-          onPress={() => router.back()}
-          accessibilityLabel="Back"
-        />
-        <View style={{ flex: 1 }}>
-          <Text variant="labelLarge" style={{ color: theme.colors.onSurface }}>
-            {`You · ${formatAuthor({
-              self: container.self,
-              peer: container.self,
-              selfDisplayName: displayName,
-            })}`}
-          </Text>
-          <Text
-            variant="bodySmall"
-            style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}
-            numberOfLines={2}
-          >
-            {hasPeers
-              ? `${peers.length} nearby ${peers.length === 1 ? 'post' : 'posts'} — closer = more similar. Tap a star to read.`
-              : 'No peers in range yet — your post is now broadcasting.'}
-          </Text>
-        </View>
-        <IconButton
-          icon="information-outline"
-          size={20}
-          onPress={() => setInfoOpen(true)}
-          accessibilityLabel="How to read the map"
-        />
-      </Surface>
+      />
 
       {selected !== null && (
         <SelectedSheet
           selected={selected}
-          bottomOffset={insets.bottom + 80}
+          bottomOffset={insets.bottom + 110}
           onClose={() => setSelected(null)}
           onOpenThread={() => {
             const target = selected.address;
@@ -504,75 +502,6 @@ export default function MapScreen() {
             router.push({ pathname: '/thread/[id]', params: { id: target } });
           }}
         />
-      )}
-
-      <IconButton
-        icon="restore"
-        mode="contained-tonal"
-        style={{ position: 'absolute', bottom: insets.bottom + 16, right: 16 }}
-        onPress={() => {
-          setTx(0);
-          setTy(0);
-          setScale(1);
-        }}
-        accessibilityLabel="Reset view"
-      />
-
-      {radialMode && (
-        <Surface
-          elevation={2}
-          style={{
-            position: 'absolute',
-            bottom: insets.bottom + 16,
-            left: 16,
-            right: 80,
-            paddingHorizontal: 12,
-            paddingVertical: 8,
-            borderRadius: 12,
-            backgroundColor: theme.colors.surface,
-          }}
-        >
-          <Text
-            variant="labelSmall"
-            style={{ color: theme.colors.onSurfaceVariant, marginBottom: 4 }}
-          >
-            Distance from your star = how similar
-          </Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Text variant="labelSmall" style={{ color: theme.colors.onSurface }}>
-              ●
-            </Text>
-            <View
-              style={{
-                flex: 1,
-                height: 4,
-                marginHorizontal: 8,
-                borderRadius: 2,
-                backgroundColor: ThemeConfig.map.peerStarColorHigh,
-              }}
-            />
-            <View
-              style={{
-                flex: 1,
-                height: 4,
-                marginHorizontal: 8,
-                borderRadius: 2,
-                backgroundColor: ThemeConfig.map.peerStarColorLow,
-              }}
-            />
-            <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-              ○
-            </Text>
-          </View>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 }}>
-            <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-              close · similar
-            </Text>
-            <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-              far · unrelated
-            </Text>
-          </View>
-        </Surface>
       )}
 
       <Portal>
@@ -612,6 +541,127 @@ export default function MapScreen() {
         </Dialog>
       </Portal>
     </View>
+  );
+}
+
+function MapHeader(props: {
+  peerCount: number;
+  hasPeers: boolean;
+  selfLabel: string;
+  onBack: () => void;
+  onInfo: () => void;
+}) {
+  const theme = useTheme();
+  const { peerCount, hasPeers, selfLabel, onBack, onInfo } = props;
+  return (
+    <Surface
+      style={{
+        padding: 8,
+        paddingRight: 4,
+        backgroundColor: theme.colors.surface,
+        flexDirection: 'row',
+        alignItems: 'center',
+      }}
+      elevation={2}
+    >
+      <IconButton icon="arrow-left" size={22} onPress={onBack} accessibilityLabel="Back" />
+      <View style={{ flex: 1 }}>
+        <Text variant="labelLarge" style={{ color: theme.colors.onSurface }}>
+          {`You · ${selfLabel}`}
+        </Text>
+        <Text
+          variant="bodySmall"
+          style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}
+          numberOfLines={2}
+        >
+          {hasPeers
+            ? `${peerCount} nearby ${peerCount === 1 ? 'post' : 'posts'} — closer = more similar. Tap a star to read.`
+            : 'No peers in range yet — your post is now broadcasting.'}
+        </Text>
+      </View>
+      <IconButton
+        icon="information-outline"
+        size={22}
+        onPress={onInfo}
+        accessibilityLabel="How to read the map"
+      />
+    </Surface>
+  );
+}
+
+function MapLegendBar(props: { visible: boolean; onReset: () => void }) {
+  const theme = useTheme();
+  const { visible, onReset } = props;
+  if (!visible) {
+    return null;
+  }
+  return (
+    <Surface
+      elevation={2}
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        backgroundColor: theme.colors.surface,
+      }}
+    >
+      <View style={{ flex: 1 }}>
+        <Text
+          variant="labelSmall"
+          style={{ color: theme.colors.onSurfaceVariant, marginBottom: 4 }}
+        >
+          Distance from your star = how similar
+        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Text variant="labelSmall" style={{ color: theme.colors.onSurface }}>
+            ●
+          </Text>
+          <View
+            style={{
+              flex: 1,
+              height: 4,
+              marginHorizontal: 8,
+              borderRadius: 2,
+              backgroundColor: ThemeConfig.map.peerStarColorHigh,
+            }}
+          />
+          <View
+            style={{
+              flex: 1,
+              height: 4,
+              marginHorizontal: 8,
+              borderRadius: 2,
+              backgroundColor: ThemeConfig.map.peerStarColorLow,
+            }}
+          />
+          <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+            ○
+          </Text>
+        </View>
+        <View
+          style={{
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            marginTop: 2,
+          }}
+        >
+          <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+            close · similar
+          </Text>
+          <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+            far · unrelated
+          </Text>
+        </View>
+      </View>
+      <IconButton
+        icon="restore"
+        mode="contained-tonal"
+        onPress={onReset}
+        accessibilityLabel="Reset view"
+        style={{ marginLeft: 8 }}
+      />
+    </Surface>
   );
 }
 
