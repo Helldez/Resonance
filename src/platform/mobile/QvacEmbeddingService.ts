@@ -60,11 +60,7 @@ export class QvacEmbeddingService implements IEmbeddingService {
     if (trimmed.length === 0) {
       throw new Error('QvacEmbeddingService.embed: empty text');
     }
-    const prompted = applyInstructionTemplate(
-      MatchingConfig.embeddingInstruction,
-      trimmed,
-    );
-    const result = (await embed({ modelId, text: prompted } as never)) as {
+    const result = (await embed({ modelId, text: trimmed } as never)) as {
       embedding: number[];
     };
     return postProcess(result.embedding, this.outputDim);
@@ -89,24 +85,6 @@ export class QvacEmbeddingService implements IEmbeddingService {
       onProgress,
     });
   }
-}
-
-/**
- * Substitute the `{text}` placeholder in the instruction template with the
- * trimmed user text. The template MUST contain `{text}` exactly once —
- * we fail loudly if not, because silently appending the text changes the
- * shape the model was trained on. Implemented with index search instead
- * of String.replace so we stay regex-free per AGENTS.md.
- */
-function applyInstructionTemplate(template: string, text: string): string {
-  const placeholder = '{text}';
-  const idx = template.indexOf(placeholder);
-  if (idx < 0) {
-    throw new Error(
-      `MatchingConfig.embeddingInstruction must contain "${placeholder}"`,
-    );
-  }
-  return template.slice(0, idx) + text + template.slice(idx + placeholder.length);
 }
 
 function postProcess(raw: readonly number[], outputDim: number): Float32Array {

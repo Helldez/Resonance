@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { View, useWindowDimensions, ScrollView } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { View, useWindowDimensions, ScrollView, type LayoutChangeEvent } from 'react-native';
 import {
   Surface,
   Text,
@@ -51,6 +51,37 @@ export default function MapScreen() {
   const [panStart, setPanStart] = useState<{ tx: number; ty: number } | null>(null);
   const [scaleStart, setScaleStart] = useState<number | null>(null);
 
+  // Refs for transform state — the gesture callbacks read these via
+  // `current` so the gesture instances stay stable across re-renders. If
+  // we put `tx, ty, scale` in the gesture's useMemo deps, the
+  // GestureDetector receives a fresh gesture object on every pan frame,
+  // which causes gesture-handler to lose internal tracking — the visible
+  // symptom is "taps stop working".
+  const txRef = useRef(0);
+  const tyRef = useRef(0);
+  const scaleRef = useRef(1);
+  useEffect(() => {
+    txRef.current = tx;
+  }, [tx]);
+  useEffect(() => {
+    tyRef.current = ty;
+  }, [ty]);
+  useEffect(() => {
+    scaleRef.current = scale;
+  }, [scale]);
+
+  // Actual SVG draw area — we exclude the floating header and the legend
+  // from the gesture/projection space so the anchor at viewBox (0,0)
+  // appears at the visual center of the empty area, not the screen
+  // center (which is hidden behind the header).
+  const [svgLayout, setSvgLayout] = useState<{ width: number; height: number } | null>(null);
+  const onSvgLayout = (e: LayoutChangeEvent): void => {
+    const { width: w, height: h } = e.nativeEvent.layout;
+    if (svgLayout === null || svgLayout.width !== w || svgLayout.height !== h) {
+      setSvgLayout({ width: w, height: h });
+    }
+  };
+
   useEffect(() => {
     if (typeof anchorParam !== 'string' || anchorParam.length === 0) {
       setLoadError('Missing anchor address');
@@ -82,128 +113,145 @@ export default function MapScreen() {
     };
   }, [anchorParam, container.posts, container.self]);
 
-  // Conversion factor: 1 viewBox unit = W / 2.4 pixels when the SVG uses
-  // `preserveAspectRatio="xMidYMid meet"` with viewBox of side 2.4 inside
-  // a container of width W (taller than wide, portrait). This is the
-  // same denominator used to size the circles and labels below.
-  const sideUnits = width / 2.4;
-  const hitRadiusLocal = ThemeConfig.map.hitRadiusPx / sideUnits / scale;
+  // Conversion factor in pixels per viewBox unit. The SVG uses
+  // `preserveAspectRatio="xMidYMid meet"` with a 2.4×2.4 viewBox inside
+  // the measured `svgLayout`; the smaller of width/height drives the
+  // scale, the larger gets padded by SVG's intrinsic centering.
+  const containerW = svgLayout?.width ?? width;
+  const containerH = svgLayout?.height ?? height;
+  const sideUnits = Math.min(containerW, containerH) / 2.4;
 
-  const hitTest = (px: number, py: number, source: MapView): SelectedPoint | null => {
-    const vbX = (px - width / 2) / sideUnits;
-    const vbY = (py - height / 2) / sideUnits;
-    const localX = (vbX - tx) / scale;
-    const localY = (vbY - ty) / scale;
+  // Stable gesture instances — they read transform state via refs so
+  // they do not need to be re-created on every pan/pinch frame, which was
+  // the original cause of taps being silently dropped.
+  const viewRef = useRef<MapView | null>(view);
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+  const sideUnitsRef = useRef(sideUnits);
+  useEffect(() => {
+    sideUnitsRef.current = sideUnits;
+  }, [sideUnits]);
+  const containerWRef = useRef(containerW);
+  useEffect(() => {
+    containerWRef.current = containerW;
+  }, [containerW]);
+  const containerHRef = useRef(containerH);
+  useEffect(() => {
+    containerHRef.current = containerH;
+  }, [containerH]);
 
-    let best: { sq: number; pt: SelectedPoint } | null = null;
+  const composed = useMemo(() => {
+    const tap = Gesture.Tap()
+      .maxDistance(8)
+      .onEnd((e, success) => {
+        if (!success) {
+          return;
+        }
+        const src = viewRef.current;
+        if (src === null) {
+          return;
+        }
+        const sUnits = sideUnitsRef.current;
+        const px = e.x;
+        const py = e.y;
+        const vbX = (px - containerWRef.current / 2) / sUnits;
+        const vbY = (py - containerHRef.current / 2) / sUnits;
+        const localX = (vbX - txRef.current) / scaleRef.current;
+        const localY = (vbY - tyRef.current) / scaleRef.current;
+        const hr = ThemeConfig.map.hitRadiusPx / sUnits / scaleRef.current;
+        const hrSq = hr * hr;
 
-    const considerAnchor: SelectedPoint = {
-      address: source.anchor.address,
-      author: source.anchor.author,
-      text: source.anchor.text,
-      similarity: source.anchor.plot.similarityToAnchor,
-      isAnchor: true,
-    };
-    const dxA = source.anchor.plot.x - localX;
-    const dyA = source.anchor.plot.y - localY;
-    const sqA = dxA * dxA + dyA * dyA;
-    if (sqA <= hitRadiusLocal * hitRadiusLocal) {
-      best = { sq: sqA, pt: considerAnchor };
-    }
+        let best: { sq: number; pt: SelectedPoint } | null = null;
 
-    for (const p of source.peers) {
-      const dx = p.plot.x - localX;
-      const dy = p.plot.y - localY;
-      const sq = dx * dx + dy * dy;
-      if (sq <= hitRadiusLocal * hitRadiusLocal) {
-        if (best === null || sq < best.sq) {
+        const dxA = src.anchor.plot.x - localX;
+        const dyA = src.anchor.plot.y - localY;
+        const sqA = dxA * dxA + dyA * dyA;
+        if (sqA <= hrSq) {
           best = {
-            sq,
+            sq: sqA,
             pt: {
-              address: p.address,
-              author: p.author,
-              text: p.text,
-              similarity: p.plot.similarityToAnchor,
-              isAnchor: false,
+              address: src.anchor.address,
+              author: src.anchor.author,
+              text: src.anchor.text,
+              similarity: src.anchor.plot.similarityToAnchor,
+              isAnchor: true,
             },
           };
         }
-      }
-    }
-    return best === null ? null : best.pt;
-  };
-
-  const panGesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .minDistance(8)
-        .onStart(() => {
-          setPanStart({ tx, ty });
-        })
-        .onUpdate((e) => {
-          if (panStart === null) {
-            return;
+        for (const p of src.peers) {
+          const dx = p.plot.x - localX;
+          const dy = p.plot.y - localY;
+          const sq = dx * dx + dy * dy;
+          if (sq <= hrSq && (best === null || sq < best.sq)) {
+            best = {
+              sq,
+              pt: {
+                address: p.address,
+                author: p.author,
+                text: p.text,
+                similarity: p.plot.similarityToAnchor,
+                isAnchor: false,
+              },
+            };
           }
-          const dx = (e.translationX / sideUnits);
-          const dy = (e.translationY / sideUnits);
-          setTx(panStart.tx + dx);
-          setTy(panStart.ty + dy);
-        })
-        .onEnd(() => {
-          setPanStart(null);
-        }),
-    [panStart, tx, ty, sideUnits],
-  );
+        }
+        if (best !== null) {
+          setSelected(best.pt);
+        }
+      });
 
-  const pinchGesture = useMemo(
-    () =>
-      Gesture.Pinch()
-        .onStart(() => {
-          setScaleStart(scale);
-        })
-        .onUpdate((e) => {
-          if (scaleStart === null) {
-            return;
-          }
-          const next = clamp(
-            scaleStart * e.scale,
-            MatchingConfig.mapZoomMin,
-            MatchingConfig.mapZoomMax,
-          );
-          setScale(next);
-        })
-        .onEnd(() => {
-          setScaleStart(null);
-        }),
-    [scale, scaleStart],
-  );
+    const pan = Gesture.Pan()
+      .minDistance(8)
+      .onStart(() => {
+        setPanStart({ tx: txRef.current, ty: tyRef.current });
+      })
+      .onUpdate((e) => {
+        const sUnits = sideUnitsRef.current;
+        const dx = e.translationX / sUnits;
+        const dy = e.translationY / sUnits;
+        const start = panStartRef.current;
+        if (start === null) {
+          return;
+        }
+        setTx(start.tx + dx);
+        setTy(start.ty + dy);
+      })
+      .onEnd(() => {
+        setPanStart(null);
+      });
 
-  const tapGesture = useMemo(
-    () =>
-      Gesture.Tap()
-        .maxDistance(8)
-        .onEnd((e, success) => {
-          if (!success || view === null) {
-            return;
-          }
-          const hit = hitTest(e.x, e.y, view);
-          if (hit !== null) {
-            setSelected(hit);
-          }
-        }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [view, tx, ty, scale, width, height],
-  );
+    const pinch = Gesture.Pinch()
+      .onStart(() => {
+        setScaleStart(scaleRef.current);
+      })
+      .onUpdate((e) => {
+        const start = scaleStartRef.current;
+        if (start === null) {
+          return;
+        }
+        const next = clamp(
+          start * e.scale,
+          MatchingConfig.mapZoomMin,
+          MatchingConfig.mapZoomMax,
+        );
+        setScale(next);
+      })
+      .onEnd(() => {
+        setScaleStart(null);
+      });
 
-  // Pinch can run with anything (two fingers); tap and pan race because a
-  // touch is either a tap (small displacement) or a pan (movement). With
-  // Simultaneous they would both fire and the tap would be ignored under
-  // a pan claim, which is the bug the user was hitting.
-  const composed = useMemo(
-    () =>
-      Gesture.Simultaneous(pinchGesture, Gesture.Race(tapGesture, panGesture)),
-    [panGesture, pinchGesture, tapGesture],
-  );
+    return Gesture.Simultaneous(pinch, Gesture.Race(tap, pan));
+  }, []);
+
+  const panStartRef = useRef<{ tx: number; ty: number } | null>(null);
+  useEffect(() => {
+    panStartRef.current = panStart;
+  }, [panStart]);
+  const scaleStartRef = useRef<number | null>(null);
+  useEffect(() => {
+    scaleStartRef.current = scaleStart;
+  }, [scaleStart]);
 
   if (loadError !== null) {
     return (
@@ -229,6 +277,12 @@ export default function MapScreen() {
   const anchor = view.anchor;
   const peers = view.peers;
   const hasPeers = peers.length > 0;
+
+  // Reserve space above/below the SVG so the floating header and legend
+  // do not visually obscure the centered anchor. Numbers chosen to match
+  // the absolute-positioned Surface heights below.
+  const svgPaddingTop = insets.top + 90;
+  const svgPaddingBottom = insets.bottom + 110;
 
   const peerRadius = ThemeConfig.map.peerStarRadiusPx / sideUnits / scale;
   const peerRadiusSelected = ThemeConfig.map.peerStarSelectedRadiusPx / sideUnits / scale;
@@ -263,7 +317,14 @@ export default function MapScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: ThemeConfig.map.backgroundColor }}>
       <GestureDetector gesture={composed}>
-        <View style={{ flex: 1 }}>
+        <View
+          style={{
+            flex: 1,
+            paddingTop: svgPaddingTop,
+            paddingBottom: svgPaddingBottom,
+          }}
+          onLayout={onSvgLayout}
+        >
           <Svg
             width="100%"
             height="100%"

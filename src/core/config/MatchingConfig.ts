@@ -7,8 +7,17 @@
  * `npm run calibrate`.
  */
 export const MatchingConfig = {
-  /** Truncated dimension used by the app, via Matryoshka. */
-  embeddingDim: 256,
+  /**
+   * Embedding dimension. EmbeddingGemma's native dim is 768; using it
+   * full (no Matryoshka truncation) gives the best discriminative power.
+   * Going below 768 was an option (256/384 are valid Matryoshka cuts)
+   * but in our two-device test the 256-dim cosines clustered too tightly
+   * — unrelated content (e.g. "I love spaghetti" vs tech posts) showed
+   * inflated baseline similarity ~0.5. 768 spreads the distribution
+   * properly. Tradeoff: 3× wire/storage cost per post embedding (≈3 KB
+   * vs ≈1 KB) — acceptable at this scale.
+   */
+  embeddingDim: 768,
 
   /**
    * Bits in the LSH bucket id. With 8 bits we partition the embedding
@@ -100,22 +109,6 @@ export const MatchingConfig = {
    */
   fallbackInterestText:
     'general interest in technology, life, and meaningful conversations',
-
-  /**
-   * Instruction template prefixed to every text submitted to
-   * EmbeddingGemma. The model is task-conditioned; without an explicit
-   * task tag it falls back to a generic embedding that is measurably
-   * worse for similarity comparisons. We pick "sentence similarity"
-   * because every post in Resonance plays both roles — sometimes the
-   * needle, sometimes the haystack. The literal `{text}` placeholder is
-   * substituted at call time.
-   *
-   * Reference: Google's EmbeddingGemma model card on Hugging Face
-   * (`task: sentence similarity | query: <text>`). Keep the literal
-   * exactly as documented — variants like "STS" do not match what the
-   * model was trained on.
-   */
-  embeddingInstruction: 'task: sentence similarity | query: {text}',
 
   /**
    * Filtering model: each incoming remote post is scored as the
