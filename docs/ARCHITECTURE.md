@@ -101,9 +101,19 @@ the centroid of their past posts and explicit topic prefs.
 - All use cases: `src/core/{posts,responses,identity,net}/`.
 - All Expo/RN/Bare code: `src/platform/mobile/` + `qvac/worker.entry.mjs`.
 
+## Semantic routing
+
+The "how does a post reach the right peers without a central server"
+question — including the cliff problem with single-bucket LSH, the
+multi-table / Hamming-1 / gossip-top-K / Semantica tiers we have
+discussed, and the volume scenarios that gate each tier — lives in
+`docs/SEMANTIC_ROUTING.md`. That doc is the source of truth for the
+scaling hypotheses; the implementation in this folder is its Tier 1.
+
 ## What is NOT in the MVP
 
 See `docs/ROADMAP.md` for the explicit out-of-scope list. The short
-version: no foreground service, no push relay, no auto-publish mode
-activated, no fuzzy PSI, no multi-perspective synthesis, no iOS, no
-reputation, no web-of-trust.
+version: no push relay, no auto-publish mode activated, no fuzzy PSI,
+no multi-perspective synthesis, no iOS, no reputation, no web-of-trust.
+(The Android foreground service that keeps the Bare worker alive in
+background *is* now part of the MVP; see `docs/STATUS.md`.)
