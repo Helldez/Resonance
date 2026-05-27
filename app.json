@@ -10,6 +10,7 @@
     "platforms": ["android"],
     "android": {
       "package": "com.helldez.resonance",
+      "allowBackup": false,
       "permissions": [
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",
