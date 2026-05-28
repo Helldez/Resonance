@@ -61,6 +61,11 @@ agent on its behalf (commits, PRs, READMEs, issues, social posts).
 
 ## Matching conventions
 
+> The end-to-end runtime flow (publish → bucket → swarm → receive → score →
+> inbox) is documented in [`docs/MATCHING_FLOW.md`](docs/MATCHING_FLOW.md).
+> Read it before changing anything in `src/core/matching/`,
+> `src/core/posts/CreatePost.ts`, or `ScoreRemotePost`.
+
 - Embeddings come from **bge-m3** (BAAI, GGUF Q8_0). Native dim **1024**,
   L2-normalised at ingest. bge-m3 is NOT trained with Matryoshka
   representation learning, so dim truncation destroys signal — keep the full

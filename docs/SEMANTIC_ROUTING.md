@@ -1,5 +1,10 @@
 # Resonance — Semantic Routing
 
+> **Looking for the current runtime flow (what happens when you publish or
+> receive a post)?** That belongs in [MATCHING_FLOW.md](MATCHING_FLOW.md),
+> which is the operational baseline kept in sync with the code. This
+> document keeps the **design rationale and history of decisions**.
+
 How Resonance gets a post from its author to peers who are most likely to
 care, without a central server. This document is the design rationale —
 what is implemented today, what is deferred, and what the candidate next
