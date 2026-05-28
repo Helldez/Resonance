@@ -14,9 +14,10 @@
  *      (`dist/index.html`).
  */
 
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, protocol, net } from 'electron';
+import { pathToFileURL } from 'node:url';
 import type { IpcMainInvokeEvent } from 'electron';
-import { join, resolve } from 'node:path';
+import { join, resolve, delimiter as PATH_DELIM } from 'node:path';
 import { existsSync } from 'node:fs';
 import { bootstrapDesktop, defaultAppDataDir } from '@platform/desktop/bootstrap';
 import type { DesktopContainer } from '@platform/desktop/bootstrap';
@@ -25,8 +26,60 @@ import type { ModelProgressUpdate } from '@qvac/sdk';
 import type { BucketId, PeerId, SignedRecord } from '@core/domain/types';
 
 const REPO_ROOT = resolve(__dirname, '..');
-const WEB_DIST_ENTRY = join(REPO_ROOT, 'dist', 'index.html');
+
+// The QVAC native addon (`@qvac/embed-llamacpp`) on Windows is compiled
+// with MinGW-w64 and dynamically links `libwinpthread-1.dll`,
+// `libstdc++-6.dll`, `libgcc_s_seh-1.dll`. These ship with Git for
+// Windows under `Git/mingw64/bin`. A bash session normally has that
+// directory in PATH so the addon loads; an Electron process launched
+// from PowerShell or `cmd /k` does not, and the addon fails with
+// "The specified module could not be found" (Windows STATUS_DLL_NOT_FOUND).
+// We probe a few known locations and prepend the first that contains the
+// pthread DLL so every child process the host spawns inherits a working
+// search path.
+function ensureMinGwDllsOnPath(): void {
+  if (process.platform !== 'win32') {
+    return;
+  }
+  const candidates = [
+    'C:\\Program Files\\Git\\mingw64\\bin',
+    'C:\\Program Files (x86)\\Git\\mingw64\\bin',
+    'C:\\msys64\\mingw64\\bin',
+  ];
+  const probe = 'libwinpthread-1.dll';
+  for (const dir of candidates) {
+    if (existsSync(join(dir, probe))) {
+      const current = process.env.PATH ?? '';
+      if (!current.split(PATH_DELIM).includes(dir)) {
+        process.env.PATH = `${dir}${PATH_DELIM}${current}`;
+        console.log(`[host] prepended MinGW DLL dir to PATH: ${dir}`);
+      }
+      return;
+    }
+  }
+  console.warn('[host] could not locate MinGW DLLs — QVAC addon may fail to load');
+}
+ensureMinGwDllsOnPath();
+const WEB_DIST_DIR = join(REPO_ROOT, 'dist');
+const WEB_DIST_ENTRY = join(WEB_DIST_DIR, process.env.RESONANCE_RENDERER ?? 'index.html');
 const BARE_ENTRY = join(REPO_ROOT, DesktopConfig.bareDesktopEntry);
+const APP_SCHEME = 'resonance';
+
+// Privileged custom scheme — registered before app.whenReady so it
+// behaves like `https://` for cookies / fetch / CORS. We then map
+// `resonance://app/<path>` requests to files inside `dist/`.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: APP_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      bypassCSP: true,
+      stream: true,
+    },
+  },
+]);
 
 let mainWindow: BrowserWindow | null = null;
 let containerPromise: Promise<DesktopContainer> | null = null;
@@ -153,14 +206,29 @@ function createWindow(): void {
     height: 820,
     backgroundColor: '#0e0f12',
     webPreferences: {
-      preload: join(__dirname, 'preload.cjs'),
+      preload: process.env.RESONANCE_NO_PRELOAD === '1' ? undefined : join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
     },
   });
   if (existsSync(WEB_DIST_ENTRY)) {
-    win.loadFile(WEB_DIST_ENTRY);
+    win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedUrl) => {
+      console.error(`[host] did-fail-load code=${errorCode} desc=${errorDescription} url=${validatedUrl}`);
+    });
+    win.webContents.on('preload-error', (_event, preloadPath, err) => {
+      console.error(`[host] preload-error path=${preloadPath} err=${err.stack ?? err.message}`);
+    });
+    win.webContents.on('render-process-gone', (_event, details) => {
+      console.error('[host] renderer gone:', details);
+    });
+    win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+      console.log(`[renderer:${level}] ${message}  (${sourceId}:${line})`);
+    });
+    win.loadURL(`${APP_SCHEME}://app/`);
+    // DevTools can be opened manually with Ctrl+Shift+I; opening it
+    // detached programmatically has crashed the renderer on some
+    // Windows builds, so we leave it off by default.
   } else {
     win.loadURL(
       'data:text/html;charset=utf-8,' +
@@ -177,7 +245,35 @@ function createWindow(): void {
   });
 }
 
+// Some Windows GPU drivers (especially under remote desktop / WSLg) crash
+// Chromium's GPU process, which in turn tears down the renderer with exit
+// code 143. Disabling hardware acceleration is the cheapest stable fix
+// for a local-first developer app and incurs negligible perceived cost.
+app.disableHardwareAcceleration();
+
 app.whenReady().then(() => {
+  // Serve the Expo Web export under `resonance://app/`. With a clean
+  // scheme + host the URL path is just `/`, so Expo Router's
+  // pathname-based matching resolves the index route correctly. Under
+  // `file://` the pathname would be the absolute on-disk path
+  // (`/C:/.../dist/index.html`), which produces "Unmatched Route".
+  protocol.handle(APP_SCHEME, async (request) => {
+    const url = new URL(request.url);
+    let pathname = url.pathname;
+    if (pathname === '' || pathname === '/') {
+      pathname = '/index.html';
+    }
+    // Expo Router static export emits `/<route>.html` for each route.
+    // If the requested pathname has no extension and isn't `/`, try the
+    // `.html` sibling so client-side anchor navigation just works.
+    const hasExt = pathname.includes('.');
+    const trimmed = pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
+    const target = hasExt ? pathname : trimmed + '.html';
+    const relative = target.startsWith('/') ? target.slice(1) : target;
+    const abs = join(WEB_DIST_DIR, relative);
+    return net.fetch(pathToFileURL(abs).toString());
+  });
+
   // Kick off the container boot in parallel so the swarm starts joining
   // peers while the window is still loading the web bundle.
   void getContainer().catch((err) => {

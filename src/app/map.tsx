@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { View, useWindowDimensions, ScrollView, type LayoutChangeEvent } from 'react-native';
+import { Platform, View, useWindowDimensions, ScrollView, type LayoutChangeEvent } from 'react-native';
 import {
   Surface,
   Text,
@@ -128,16 +128,21 @@ export default function MapScreen() {
   // `preserveAspectRatio="xMidYMid meet"` with a 2.4×2.4 viewBox inside
   // the measured `svgLayout`; the smaller of width/height drives the
   // scale, the larger gets padded by SVG's intrinsic centering.
-  // Gesture event e.x/e.y are relative to the View the GestureDetector
-  // attaches to, but in this app the gesture surfaces in a coordinate
-  // space that ALSO accounts for the inner View's offset within its
-  // parent (the MapHeader pushes the SVG down). Empirically: e.y ≈ inner
-  // layout.y + inner-relative y. So we must offset svgCenter by the
-  // inner View's position within the outer container.
+  //
+  // Gesture event coordinates differ by platform:
+  //   - Android (`react-native-gesture-handler` native): e.x/e.y are
+  //     reported relative to an outer ancestor, so we add the inner
+  //     View's `layout.x/y` offset to align `svgCenter` with the visual
+  //     midpoint of the SVG. This was the fix in commit 6e6b5db.
+  //   - Web (`gesture-handler-web` pointer events): e.x/e.y are already
+  //     relative to the gesture target view. Adding the offset there
+  //     shifts the hit-test origin upward by the header height, which
+  //     makes every tap land near (but not on) the wrong dot.
   const containerW = svgLayout?.width ?? width;
   const containerH = svgLayout?.height ?? Math.max(1, height - 220);
-  const offsetX = svgLayout?.x ?? 0;
-  const offsetY = svgLayout?.y ?? 0;
+  const useOuterOffset = Platform.OS !== 'web';
+  const offsetX = useOuterOffset ? svgLayout?.x ?? 0 : 0;
+  const offsetY = useOuterOffset ? svgLayout?.y ?? 0 : 0;
   const sideUnits = Math.min(containerW, containerH) / 2.4;
   const svgCenterX = offsetX + containerW / 2;
   const svgCenterY = offsetY + containerH / 2;

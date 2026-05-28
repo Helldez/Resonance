@@ -10,7 +10,7 @@
     "platforms": ["android", "web"],
     "web": {
       "bundler": "metro",
-      "output": "single"
+      "output": "static"
     },
     "android": {
       "package": "com.helldez.resonance",
