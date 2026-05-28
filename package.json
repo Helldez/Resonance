@@ -16,6 +16,11 @@
     "typecheck": "tsc --noEmit",
     "calibrate": "node scripts/calibration/evaluate-embeddings.mjs",
     "build:bare": "node bare/build.mjs",
+    "build:bare:desktop": "node bare/build-desktop.mjs",
+    "desktop:peer": "tsx scripts/desktop/peer.ts",
+    "web:export": "expo export -p web",
+    "electron:dev": "electron electron/main.cjs",
+    "app:dev": "npm run web:export && electron electron/main.cjs",
     "postinstall": "patch-package",
     "ios": "expo run:ios"
   },
@@ -60,6 +65,9 @@
     "expo-splash-screen": "^55.0.18",
     "expo-sqlite": "~16.0.10",
     "expo-status-bar": "~3.0.9",
+    "@expo/metro-runtime": "~6.1.2",
+    "react-dom": "19.1.0",
+    "react-native-web": "~0.21.0",
     "hyperdb": "^4.22.3",
     "hyperdrive": "^13.3.2",
     "hyperswarm": "^4.17.0",
@@ -80,9 +88,13 @@
   },
   "devDependencies": {
     "@qvac/cli": "^0.5.0",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.19.17",
     "@types/react": "~19.1.0",
     "babel-plugin-module-resolver": "^5.0.3",
+    "better-sqlite3": "^11.7.0",
+    "electron": "^33.2.0",
+    "tsx": "^4.19.2",
     "patch-package": "^8.0.1",
     "typescript": "~5.9.2"
   }

@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import type { MobileContainer } from '@platform/mobile/bootstrap';
-import { bootstrapMobile } from '@platform/mobile/bootstrap';
+import type { PlatformContainer } from '@platform/bootstrap';
+import { bootstrapPlatform } from '@platform/bootstrap';
 import { useBootstrapStore } from '@domain/BootstrapStore';
 import { useSettingsStore } from '@domain/SettingsStore';
 import { lshBucketsOf } from '@core/matching/LshBucket';
@@ -13,16 +13,16 @@ import { cosineOnUnit } from '@core/matching/CosineSimilarity';
 import type { BucketId, PeerId } from '@core/domain/types';
 import type { ModelProgressUpdate } from '@qvac/sdk';
 
-const AppContainerContext = createContext<MobileContainer | null>(null);
+const AppContainerContext = createContext<PlatformContainer | null>(null);
 
 export function AppContainerProvider({ children }: { children: ReactNode }) {
-  const [container, setContainer] = useState<MobileContainer | null>(null);
+  const [container, setContainer] = useState<PlatformContainer | null>(null);
   const setStage = useBootstrapStore((s) => s.setStage);
   const setProgress = useBootstrapStore((s) => s.setProgress);
   const setError = useBootstrapStore((s) => s.setError);
   const setSelf = useBootstrapStore((s) => s.setSelf);
   const aboutYouEmbeddingRef = useRef<Float32Array | null>(null);
-  const containerRef = useRef<MobileContainer | null>(null);
+  const containerRef = useRef<PlatformContainer | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -31,7 +31,7 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
     const run = async (): Promise<void> => {
       try {
         setStage('identity');
-        const c = await bootstrapMobile();
+        const c = await bootstrapPlatform();
         if (cancelled) {
           return;
         }
@@ -128,11 +128,11 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function useAppContainer(): MobileContainer | null {
+export function useAppContainer(): PlatformContainer | null {
   return useContext(AppContainerContext);
 }
 
-export function useRequireContainer(): MobileContainer {
+export function useRequireContainer(): PlatformContainer {
   const c = useContext(AppContainerContext);
   if (c === null) {
     throw new Error('App container not ready');
@@ -195,10 +195,10 @@ export function getCurrentBucket(): BucketId | null {
 
 // Module-local refs so the post-publish re-bucket helper can act without
 // reaching back through React context.
-let reBucketContainer: MobileContainer | null = null;
+let reBucketContainer: PlatformContainer | null = null;
 let reBucketAboutYou: Float32Array | null = null;
 
-function setContainerForReBucket(c: MobileContainer): void {
+function setContainerForReBucket(c: PlatformContainer): void {
   reBucketContainer = c;
 }
 function setAboutYouEmbeddingForReBucket(v: Float32Array | null): void {
@@ -262,7 +262,7 @@ async function rebucketAndJoin(): Promise<void> {
 }
 
 async function persistRecord(
-  c: MobileContainer,
+  c: PlatformContainer,
   record: import('@core/domain/types').SignedRecord,
   ownEmbeddings: ReadonlyArray<Float32Array>,
   interestProfile: Float32Array | null,
@@ -314,7 +314,7 @@ async function persistRecord(
 }
 
 async function rememberAuthorNoiseKey(
-  c: MobileContainer,
+  c: PlatformContainer,
   author: PeerId,
   noiseKey: string,
 ): Promise<void> {

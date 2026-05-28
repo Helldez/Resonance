@@ -33,20 +33,27 @@
       ],
       "@ui/*": [
         "src/ui/*"
+      ],
+      "@desktop/*": [
+        "src/platform/desktop/*"
       ]
     }
   },
   "include": [
     "index.ts",
     "src/**/*.ts",
-    "src/**/*.tsx"
+    "src/**/*.tsx",
+    "electron/**/*.ts",
+    "scripts/desktop/**/*.ts"
   ],
   "exclude": [
     "node_modules",
     "android",
     "ios",
     "build",
-    "qvac/worker.bundle.js"
+    "qvac/worker.bundle.js",
+    "bare/p2p.bundle.mjs",
+    "bare/p2p.desktop.bundle.mjs"
   ],
   "extends": "expo/tsconfig.base"
 }

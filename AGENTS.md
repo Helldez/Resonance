@@ -16,7 +16,11 @@ Companion to [JarvisQ](https://github.com/Helldez/JarvisQ) and
 [JarvisDocs](https://github.com/Helldez/JarvisDocs). Same stack
 (Tether QVAC SDK + Bare worklet + Expo), different product surface.
 
-Android is the only target for the MVP. Desktop/iOS later.
+Android is the only first-class target for the MVP. A **desktop peer**
+(Node CLI + Electron shell) exists under `src/platform/desktop/` so
+contributors can run a second Resonance node on a development machine
+and exercise the P2P matching path end-to-end without provisioning a
+second phone. See `docs/DESKTOP.md` for the runbook. iOS later.
 
 ## Project posture (non-negotiable)
 
@@ -47,7 +51,9 @@ agent on its behalf (commits, PRs, READMEs, issues, social posts).
   paths in `StorageConfig.ts`.
 - **Hexagonal boundaries.** `src/core/**` never imports Expo, React Native,
   Node, Bare or any platform-specific module directly. It only imports from
-  `@core/ports/*`. Platform code lives under `src/platform/<target>/`.
+  `@core/ports/*`. Platform code lives under `src/platform/<target>/` —
+  currently `mobile/` (Expo + react-native-bare-kit) and `desktop/`
+  (Node + Electron + standalone `bare` runtime).
 - **One responsibility per file.** Use cases, parsers, repositories and
   services each live in their own file.
 - **No backwards-compat shims.** If something is unused, delete it.
@@ -96,6 +102,13 @@ Calibration script (Milestone 0):
 
 ```powershell
 npm run calibrate
+```
+
+Desktop peer (second device for testing — see `docs/DESKTOP.md`):
+
+```powershell
+npm run build:bare:desktop
+npm run desktop:peer
 ```
 
 ## File map for orientation

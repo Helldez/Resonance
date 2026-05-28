@@ -7,7 +7,11 @@
     "userInterfaceStyle": "automatic",
     "scheme": "resonance",
     "newArchEnabled": true,
-    "platforms": ["android"],
+    "platforms": ["android", "web"],
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
     "android": {
       "package": "com.helldez.resonance",
       "allowBackup": false,
