@@ -59,7 +59,13 @@ export function computeInterestVector(
   return null;
 }
 
-function centroidL2(vectors: ReadonlyArray<Float32Array>): Float32Array {
+/**
+ * L2-normalised arithmetic mean of a set of equally-dimensioned vectors.
+ * Throws on empty input or dim mismatch. Exported because the LSH listening
+ * pipeline (`ComputeListeningBuckets`) uses the same anchor when it needs
+ * to fill remaining slots with multi-table buckets.
+ */
+export function centroidL2(vectors: ReadonlyArray<Float32Array>): Float32Array {
   if (vectors.length === 0) {
     throw new Error('centroidL2: empty input');
   }

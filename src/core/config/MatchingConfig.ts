@@ -8,14 +8,18 @@
  */
 export const MatchingConfig = {
   /**
-   * Embedding dimension. EmbeddingGemma's native dim is 768; we truncate
-   * to 256 via the Matryoshka head. The 768-vs-256 trade-off was tested
-   * empirically and 768 was *worse* on the two-device run — full-dim
-   * cosines clustered higher, not better separated. Reverted to 256.
-   * Calibration (Milestone 0) is the right way to set the right value;
-   * for now 256 is the project-wide convention.
+   * Embedding dimension. bge-m3 produces 1024-dim dense vectors. Unlike
+   * EmbeddingGemma it is NOT trained with Matryoshka representation
+   * learning, so naive truncation to a smaller dim destroys signal
+   * (information is spread across all dims uniformly, not "head-loaded").
+   * We keep the full 1024. Storage cost: 4KB per embedding — 10k posts
+   * = 40MB total, acceptable on mobile.
+   *
+   * Network-wide constant: changing the dim or the model implies bumping
+   * NetworkConfig.topicPrefix to isolate peers using incompatible
+   * embedding spaces.
    */
-  embeddingDim: 256,
+  embeddingDim: 1024,
 
   /**
    * Bits in the LSH bucket id. With 8 bits we partition the embedding
@@ -181,6 +185,18 @@ export const MatchingConfig = {
    */
   mapLabelTopK: 5,
   mapLabelMinSimilarity: 0.3,
+
+  /**
+   * Reference rings drawn on the radial-similarity map. Values are cosine
+   * similarities; the map projects them to radii via `(1 - sim) / 2`.
+   * Kept aligned with `thresholdPresets` so the same vocabulary appears
+   * in Settings (chip labels) and on the map (ring labels). Must be sorted
+   * descending. The ring whose value equals the active inbox threshold is
+   * highlighted at render time — see `ThemeConfig.map.referenceRingActive*`.
+   */
+  mapReferenceRings: {
+    similarities: [0.85, 0.7, 0.5, 0.3] as ReadonlyArray<number>,
+  },
 
   /**
    * Prompts used by the response draft pipeline. Kept here, not at call

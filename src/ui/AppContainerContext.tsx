@@ -3,9 +3,8 @@ import type { PlatformContainer } from '@platform/bootstrap';
 import { bootstrapPlatform } from '@platform/bootstrap';
 import { useBootstrapStore } from '@domain/BootstrapStore';
 import { useSettingsStore } from '@domain/SettingsStore';
-import { lshBucketsOf } from '@core/matching/LshBucket';
-import { computeInterestVector } from '@core/matching/InterestVector';
-import type { InterestVectorSource } from '@core/matching/InterestVector';
+import { computeListeningBuckets } from '@core/matching/ComputeListeningBuckets';
+import type { ListeningBucketsSource } from '@core/matching/ComputeListeningBuckets';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 import { addressOf } from '@core/utils/AddressOf';
 import { canonicalDigest } from '@core/utils/CanonicalRecord';
@@ -171,7 +170,7 @@ export function getOwnEmbeddingsSnapshot(): Float32Array[] {
  * Exposed for the Settings screen to surface as a diagnostic.
  */
 const currentBucketsRef: { current: ReadonlyArray<BucketId> } = { current: [] };
-const currentBucketSourceRef: { current: InterestVectorSource | null } = {
+const currentBucketSourceRef: { current: ListeningBucketsSource | null } = {
   current: null,
 };
 
@@ -179,7 +178,7 @@ export function getCurrentBuckets(): ReadonlyArray<BucketId> {
   return currentBucketsRef.current;
 }
 
-export function getCurrentBucketSource(): InterestVectorSource | null {
+export function getCurrentBucketSource(): ListeningBucketsSource | null {
   return currentBucketSourceRef.current;
 }
 
@@ -206,59 +205,85 @@ function setAboutYouEmbeddingForReBucket(v: Float32Array | null): void {
 }
 
 /**
- * Recompute the L bucket ids from the current interest vector (post
- * centroid if enough own posts, otherwise About-you) and diff against
- * what we are currently joined to. Leaves topics that are no longer in
- * the set, joins newly-added ones. No-op for tables whose bucket bits
- * did not change.
+ * Recompute the listening buckets and diff against what we are currently
+ * joined to. Leaves topics no longer in the set, joins newly-added ones.
+ *
+ * Listening strategy (see `ComputeListeningBuckets`): the user's most
+ * recent own posts each contribute a single-seed bucket (symmetric to
+ * publishing); if fewer than `lshTables` distinct buckets emerge, the
+ * remaining slots are filled with multi-table buckets of the centroid
+ * (or of About-you in cold start) to recover the classical LSH recall.
  */
 async function rebucketAndJoin(): Promise<void> {
   const c = reBucketContainer;
   if (c === null) {
     return;
   }
-  const ir = computeInterestVector({
+  const result = computeListeningBuckets({
     ownPostEmbeddings: externalOwnEmbeddings.current,
     aboutYouEmbedding: reBucketAboutYou,
-    minOwnPosts: MatchingConfig.postDrivenMinOwnPosts,
+    dim: MatchingConfig.embeddingDim,
+    bits: MatchingConfig.lshBits,
+    singleSeed: MatchingConfig.lshSeed,
+    multiSeeds: MatchingConfig.lshSeeds,
     windowOwnPosts: MatchingConfig.postDrivenWindow,
+    targetBuckets: MatchingConfig.lshTables,
   });
-  if (ir === null) {
-    console.warn('[rn] rebucketAndJoin: no interest vector available');
+
+  const { diagnostics } = result;
+  console.log(
+    `[rn] rebucket perPostRaw=${diagnostics.perPostBucketsRaw.length} perPostDistinct=${diagnostics.perPostDistinct} filled=${diagnostics.filledFromCentroid} source=${diagnostics.source.kind}`,
+  );
+
+  if (result.buckets.length === 0) {
+    console.warn(
+      '[rn] rebucket no buckets — own posts empty and About-you unavailable',
+    );
+    currentBucketSourceRef.current = diagnostics.source;
     return;
   }
-  const next = lshBucketsOf(
-    ir.vector,
-    MatchingConfig.embeddingDim,
-    MatchingConfig.lshBits,
-    MatchingConfig.lshSeeds,
-  );
+
+  const next = result.buckets;
+  console.log(`[rn] rebucket targetBuckets=${next.length} buckets=${next.join(',')}`);
+
   const previous = currentBucketsRef.current;
   const prevSet = new Set(previous);
   const nextSet = new Set(next);
 
+  const toLeave: BucketId[] = [];
   for (const b of previous) {
     if (!nextSet.has(b)) {
-      try {
-        await c.network.leaveBucket(b);
-        console.log(`[rn] left bucket ${b}`);
-      } catch (err) {
-        console.warn('[rn] leaveBucket failed', b, err);
-      }
+      toLeave.push(b);
     }
   }
+  const toJoin: BucketId[] = [];
   for (const b of next) {
     if (!prevSet.has(b)) {
-      try {
-        await c.network.joinBucket(b);
-        console.log(`[rn] joined bucket ${b}`);
-      } catch (err) {
-        console.warn('[rn] joinBucket failed', b, err);
-      }
+      toJoin.push(b);
+    }
+  }
+  console.log(
+    `[rn] rebucket diff leaving=${toLeave.length} joining=${toJoin.length}`,
+  );
+
+  for (const b of toLeave) {
+    try {
+      await c.network.leaveBucket(b);
+      console.log(`[rn] leave bucket=${b}`);
+    } catch (err) {
+      console.warn('[rn] leaveBucket failed', b, err);
+    }
+  }
+  for (const b of toJoin) {
+    try {
+      await c.network.joinBucket(b);
+      console.log(`[rn] join bucket=${b}`);
+    } catch (err) {
+      console.warn('[rn] joinBucket failed', b, err);
     }
   }
   currentBucketsRef.current = next;
-  currentBucketSourceRef.current = ir.source;
+  currentBucketSourceRef.current = diagnostics.source;
 }
 
 async function persistRecord(
@@ -348,27 +373,37 @@ function scoreRemotePost(
 ): number | null {
   if (ownEmbeddings.length > 0) {
     let best = -Infinity;
+    let bestIndex = -1;
+    let skipped = 0;
     for (let i = 0; i < ownEmbeddings.length; i++) {
       try {
         const s = cosineOnUnit(postEmbedding, ownEmbeddings[i]);
         if (s > best) {
           best = s;
+          bestIndex = i;
         }
       } catch (e) {
-        // Skip embeddings that don't match the expected dimension.
+        skipped += 1;
       }
     }
     if (best > -Infinity) {
+      console.log(
+        `[rn] scoreRemotePost source=own best=${best.toFixed(3)} bestIndex=${bestIndex} ownCount=${ownEmbeddings.length} skipped=${skipped}`,
+      );
       return best;
     }
   }
   if (interestProfile !== null) {
     try {
-      return cosineOnUnit(postEmbedding, interestProfile);
+      const s = cosineOnUnit(postEmbedding, interestProfile);
+      console.log(`[rn] scoreRemotePost source=about-you value=${s.toFixed(3)}`);
+      return s;
     } catch (e) {
+      console.warn('[rn] scoreRemotePost about-you dim mismatch', e);
       return null;
     }
   }
+  console.warn('[rn] scoreRemotePost no signal — own empty and about-you null');
   return null;
 }
 

@@ -25,6 +25,7 @@ import { QvacEmbeddingService } from './QvacEmbeddingService';
 import { QvacLlmService } from './QvacLlmService';
 import { SystemClock } from './SystemClock';
 import { bootstrapIdentity } from '@core/identity/IdentityManager';
+import { MatchingConfig } from '@core/config/MatchingConfig';
 import { PostRepository } from '@data/PostRepository';
 import { ResponseRepository } from '@data/ResponseRepository';
 import { PeerRepository } from '@data/PeerRepository';
@@ -57,6 +58,13 @@ export async function bootstrapMobile(): Promise<MobileContainer> {
 
   const posts = new PostRepository(database);
   await posts.createSchema();
+  const droppedPosts = await posts.dropIfDimChanged(MatchingConfig.embeddingDim);
+  if (droppedPosts > 0) {
+    logger.log(
+      'warn',
+      `dropped ${droppedPosts} posts: stored embedding dim incompatible with current model (expected ${MatchingConfig.embeddingDim}-dim)`,
+    );
+  }
   const responses = new ResponseRepository(database);
   await responses.createSchema();
   const peers = new PeerRepository(database);

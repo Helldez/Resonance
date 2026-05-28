@@ -61,16 +61,37 @@ agent on its behalf (commits, PRs, READMEs, issues, social posts).
 
 ## Matching conventions
 
-- Embeddings are **L2-normalised at ingest**, **256-dim** (Matryoshka
-  truncation from EmbeddingGemma's native 768). Cosine similarity is
-  therefore computed as a plain dot product.
-- Vectors stored as little-endian `Float32Array` BLOBs in SQLite.
+- Embeddings come from **bge-m3** (BAAI, GGUF Q8_0). Native dim **1024**,
+  L2-normalised at ingest. bge-m3 is NOT trained with Matryoshka
+  representation learning, so dim truncation destroys signal — keep the full
+  1024. Cosine similarity is computed as a plain dot product on L2-normalised
+  vectors.
+- Vectors stored as little-endian `Float32Array` BLOBs in SQLite. On boot,
+  `PostRepository.dropIfDimChanged` drops any post whose stored embedding
+  byte-length is incompatible with the active model — handles model swaps
+  without leaking stale vectors into matching.
 - Coarse routing uses **LSH (signed random hyperplanes)** to map a vector to
   an N-bit bucket id. The bucket id is the Hyperswarm topic. Parameters live
   in `MatchingConfig.ts`.
+- **Publishing**: each post is published in a **single** bucket computed via
+  `lshBucketOf(post, lshSeed)` (single-seed) so the record has one canonical
+  replica home.
+- **Listening**: a peer subscribes to the buckets where its **most recent own
+  posts** were published (same single-seed, symmetric to publishing), deduped.
+  If fewer than `lshTables` distinct buckets emerge (mono-topic user), the
+  remaining slots are filled with **multi-table** buckets of the centroid (or
+  About-you in cold start) via `lshBucketsOf` — recovers the classical LSH
+  recall when per-post coverage is too sparse. See
+  `src/core/matching/ComputeListeningBuckets.ts`.
 - The fine-grained similarity threshold is applied **on the receiving peer's
   device** against the receiver's own interest profile. It is a local
-  decision, never imposed by the network.
+  decision, never imposed by the network. The threshold presets in
+  `MatchingConfig.thresholdPresets` are the same vocabulary the map's
+  reference rings use (`mapReferenceRings.similarities`); the ring matching
+  the active threshold is highlighted at render time.
+- The network is versioned via `NetworkConfig.topicPrefix`. Bumping it
+  (currently `resonance/v2/bucket/`) isolates peers using incompatible
+  embedding spaces or routing algorithms.
 
 ## P2P conventions
 

@@ -35,6 +35,35 @@ export class PostRepository {
     `);
   }
 
+  /**
+   * Drop every stored post if any existing embedding blob has a byte length
+   * incompatible with `currentDim`. Used to handle an embedding-model swap
+   * (e.g. EmbeddingGemma 256-dim → bge-m3 1024-dim): the old vectors live
+   * in a different semantic space and would silently degrade matching.
+   *
+   * Returns the number of rows removed. A no-op when the dim matches or the
+   * table is empty.
+   */
+  async dropIfDimChanged(currentDim: number): Promise<number> {
+    const probe = await this.db.query<{ embedding: Uint8Array }>(
+      'SELECT embedding FROM posts LIMIT 1',
+    );
+    if (probe.length === 0) {
+      return 0;
+    }
+    const expectedBytes = currentDim * Float32Array.BYTES_PER_ELEMENT;
+    const actualBytes = probe[0].embedding?.byteLength ?? -1;
+    if (actualBytes === expectedBytes) {
+      return 0;
+    }
+    const countRows = await this.db.query<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM posts',
+    );
+    const removed = countRows[0]?.n ?? 0;
+    await this.db.exec('DELETE FROM posts');
+    return removed;
+  }
+
   async upsert(
     address: RecordAddress,
     author: PeerId,

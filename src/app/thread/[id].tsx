@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { View, ScrollView, Alert, Pressable, RefreshControl } from 'react-native';
+import { View, ScrollView, Pressable, RefreshControl } from 'react-native';
+import { confirmDestructive } from '@ui/confirmDestructive';
 import {
   Text,
   Card,
@@ -7,6 +8,7 @@ import {
   TextInput,
   ActivityIndicator,
   HelperText,
+  IconButton,
   useTheme,
 } from 'react-native-paper';
 import { useLocalSearchParams, useFocusEffect, useRouter } from 'expo-router';
@@ -242,35 +244,50 @@ export default function ThreadScreen() {
         Responses ({responses.length})
       </Text>
 
-      {responses.map((r) => (
-        <Pressable
-          key={r.address}
-          onLongPress={() => {
-            Alert.alert('Delete this response?', 'Removes from your local DB only.', [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Delete',
-                style: 'destructive',
-                onPress: () => {
-                  void (async () => {
-                    await container.responses.delete(r.address as RecordAddress);
-                    await load();
-                  })();
-                },
-              },
-            ]);
-          }}
-        >
-          <Card style={{ marginTop: 8 }}>
+      {responses.map((r) => {
+        const askDelete = (): void => {
+          confirmDestructive(
+            'Delete this response?',
+            'Removes from your local DB only.',
+            () => {
+              void (async () => {
+                await container.responses.delete(r.address as RecordAddress);
+                await load();
+              })();
+            },
+          );
+        };
+        return (
+          <Card key={r.address} style={{ marginTop: 8 }}>
             <Card.Content>
-              <Text>{r.text}</Text>
-              <Text style={{ marginTop: 4, opacity: 0.6, fontSize: 12 }}>
-                {shortPeer(r.author)} · long-press to delete
-              </Text>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'flex-start',
+                  gap: 8,
+                }}
+              >
+                <Pressable
+                  onLongPress={askDelete}
+                  style={{ flex: 1 }}
+                >
+                  <Text>{r.text}</Text>
+                  <Text style={{ marginTop: 4, opacity: 0.6, fontSize: 12 }}>
+                    {shortPeer(r.author)}
+                  </Text>
+                </Pressable>
+                <IconButton
+                  icon="delete-outline"
+                  size={18}
+                  accessibilityLabel="Delete this response"
+                  style={{ margin: 0 }}
+                  onPress={askDelete}
+                />
+              </View>
             </Card.Content>
           </Card>
-        </Pressable>
-      ))}
+        );
+      })}
 
       {responses.length === 0 && (
         <Text style={{ marginTop: 8, opacity: 0.6 }}>No responses yet.</Text>
@@ -280,8 +297,8 @@ export default function ThreadScreen() {
         <View style={{ marginTop: 24 }}>
           {responses.some((r) => r.author === container.self) ? (
             <HelperText type="info">
-              You already responded to this post. Long-press your response above
-              to delete it before writing a new one.
+              You already responded to this post. Tap the trash icon on your
+              response above to delete it before writing a new one.
             </HelperText>
           ) : !composing ? (
             <View style={{ flexDirection: 'row', gap: 8 }}>

@@ -37,6 +37,15 @@ export const ThemeConfig = {
     referenceRingLabelColor: '#5A6075',
     referenceRingStrokeWidthPx: 0.6,
     /**
+     * Style for the ring whose similarity equals the user's active inbox
+     * threshold. The map then doubles as a live visualiser of the filter:
+     * peers drawn inside the active ring pass, peers outside do not.
+     */
+    referenceRingActiveColor: '#7C5CFF',
+    referenceRingActiveStrokeWidthPx: 1.0,
+    referenceRingActiveDashArray: '3 2',
+    referenceRingActiveLabelColor: '#C7B9FF',
+    /**
      * Touch slack around each star, in DP. Material Design recommends
      * ≥ 24 DP for comfortable touch targets; we use 40 DP because the
      * stars themselves are tiny (4-6 DP) and finger pads cover ~10 DP.

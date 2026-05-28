@@ -114,16 +114,25 @@ export default function SettingsScreen() {
         }}
       >
         <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-          Current buckets (Tier 2 — {(() => {
+          Current buckets ({(() => {
             const src = getCurrentBucketSource();
             if (src === null) {
               return 'not joined';
             }
-            if (src.kind === 'post-centroid') {
-              return `from ${src.fromPosts} recent post${src.fromPosts === 1 ? '' : 's'}`;
+            if (src.kind === 'per-post-only') {
+              return `from ${src.postsConsidered} recent post${src.postsConsidered === 1 ? '' : 's'}`;
             }
-            if (src.kind === 'about-you') {
+            if (src.kind === 'per-post-plus-centroid-fill') {
+              return `from ${src.postsConsidered} post${src.postsConsidered === 1 ? '' : 's'} + ${src.filled} centroid fill`;
+            }
+            if (src.kind === 'about-you-plus-fill') {
+              return `from About-you + ${src.filled} centroid fill`;
+            }
+            if (src.kind === 'about-you-only') {
               return 'from About-you';
+            }
+            if (src.kind === 'none') {
+              return 'no source available';
             }
             return 'unknown source';
           })()})
@@ -141,10 +150,11 @@ export default function SettingsScreen() {
           })()}
         </Text>
         <HelperText type="info" padding="none">
-          With Tier 2 multi-table LSH, two peers see each other if they
-          collide in ANY of these buckets. Similar About-you / posts on
-          both devices yields high overlap; identical text is no longer
-          required.
+          You listen on the same buckets where your most recent posts were
+          published. Two peers see each other when their posts land in the
+          same bucket. If your posts collapse into few distinct buckets
+          (mono-topic), the remaining slots are filled with multi-table
+          buckets of your interest centroid to keep recall high.
         </HelperText>
       </View>
 

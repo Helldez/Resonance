@@ -17,12 +17,12 @@ export interface ModelDescriptor {
  */
 export const ModelProfiles = {
   embedding: {
-    id: 'embeddinggemma-300m-q8_0',
+    id: 'bge-m3-q8_0',
     kind: 'embedding' as const,
-    url: HttpModelSources.embeddingGemma300mQ8.url,
-    sha256: HttpModelSources.embeddingGemma300mQ8.sha256,
-    sizeBytes: HttpModelSources.embeddingGemma300mQ8.sizeBytes,
-    nativeDim: 768,
+    url: HttpModelSources.bgeM3Q8.url,
+    sha256: HttpModelSources.bgeM3Q8.sha256,
+    sizeBytes: HttpModelSources.bgeM3Q8.sizeBytes,
+    nativeDim: 1024,
   } satisfies ModelDescriptor,
 
   llm: {

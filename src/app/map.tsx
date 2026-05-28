@@ -38,6 +38,7 @@ export default function MapScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const displayName = useSettingsStore((s) => s.displayName);
+  const threshold = useSettingsStore((s) => s.similarityThreshold);
   const { width, height } = useWindowDimensions();
 
   const [view, setView] = useState<MapView | null>(null);
@@ -335,12 +336,25 @@ export default function MapScreen() {
   }
 
   const radialMode = MatchingConfig.mapProjectionMethod === 'radial-sim';
-  const referenceRings: ReadonlyArray<{ r: number; label: string }> = radialMode
-    ? [
-        { r: 0.25, label: 'sim 0.5' },
-        { r: 0.5, label: 'sim 0.0' },
-        { r: 0.75, label: 'sim −0.5' },
-      ]
+  const activeRingStrokeWidth =
+    ThemeConfig.map.referenceRingActiveStrokeWidthPx / sideUnits / scale;
+  // Rings are derived from MatchingConfig.mapReferenceRings, which is itself
+  // aligned with thresholdPresets so map labels and Settings chips share one
+  // vocabulary. The ring whose similarity equals the active inbox threshold
+  // is highlighted (dashed + brand colour + thicker stroke) so the map
+  // doubles as a visualiser of the current filter.
+  const referenceRings: ReadonlyArray<{
+    r: number;
+    label: string;
+    active: boolean;
+    sim: number;
+  }> = radialMode
+    ? MatchingConfig.mapReferenceRings.similarities.map((sim) => ({
+        r: (1 - sim) / 2,
+        label: `sim ${sim.toFixed(2)}`,
+        active: Math.abs(sim - threshold) < 1e-6,
+        sim,
+      }))
     : [];
 
   return (
@@ -369,37 +383,50 @@ export default function MapScreen() {
           <Svg
             width="100%"
             height="100%"
-            viewBox="-1.2 -1.2 2.4 2.4"
+            viewBox="-1.05 -1.05 2.1 2.1"
             preserveAspectRatio="xMidYMid meet"
           >
             <Rect
-              x={-1.2}
-              y={-1.2}
-              width={2.4}
-              height={2.4}
+              x={-1.05}
+              y={-1.05}
+              width={2.1}
+              height={2.1}
               fill={ThemeConfig.map.backgroundColor}
             />
             <G transform={`translate(${tx} ${ty}) scale(${scale})`}>
               {referenceRings.map((ring) => (
                 <Circle
-                  key={`ring-${ring.r}`}
+                  key={`ring-${ring.sim}`}
                   cx={0}
                   cy={0}
                   r={ring.r}
                   fill="none"
-                  stroke={ThemeConfig.map.referenceRingColor}
-                  strokeWidth={ringStrokeWidth}
+                  stroke={
+                    ring.active
+                      ? ThemeConfig.map.referenceRingActiveColor
+                      : ThemeConfig.map.referenceRingColor
+                  }
+                  strokeWidth={ring.active ? activeRingStrokeWidth : ringStrokeWidth}
+                  strokeDasharray={
+                    ring.active
+                      ? ThemeConfig.map.referenceRingActiveDashArray
+                      : undefined
+                  }
                 />
               ))}
               {referenceRings.map((ring) => (
                 <SvgText
-                  key={`ring-label-${ring.r}`}
+                  key={`ring-label-${ring.sim}`}
                   x={0}
                   y={-ring.r - ringLabelFontSize * 0.4}
                   fontSize={ringLabelFontSize}
-                  fill={ThemeConfig.map.referenceRingLabelColor}
+                  fill={
+                    ring.active
+                      ? ThemeConfig.map.referenceRingActiveLabelColor
+                      : ThemeConfig.map.referenceRingLabelColor
+                  }
                   textAnchor="middle"
-                  opacity={0.8}
+                  opacity={ring.active ? 1.0 : 0.8}
                 >
                   {ring.label}
                 </SvgText>
@@ -514,27 +541,42 @@ export default function MapScreen() {
           <Dialog.Title>How to read this map</Dialog.Title>
           <Dialog.Content>
             <Text variant="bodyMedium" style={{ marginBottom: 8 }}>
-              The bright white star at the center is your post.
+              The bright white star at the center is your anchor post.
             </Text>
             <Text variant="bodyMedium" style={{ marginBottom: 8 }}>
-              Every other star is a recent post from a peer. <Text style={{ fontWeight: '700' }}>The closer to your star, the more semantically similar.</Text>
+              Every other star is a recent post from a peer.{' '}
+              <Text style={{ fontWeight: '700' }}>
+                Distance from the center = semantic similarity.
+              </Text>{' '}
+              Closer to center means more affine; near the edge means unrelated.
             </Text>
             <Text variant="bodyMedium" style={{ marginBottom: 8 }}>
-              The faint grey circles are reference rings:
+              The concentric rings are reference cosine values, aligned with the
+              inbox threshold presets in Settings:
             </Text>
-            <Text variant="bodyMedium" style={{ marginLeft: 12 }}>
-              • inner ring: similarity 0.5
-            </Text>
-            <Text variant="bodyMedium" style={{ marginLeft: 12 }}>
-              • middle ring: similarity 0.0 (unrelated)
-            </Text>
-            <Text variant="bodyMedium" style={{ marginLeft: 12, marginBottom: 8 }}>
-              • outer ring: similarity −0.5 (opposite)
+            {MatchingConfig.mapReferenceRings.similarities.map((sim) => (
+              <Text key={`legend-${sim}`} variant="bodyMedium" style={{ marginLeft: 12 }}>
+                {`• sim ${sim.toFixed(2)} — `}
+                {sim >= 0.85
+                  ? 'near-identical interests'
+                  : sim >= 0.7
+                    ? 'strongly related'
+                    : sim >= 0.5
+                      ? 'sharing a clear theme'
+                      : 'loosely related'}
+              </Text>
+            ))}
+            <Text variant="bodyMedium" style={{ marginTop: 8, marginBottom: 8 }}>
+              The dashed purple ring marks{' '}
+              <Text style={{ fontWeight: '700' }}>your active inbox threshold</Text>.
+              Stars inside it pass your filter; stars outside it are dropped.
             </Text>
             <Text variant="bodyMedium" style={{ marginBottom: 8 }}>
-              Stars at the same angle around your star tend to be similar to
-              each other too — the angular ordering follows the structure of
-              the candidate set.
+              <Text style={{ fontWeight: '700' }}>Angle around the center has no
+              semantic meaning</Text> in this view — it is only used to spread the
+              points so they do not overlap. Two stars at the same angle are NOT
+              more related to each other than two at opposite angles; only the
+              distance from the center matters.
             </Text>
             <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
               Pinch to zoom. Drag to pan. Tap any star to read.

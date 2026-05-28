@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { View, FlatList, Alert, Pressable, RefreshControl } from 'react-native';
+import { View, FlatList, Pressable, RefreshControl } from 'react-native';
+import { confirmDestructive } from '@ui/confirmDestructive';
 import {
   Text,
   IconButton,
@@ -95,19 +96,12 @@ export default function FeedScreen() {
       const detail = isOwn
         ? 'Removes the post from your local DB. Peers who already replicated it still have a copy in their Hypercore.'
         : 'Removes from your feed. The author still has it; it may show again on next replication if the threshold allows.';
-      Alert.alert('Delete this post?', detail, [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            void (async () => {
-              await container.posts.delete(address as RecordAddress);
-              await load();
-            })();
-          },
-        },
-      ]);
+      confirmDestructive('Delete this post?', detail, () => {
+        void (async () => {
+          await container.posts.delete(address as RecordAddress);
+          await load();
+        })();
+      });
     },
     [container, load],
   );
@@ -236,99 +230,108 @@ export default function FeedScreen() {
                   clamp01((sim + 1) / 2),
                 )
               : ThemeConfig.map.peerStarColorLow;
+          const openThread = (): void => {
+            router.push({
+              pathname: '/thread/[id]',
+              params: { id: item.address },
+            });
+          };
           return (
-            <Pressable
-              onPress={() =>
-                router.push({
-                  pathname: '/thread/[id]',
-                  params: { id: item.address },
-                })
-              }
-              onLongPress={() => askDelete(item.address, isOwn)}
+            <Card
+              mode="contained"
+              style={{
+                marginBottom: 10,
+                backgroundColor: theme.colors.surface,
+              }}
             >
-              <Card
-                mode="contained"
-                style={{
-                  marginBottom: 10,
-                  backgroundColor: theme.colors.surface,
-                }}
-              >
-                <Card.Content>
+              <Card.Content>
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    marginBottom: 8,
+                  }}
+                >
                   <View
                     style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      marginBottom: 8,
+                      width: 10,
+                      height: 10,
+                      borderRadius: 5,
+                      backgroundColor: dotColor,
+                      marginRight: 8,
+                    }}
+                  />
+                  <Text
+                    variant="labelMedium"
+                    style={{ color: theme.colors.onSurface }}
+                  >
+                    {authorLabel}
+                  </Text>
+                  <Text
+                    variant="bodySmall"
+                    style={{
+                      marginLeft: 8,
+                      color: theme.colors.onSurfaceVariant,
                     }}
                   >
-                    <View
+                    {formatRelative(item.createdAt)}
+                  </Text>
+                  <View style={{ flex: 1 }} />
+                  {!isOwn && sim !== null && (
+                    <Surface
+                      elevation={0}
                       style={{
-                        width: 10,
-                        height: 10,
-                        borderRadius: 5,
-                        backgroundColor: dotColor,
-                        marginRight: 8,
-                      }}
-                    />
-                    <Text
-                      variant="labelMedium"
-                      style={{ color: theme.colors.onSurface }}
-                    >
-                      {authorLabel}
-                    </Text>
-                    <Text
-                      variant="bodySmall"
-                      style={{
-                        marginLeft: 8,
-                        color: theme.colors.onSurfaceVariant,
+                        paddingHorizontal: 8,
+                        paddingVertical: 2,
+                        borderRadius: 10,
+                        backgroundColor: theme.colors.surfaceVariant,
                       }}
                     >
-                      {formatRelative(item.createdAt)}
-                    </Text>
-                    <View style={{ flex: 1 }} />
-                    {!isOwn && sim !== null && (
-                      <Surface
-                        elevation={0}
-                        style={{
-                          paddingHorizontal: 8,
-                          paddingVertical: 2,
-                          borderRadius: 10,
-                          backgroundColor: theme.colors.surfaceVariant,
-                        }}
+                      <Text
+                        variant="labelSmall"
+                        style={{ color: theme.colors.onSurfaceVariant }}
                       >
-                        <Text
-                          variant="labelSmall"
-                          style={{ color: theme.colors.onSurfaceVariant }}
-                        >
-                          {`sim ${sim.toFixed(2)}`}
-                        </Text>
-                      </Surface>
-                    )}
-                    {isOwn && (
-                      <IconButton
-                        icon="graph"
-                        size={18}
-                        accessibilityLabel="View this post on the semantic map"
-                        style={{ margin: 0 }}
-                        onPress={(e) => {
-                          e.stopPropagation();
-                          router.push({
-                            pathname: '/map',
-                            params: { anchor: item.address },
-                          });
-                        }}
-                      />
-                    )}
-                  </View>
+                        {`sim ${sim.toFixed(2)}`}
+                      </Text>
+                    </Surface>
+                  )}
+                  {isOwn && (
+                    <IconButton
+                      icon="graph"
+                      size={18}
+                      accessibilityLabel="View this post on the semantic map"
+                      style={{ margin: 0 }}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/map',
+                          params: { anchor: item.address },
+                        })
+                      }
+                    />
+                  )}
+                  <IconButton
+                    icon="delete-outline"
+                    size={18}
+                    accessibilityLabel={
+                      isOwn ? 'Delete this post' : 'Hide this post from inbox'
+                    }
+                    style={{ margin: 0 }}
+                    onPress={() => askDelete(item.address, isOwn)}
+                  />
+                </View>
+                <Pressable
+                  onPress={openThread}
+                  onLongPress={() => askDelete(item.address, isOwn)}
+                >
                   <Text
                     style={{ color: theme.colors.onSurface }}
                     numberOfLines={4}
                   >
                     {item.text}
                   </Text>
-                </Card.Content>
-              </Card>
-            </Pressable>
+                </Pressable>
+              </Card.Content>
+            </Card>
           );
         }}
       />

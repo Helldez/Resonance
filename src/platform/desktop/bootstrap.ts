@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import type { AppContainer } from '@core/bootstrap/AppContainer';
 import { DesktopConfig } from '@core/config/DesktopConfig';
+import { MatchingConfig } from '@core/config/MatchingConfig';
 import { StorageConfig } from '@core/config/StorageConfig';
 import { bootstrapIdentity } from '@core/identity/IdentityManager';
 import { PostRepository } from '@data/PostRepository';
@@ -73,6 +74,13 @@ export async function bootstrapDesktop(
 
   const posts = new PostRepository(database);
   await posts.createSchema();
+  const droppedPosts = await posts.dropIfDimChanged(MatchingConfig.embeddingDim);
+  if (droppedPosts > 0) {
+    logger.log(
+      'warn',
+      `dropped ${droppedPosts} posts: stored embedding dim incompatible with current model (expected ${MatchingConfig.embeddingDim}-dim)`,
+    );
+  }
   const responses = new ResponseRepository(database);
   await responses.createSchema();
   const peers = new PeerRepository(database);

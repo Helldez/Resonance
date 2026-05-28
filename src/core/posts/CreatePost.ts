@@ -57,6 +57,9 @@ export async function createPost(
     MatchingConfig.lshBits,
     MatchingConfig.lshSeed,
   );
+  console.log(
+    `[rn] createPost bucket=${bucket} textLen=${trimmed.length} embDim=${embedding.length}`,
+  );
 
   await deps.network.joinBucket(bucket);
 
