@@ -152,18 +152,6 @@ Two-device test: install on two phones on the same Wi-Fi with the same
 within a few seconds; reply; watch the reply come back. Toggle Settings
 to see all 8 Tier-2 bucket IDs and confirm overlap.
 
-## Adjacent work
-
-Resonance is a companion to:
-
-- [JarvisQ](https://github.com/Helldez/JarvisQ) — a private, on-device
-  voice assistant (STT → LLM → TTS, cross-platform).
-- [JarvisDocs](https://github.com/Helldez/JarvisDocs) — on-device
-  semantic search over personal documents.
-
-Same posture (privacy as constraint, no central server), same building
-blocks (QVAC SDK, Bare, Ed25519, Hyperswarm), different product surfaces.
-
 ## License
 
 Apache-2.0
