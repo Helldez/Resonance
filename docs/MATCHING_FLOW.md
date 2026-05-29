@@ -124,15 +124,42 @@ Source: `src/ui/AppContainerContext.tsx` (`persistRecord`,
 A legitimate concern, especially when reasoning about hot buckets where
 many people happen to write about the same trending topic.
 
-### 4.1 Hard cap today
-`NetworkConfig.maxConnectionsPerBucket = 32`. Hyperswarm maintains **at most
-32 simultaneous TCP/UTP connections per topic**. If 5000 peers are joined
-to `"e3"`, you see 32 of them at any given time (Hyperswarm rotates).
+### 4.1 Hard cap — current state vs intended state
 
-### 4.2 Why 32 is enough at MVP scale
-Resonance is not trying to deliver "every thought from every peer about X".
-It is trying to deliver "someone who can usefully respond to this".
-A randomised sample of 32 affine peers per bucket is abundant for that.
+**Current (actual) behaviour.** `NetworkConfig.maxConnectionsPerBucket = 32`
+is declared but **not passed to Hyperswarm** by `bare/p2p.mjs` (the
+`swarm.join(topic, { server: true, client: true })` call uses no
+`maxPeers` option). The effective limit today is therefore the Hyperswarm
+default (`maxPeers` swarm-wide, not per-bucket), and the policy that
+decides which peers occupy the slots is **first-come-first-served** —
+both inbound (peers connecting to you to read your posts) and outbound
+(you reaching peers in joined topics) compete for the same single,
+bidirectional budget. If 5000 peers are joined to `"e3"`, you see
+whichever ones the DHT happens to surface first; Hyperswarm rotates over
+time but does not rank them by relevance.
+
+**Intended behaviour.** Slot allocation must be **driven by semantic
+affinity, not arrival order**. When a new candidate peer is discovered
+(inbound or outbound) and the budget is full, the policy compares its
+recent posts (or a centroid it ships in the handshake) against the local
+peer's interest vectors, and **evicts the lowest-affinity occupant in
+favour of the higher-affinity newcomer**. Effect: the 32-ish slots
+converge to "the peers whose content is most similar to mine right now",
+which is the actual product requirement. First-come is only a fallback
+while the budget is still cold and below cap.
+
+This change is policy-only — same transport, same Hyperswarm — but it
+needs (a) per-peer affinity scoring at connection time, (b) an explicit
+eviction hook, and (c) a tie-breaker for symmetry (both peers should
+prefer to keep the connection, otherwise the loser keeps re-dialling).
+
+### 4.2 Why this matters even at MVP scale
+Without affinity-based eviction, the peers who write the most popular
+content saturate their inbound budget first and lose the ability to do
+outbound discovery — the "popular peer is mute" failure mode. With it,
+both directions self-organise toward the same goal: each peer ends up
+connected to the ~32 most semantically similar peers reachable through
+the joined buckets.
 
 ### 4.3 Where this breaks at scale
 If a bucket becomes truly dense (>1000 peers actively publishing):
@@ -169,6 +196,7 @@ Use this section as the menu when discussing performance work.
 | HNSW over local posts | O(log N) instead of O(N) inbox-scoring | Native dep build, index maintenance | No |
 | K-means on listening anchors (K=2-3) | Better coverage when interests are clustered | k-means cost on rebucket, more topics | Maybe (depends on K) |
 | Drop `maxConnectionsPerBucket` (32→...) | More peer-discovery, more bandwidth | Battery, file descriptors | No |
+| Affinity-based connection slot policy (replace FCFS) | Slots converge to top-N semantically similar peers, inbound+outbound | Per-peer affinity scoring at connect time, eviction hook, symmetric tie-breaker | No |
 
 Rule of thumb: anything in column 4 = "Yes" must bump
 `NetworkConfig.topicPrefix` and ship `PostRepository.dropIfDimChanged` (or a
