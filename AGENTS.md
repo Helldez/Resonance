@@ -6,11 +6,14 @@
 ## What this project is
 
 Resonance is a **local-first P2P social network**. A user writes a thought,
-need or topic. The text is embedded on-device, broadcast through a semantic
-bucket on Hyperswarm, picked up by peers whose interest profile is close in
-embedding space, and answered by their on-device LLM (either as a draft they
-confirm, or — opt-in — auto-published on their behalf). Answers come back
-through the same P2P fabric and are aggregated on the requester's device.
+need or topic. The text is embedded on-device and broadcast into a **single
+shared room** on Hyperswarm (the "Keet model" — ResonanceSim conf 9). Every
+peer eventually receives every post via directory gossip, ranks it locally
+against its own posts (cosine similarity), and keeps the best ones in a
+bounded inbox. Posts the receiver finds relevant are answered by their
+on-device LLM (a draft they confirm, or — opt-in — auto-published). Answers
+come back through the same P2P fabric and are aggregated on the requester's
+device.
 
 Companion to [JarvisQ](https://github.com/Helldez/JarvisQ) and
 [JarvisDocs](https://github.com/Helldez/JarvisDocs). Same stack
@@ -47,8 +50,9 @@ agent on its behalf (commits, PRs, READMEs, issues, social posts).
 - **No hardcoded constants at call sites.** Add them to a config file under
   `src/core/config/`. Tunables for matching/similarity/prompts go in
   `MatchingConfig.ts`; model URLs in `HttpModelSources.ts`; model entries in
-  `ModelProfiles.ts`; networking parameters in `NetworkConfig.ts`; storage
-  paths in `StorageConfig.ts`.
+  `ModelProfiles.ts`; the single room (id, topic prefix, connection cap,
+  inbox capacity/threshold) in `RoomConfig.ts`; Hyperswarm bootstrap in
+  `NetworkConfig.ts`; storage paths in `StorageConfig.ts`.
 - **Hexagonal boundaries.** `src/core/**` never imports Expo, React Native,
   Node, Bare or any platform-specific module directly. It only imports from
   `@core/ports/*`. Platform code lives under `src/platform/<target>/` —
@@ -61,42 +65,42 @@ agent on its behalf (commits, PRs, READMEs, issues, social posts).
 
 ## Matching conventions
 
-> The end-to-end runtime flow (publish → bucket → swarm → receive → score →
-> inbox) is documented in [`docs/MATCHING_FLOW.md`](docs/MATCHING_FLOW.md).
+> The end-to-end runtime flow (publish → room → gossip → receive → score →
+> bounded inbox) is documented in [`docs/MATCHING_FLOW.md`](docs/MATCHING_FLOW.md).
 > Read it before changing anything in `src/core/matching/`,
-> `src/core/posts/CreatePost.ts`, or `ScoreRemotePost`.
+> `src/core/inbox/`, `src/core/posts/CreatePost.ts`, or the record handler in
+> `src/ui/AppContainerContext.tsx`.
 
-- Embeddings come from **bge-m3** (BAAI, GGUF Q8_0). Native dim **1024**,
-  L2-normalised at ingest. bge-m3 is NOT trained with Matryoshka
-  representation learning, so dim truncation destroys signal — keep the full
-  1024. Cosine similarity is computed as a plain dot product on L2-normalised
-  vectors.
+- Embeddings come from **EmbeddingGemma-300M** (GGUF Q8_0). Native dim **768**,
+  used in full and L2-normalised at ingest. Every text is prefixed with the
+  `task: clustering | query: {text}` template (`ModelProfiles.embedding.
+  promptTemplate`) before embedding. Cosine similarity is a plain dot product
+  on the L2-normalised vectors.
 - Vectors stored as little-endian `Float32Array` BLOBs in SQLite. On boot,
   `PostRepository.dropIfDimChanged` drops any post whose stored embedding
   byte-length is incompatible with the active model — handles model swaps
   without leaking stale vectors into matching.
-- Coarse routing uses **LSH (signed random hyperplanes)** to map a vector to
-  an N-bit bucket id. The bucket id is the Hyperswarm topic. Parameters live
-  in `MatchingConfig.ts`.
-- **Publishing**: each post is published in a **single** bucket computed via
-  `lshBucketOf(post, lshSeed)` (single-seed) so the record has one canonical
-  replica home.
-- **Listening**: a peer subscribes to the buckets where its **most recent own
-  posts** were published (same single-seed, symmetric to publishing), deduped.
-  If fewer than `lshTables` distinct buckets emerge (mono-topic user), the
-  remaining slots are filled with **multi-table** buckets of the centroid (or
-  About-you in cold start) via `lshBucketsOf` — recovers the classical LSH
-  recall when per-post coverage is too sparse. See
-  `src/core/matching/ComputeListeningBuckets.ts`.
-- The fine-grained similarity threshold is applied **on the receiving peer's
-  device** against the receiver's own interest profile. It is a local
-  decision, never imposed by the network. The threshold presets in
-  `MatchingConfig.thresholdPresets` are the same vocabulary the map's
-  reference rings use (`mapReferenceRings.similarities`); the ring matching
-  the active threshold is highlighted at render time.
-- The network is versioned via `NetworkConfig.topicPrefix`. Bumping it
-  (currently `resonance/v2/bucket/`) isolates peers using incompatible
-  embedding spaces or routing algorithms.
+- **Routing is a single shared room** (conf 9). There is **no LSH, no buckets,
+  no DHT routing table, no sticky peers**. Every node joins one Hyperswarm
+  topic (`sha256(RoomConfig.topicPrefix || RoomConfig.roomId)`); peer outbox
+  keys gossip transitively over the `resonance-directory/v2` protocol
+  (`bare/room-directory.mjs`) so every post reaches every peer in ~log₃₂(N)
+  hops. Connection fan-out is capped at `RoomConfig.maxConnections` (32).
+- **Publishing**: embed → sign → append to the peer's own outbox Hypercore.
+  No per-post routing — the room was joined once at boot.
+- **Receiving / inbox**: each remote post is scored as the MAX cosine against
+  the user's own posts (cold-start fallback: the "About you" embedding), then
+  passed through the bounded top-K admission rule in
+  `src/core/inbox/InboxAdmission.ts` — drop below `RoomConfig.inboxMinSimilarity`,
+  admit while under `RoomConfig.inboxCapacity`, else replace the weakest if the
+  newcomer scores higher.
+- The fine-grained view threshold is applied **on the receiving peer's device**
+  against the receiver's own interest profile — a local decision, never imposed
+  by the network. The presets in `MatchingConfig.thresholdPresets` are the same
+  vocabulary the map's radial reference rings use.
+- The network is versioned via `RoomConfig.topicPrefix` (currently
+  `resonance/v3/room/`). Bumping it isolates peers using incompatible embedding
+  spaces or topologies.
 
 ## P2P conventions
 
@@ -143,8 +147,8 @@ npm run desktop:peer
 - Bootstrap: `src/platform/mobile/bootstrap.ts` → `AppContainer`
 - Inference: `src/core/inference/EmbeddingService.ts`,
   `src/core/inference/LlmService.ts`
-- Matching: `src/core/matching/` (LSH bucket → cosine similarity →
-  L2 normalisation)
+- Matching: `src/core/matching/` (cosine similarity, L2 normalisation, PCA-2
+  map projection) + `src/core/inbox/` (bounded top-K admission)
 - Use cases: `src/core/{posts,responses,identity}/`
 - Network sync: `src/core/net/SyncEngine.ts`
 - Storage: `src/data/*Repository.ts` over `src/platform/mobile/ExpoSqliteDatabase.ts`
@@ -158,6 +162,7 @@ npm run desktop:peer
   "share to social" button.
 - Don't introduce a global state library beyond the existing Zustand stores.
 - Don't add a UI library beyond `react-native-paper`.
-- Don't bring matching, LSH or similarity logic out of `src/core/matching/`.
+- Don't bring matching or similarity logic out of `src/core/matching/` /
+  `src/core/inbox/`.
 - Don't put network code outside the Bare worklet or the
   `IPeerNetwork` adapter — the rest of the app sees a port, not Hyperswarm.

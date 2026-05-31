@@ -1,9 +1,15 @@
 # Resonance — Semantic Routing
 
+> **⚠️ Historical.** Resonance moved to the single-room "Keet model"
+> (ResonanceSim conf 9): one shared Hyperswarm room + directory gossip +
+> bounded top-K local inbox, with **no LSH, buckets, sticky peers or DHT
+> routing table**. The semantic-routing design below is kept for context on
+> *why* those mechanisms were tried and dropped. The current model is
+> summarised in [AGENTS.md](../AGENTS.md) ("Matching conventions").
+
 > **Looking for the current runtime flow (what happens when you publish or
-> receive a post)?** That belongs in [MATCHING_FLOW.md](MATCHING_FLOW.md),
-> which is the operational baseline kept in sync with the code. This
-> document keeps the **design rationale and history of decisions**.
+> receive a post)?** That belongs in [MATCHING_FLOW.md](MATCHING_FLOW.md).
+> This document keeps the **design rationale and history of decisions**.
 
 How Resonance gets a post from its author to peers who are most likely to
 care, without a central server. This document is the design rationale —
@@ -11,9 +17,12 @@ what is implemented today, what is deferred, and what the candidate next
 steps are. It is the source of truth for the scaling hypotheses we keep
 reopening in conversation.
 
-If you are looking at code, the current implementation lives in
-`src/core/matching/LshBucket.ts`, `src/platform/mobile/P2pWorklet.ts` and
-`bare/p2p.mjs`. The constants are in `src/core/config/MatchingConfig.ts`.
+If you are looking at code, the LSH routing described below **no longer
+exists** — `src/core/matching/LshBucket.ts`, `InterestVector.ts` and
+`ComputeListeningBuckets.ts` were removed in conf 9. The current single-room
+implementation lives in `bare/p2p.mjs` + `bare/room-directory.mjs`, with
+`src/core/inbox/InboxAdmission.ts` for the bounded inbox and constants in
+`src/core/config/RoomConfig.ts`.
 
 ---
 

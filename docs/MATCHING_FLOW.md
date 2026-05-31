@@ -1,5 +1,18 @@
 # Resonance — Matching Flow (operational baseline)
 
+> **⚠️ Superseded by the single-room "Keet model" (ResonanceSim conf 9).**
+> The LSH/bucket routing described in the body below is **no longer the
+> implementation**. The current model: every node joins **one shared
+> Hyperswarm room**, peer outbox keys gossip transitively
+> (`bare/room-directory.mjs`) so every post reaches every peer, and each
+> device keeps a **bounded top-K inbox** (`src/core/inbox/InboxAdmission.ts`,
+> capacity/threshold in `src/core/config/RoomConfig.ts`). Embeddings are
+> **EmbeddingGemma-300M, 768-dim**, with the `task: clustering | query: {text}`
+> prompt. Publishing is just embed → sign → append; receiving scores MAX
+> cosine vs own posts and admits into the bounded inbox. The authoritative
+> summary lives in [AGENTS.md](../AGENTS.md) ("Matching conventions"). The
+> sections below are retained for historical context only.
+
 This document describes **what actually happens at runtime** when a peer
 publishes a post and when another peer receives one. It is the baseline for
 every future optimisation: any change to throughput, recall, privacy, or
@@ -8,7 +21,7 @@ battery has to be argued against this concrete flow, not against an abstract
 
 For the design rationale and history of decisions see
 [SEMANTIC_ROUTING.md](SEMANTIC_ROUTING.md). For matching parameters see
-`src/core/config/MatchingConfig.ts` and `src/core/config/NetworkConfig.ts`.
+`src/core/config/MatchingConfig.ts` and `src/core/config/RoomConfig.ts`.
 
 ---
 

@@ -49,22 +49,22 @@ testbed for the routing layer.
 You write a post.
    │
    ▼
- EmbeddingGemma on-device → 256-dim semantic vector
+ EmbeddingGemma-300M on-device → 768-dim semantic vector
+ (prompt: "task: clustering | query: <text>")
    │
    ▼
- LSH bucket bits (8 hyperplanes × 8 independent tables)
+ Sign it and append to your personal outbox Hypercore
    │
    ▼
- Hyperswarm joins 8 topics derived from those buckets
-   │
-   ▼
- Peers in any of the 8 buckets discover you, replicate your post
+ One shared Hyperswarm room (the "Keet model"): outbox keys gossip
+ peer-to-peer, so your post reaches every node in ~log₃₂(N) hops
    │
    ▼
  Each peer scores the post against their own posts on-device
    │
    ▼
- If close enough, the post lands in their feed
+ If above threshold, it enters their bounded top-200 inbox
+ (evicting the weakest entry when full)
    │
    ▼
  They tap "Write reply" (typed) or "Draft with AI" (Qwen 3 drafts it)
@@ -73,10 +73,9 @@ You write a post.
  Their reply comes back to you through the same P2P fabric
 ```
 
-The semantic map screen lets you *see* this geometry: your post in the
-middle, every nearby post placed at a radial distance equal to its cosine
-similarity to yours, with the angular position carrying the PCA structure
-of the local cluster.
+The semantic map screen lets you *see* this geometry: a 2-D PCA projection
+of the posts your device holds, each point coloured by its author, your
+anchor post highlighted — the on-device view of the room's embedding space.
 
 ## What's in this repository
 
@@ -91,7 +90,7 @@ documentation of the design decisions behind it.
 | `src/app/` | The Expo Router screens: Feed, Compose, semantic Map, Thread, Settings, Bootstrap. |
 | `qvac/`, `bare/` | The Bare worklet that hosts the @qvac/sdk inference plugin and the Hyperswarm + Hypercore + Corestore stack. |
 | `docs/ARCHITECTURE.md` | Layered view of the codebase, the hexagonal boundary, where the two AI surfaces (embedding + LLM) plug in. |
-| `docs/SEMANTIC_ROUTING.md` | The why and how of the routing layer. Tiers 1 → 4, the cliff problem, sticky peers, `authorNoiseKey` direct-dial. This is the *thesis* document. |
+| `docs/SEMANTIC_ROUTING.md` | Historical design rationale for the LSH routing that preceded the single-room model — why those mechanisms were tried and dropped. |
 | `docs/ROADMAP.md` | Milestones M0 → M5. |
 | `docs/STATUS.md` | Implementation snapshot — what is wired vs. stubbed. |
 | `SECURITY.md` | Audit of the on-device key material, threat model, Phase-2 hardening roadmap. |
@@ -104,14 +103,12 @@ demonstrates:
 
 - ✅ Ed25519 identity, on-device key generation, signed records
 - ✅ EmbeddingGemma 300M Q8 + Qwen 3 1.7B Q4 running locally via @qvac/sdk
-- ✅ Hyperswarm/Hypercore P2P with multi-table LSH routing (Tier 2)
-- ✅ Sticky peers (persistent direct DHT connections after first contact)
-- ✅ Post-driven re-bucketing (your interest vector evolves with your posts)
-- ✅ `authorNoiseKey` in every signed post (anyone with your post can dial
-  you back directly, regardless of bucket drift)
+- ✅ Single shared Hyperswarm room with directory-gossip global convergence
+  (~log₃₂(N) hops, ≤32 connections per node)
+- ✅ Bounded top-200 local inbox, ranked by cosine vs your own posts
 - ✅ Android foreground service so the worker keeps replicating in the
   background
-- ✅ Dark UI, semantic map with reference rings and PCA-angular layout
+- ✅ Dark UI, PCA-2 semantic map coloured by author
 
 The Milestone 0 calibration (corpus-based threshold tuning) is the gate
 before public release.
@@ -123,11 +120,11 @@ before public release.
   on-device embeddings and LLM, and Hyperswarm / Hypercore / Corestore
   for P2P
 - Strict TypeScript, hexagonal architecture
-- Embeddings: EmbeddingGemma 300M (Q8_0, 256-dim Matryoshka, L2-normalised)
+- Embeddings: EmbeddingGemma 300M (Q8_0, 768-dim, clustering prompt, L2-normalised)
 - LLM: Qwen 3 1.7B Instruct (Q4_0)
 - Identity: Ed25519 via `@noble/ed25519`
-- DHT identity: Hyperswarm noise keypair (persisted across restarts —
-  see `docs/SEMANTIC_ROUTING.md` §10)
+- DHT identity: Hyperswarm noise keypair (persisted across restarts for a
+  stable presence in the room)
 
 ## Build and run
 
