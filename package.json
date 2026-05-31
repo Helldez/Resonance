@@ -14,6 +14,7 @@
     "android": "expo run:android",
     "prebuild": "npx expo prebuild",
     "typecheck": "tsc --noEmit",
+    "test": "tsx scripts/test/inbox-admission.test.ts && tsx scripts/test/topics.test.ts",
     "calibrate": "node scripts/calibration/evaluate-embeddings.mjs",
     "build:bare": "node bare/build.mjs",
     "build:bare:desktop": "node bare/build-desktop.mjs",
@@ -84,6 +85,7 @@
     "react-native-vector-icons": "^10.3.0",
     "react-native-web": "~0.21.0",
     "tar-stream": "^3.2.0",
+    "umap-js": "^1.4.0",
     "zustand": "^5.0.12"
   },
   "devDependencies": {

@@ -1,0 +1,455 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  View,
+  ScrollView,
+  Pressable,
+  useWindowDimensions,
+  type LayoutChangeEvent,
+} from 'react-native';
+import {
+  Surface,
+  Text,
+  Button,
+  IconButton,
+  useTheme,
+} from 'react-native-paper';
+import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Circle, G } from 'react-native-svg';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { useRequireContainer } from '@ui/AppContainerContext';
+import { MatchingConfig } from '@core/config/MatchingConfig';
+import { TopicConfig } from '@core/config/TopicConfig';
+import { ThemeConfig } from '@core/config/ThemeConfig';
+import { computeTopicAtlas } from '@core/topics/TopicAtlas';
+import type { TopicAtlasResult, AtlasTopic } from '@core/topics/TopicAtlas';
+import { nameTopics } from '@core/topics/NameTopics';
+import { shortPeer } from '@domain/AuthorFormatting';
+import type { PeerId, RecordAddress } from '@core/domain/types';
+
+// The map viewBox is 2.1 units wide/tall; `preserveAspectRatio=meet` fits it
+// into the smaller screen dimension. This factor converts a viewBox unit to
+// on-screen pixels, so label font size and gaps can be kept at a constant
+// pixel size regardless of zoom.
+const VIEWBOX_SPAN = 2.1;
+
+interface SelectedPoint {
+  readonly address: RecordAddress;
+  readonly author: PeerId;
+  readonly text: string;
+  readonly isOwn: boolean;
+  readonly topicLabel: string;
+  /** Atlas coordinates, so the map can ring the selected dot. */
+  readonly x: number;
+  readonly y: number;
+}
+
+/** Stable, well-spread hue per topic. */
+function topicColor(id: number, k: number): string {
+  const hue = k > 0 ? Math.round((id * 360) / k) : 0;
+  return `hsl(${hue}, 65%, 60%)`;
+}
+
+function legendChipStyle(background: string) {
+  return {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    backgroundColor: background,
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    marginRight: 8,
+  };
+}
+
+function legendSwatchStyle(color: string) {
+  return {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 6,
+    backgroundColor: color,
+  };
+}
+
+export function TopicAtlasView() {
+  const container = useRequireContainer();
+  const router = useRouter();
+  const theme = useTheme();
+  const insets = useSafeAreaInsets();
+  const { width, height } = useWindowDimensions();
+
+  const [atlas, setAtlas] = useState<TopicAtlasResult | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<SelectedPoint | null>(null);
+  const [selectedTopic, setSelectedTopic] = useState<AtlasTopic | null>(null);
+
+  const [tx, setTx] = useState(0);
+  const [ty, setTy] = useState(0);
+  const [scale, setScale] = useState(1);
+  const txRef = useRef(0);
+  const tyRef = useRef(0);
+  const scaleRef = useRef(1);
+  useEffect(() => { txRef.current = tx; }, [tx]);
+  useEffect(() => { tyRef.current = ty; }, [ty]);
+  useEffect(() => { scaleRef.current = scale; }, [scale]);
+  const panStartRef = useRef<{ tx: number; ty: number } | null>(null);
+  const scaleStartRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const dim = MatchingConfig.embeddingDim;
+        const rows = await container.posts.listForMap(
+          container.self,
+          TopicConfig.maxPosts,
+          dim,
+          { includeSelf: true },
+        );
+        if (cancelled) return;
+        const posts = rows.map((r) => ({
+          address: r.address,
+          author: r.author,
+          text: r.text,
+          embedding: r.embedding,
+          isOwn: r.author === container.self,
+        }));
+        const result = await computeTopicAtlas(posts);
+        if (cancelled) return;
+        setAtlas(result);
+
+        // Best-effort LLM naming — only if the model is already loaded, and
+        // never blocking the map. Patches topic labels in place; the medoid
+        // labels stand if it fails or the model is absent.
+        if (container.llmConcrete.isLoaded && result.topics.length > 0) {
+          const names = await nameTopics(
+            { llm: container.llm },
+            {
+              clusters: result.topics.map((t) => ({
+                topicId: t.id,
+                centralTexts: t.centralTexts,
+              })),
+            },
+          ).catch(() => []);
+          if (cancelled || names.length === 0) return;
+          const byId = new Map(names.map((nm) => [nm.topicId, nm.name]));
+          setAtlas((prev) =>
+            prev === null
+              ? prev
+              : {
+                  ...prev,
+                  topics: prev.topics.map((t) =>
+                    byId.has(t.id) ? { ...t, label: byId.get(t.id) as string } : t,
+                  ),
+                },
+          );
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setLoadError(e instanceof Error ? e.message : String(e));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [container]);
+
+  const [svgLayout, setSvgLayout] = useState<{ width: number; height: number } | null>(null);
+  const onSvgLayout = (e: LayoutChangeEvent): void => {
+    const { width: w, height: h } = e.nativeEvent.layout;
+    setSvgLayout((prev) =>
+      prev !== null && prev.width === w && prev.height === h ? prev : { width: w, height: h },
+    );
+  };
+  const containerW = svgLayout?.width ?? width;
+  const containerH = svgLayout?.height ?? Math.max(1, height - 200);
+  const pxPerUnit = Math.min(containerW, containerH) / VIEWBOX_SPAN;
+
+  const gesture = useMemo(() => {
+    const pan = Gesture.Pan()
+      .minDistance(6)
+      .onStart(() => {
+        panStartRef.current = { tx: txRef.current, ty: tyRef.current };
+      })
+      .onUpdate((e) => {
+        const start = panStartRef.current;
+        if (start === null) return;
+        setTx(start.tx + e.translationX / pxPerUnit);
+        setTy(start.ty + e.translationY / pxPerUnit);
+      })
+      .onEnd(() => {
+        panStartRef.current = null;
+      });
+    const pinch = Gesture.Pinch()
+      .onStart(() => {
+        scaleStartRef.current = scaleRef.current;
+      })
+      .onUpdate((e) => {
+        const start = scaleStartRef.current;
+        if (start === null) return;
+        const next = Math.min(
+          MatchingConfig.mapZoomMax,
+          Math.max(MatchingConfig.mapZoomMin, start * e.scale),
+        );
+        setScale(next);
+      })
+      .onEnd(() => {
+        scaleStartRef.current = null;
+      });
+    return Gesture.Simultaneous(pinch, pan);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pxPerUnit]);
+
+  // Constant on-screen sizes expressed in viewBox units, so dots, the
+  // selection ring and bubble strokes keep a fixed pixel size at any zoom.
+  const dotHitR = 16 / pxPerUnit / scale;
+  const strokeUnit = (px: number): number => px / pxPerUnit / scale;
+
+  return (
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: ThemeConfig.map.backgroundColor,
+        paddingTop: insets.top,
+        paddingBottom: insets.bottom,
+      }}
+    >
+      <Surface
+        style={{
+          padding: 8,
+          backgroundColor: theme.colors.surface,
+          flexDirection: 'row',
+          alignItems: 'center',
+        }}
+        elevation={2}
+      >
+        <IconButton icon="arrow-left" size={22} onPress={() => router.back()} accessibilityLabel="Back" />
+        <View style={{ flex: 1 }}>
+          <Text variant="labelLarge" style={{ color: theme.colors.onSurface }}>
+            Topics
+          </Text>
+          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }} numberOfLines={1}>
+            {atlas === null
+              ? 'Projecting…'
+              : `${atlas.k} ${atlas.k === 1 ? 'topic' : 'topics'} · ${atlas.points.length} posts · tap a dot to read`}
+          </Text>
+        </View>
+      </Surface>
+
+      {loadError !== null && (
+        <Text style={{ color: theme.colors.error, padding: 8 }}>{loadError}</Text>
+      )}
+
+      <GestureDetector gesture={gesture}>
+        <View style={{ flex: 1 }} onLayout={onSvgLayout}>
+          <Svg width="100%" height="100%" viewBox="-1.05 -1.05 2.1 2.1" preserveAspectRatio="xMidYMid meet">
+            <G transform={`translate(${tx} ${ty}) scale(${scale})`}>
+              {atlas !== null &&
+                atlas.topics.map((t) => {
+                  const color = topicColor(t.id, atlas.k);
+                  return (
+                    <Circle
+                      key={`bubble-${t.id}`}
+                      cx={t.cx}
+                      cy={t.cy}
+                      r={t.r}
+                      fill={color}
+                      fillOpacity={0.08}
+                      stroke={color}
+                      strokeWidth={strokeUnit(1.5)}
+                      strokeOpacity={0.5}
+                    />
+                  );
+                })}
+
+              {/* Bubble-level click target (tap empty bubble area → its name).
+                  Rendered under the dots so a dot tap wins. */}
+              {atlas !== null &&
+                atlas.topics.map((t) => (
+                  <Circle
+                    key={`bubblehit-${t.id}`}
+                    cx={t.cx}
+                    cy={t.cy}
+                    r={t.r}
+                    fill={topicColor(t.id, atlas.k)}
+                    opacity={0}
+                    onPress={() => {
+                      setSelected(null);
+                      setSelectedTopic(t);
+                    }}
+                  />
+                ))}
+
+              {atlas !== null &&
+                atlas.points.map((p) => (
+                  <Circle
+                    key={`dot-${p.address}`}
+                    cx={p.x}
+                    cy={p.y}
+                    r={(p.isOwn ? 4.5 : 3.5) / pxPerUnit / scale}
+                    fill={p.isOwn ? ThemeConfig.map.selfStarColor : topicColor(p.topicId, atlas.k)}
+                  />
+                ))}
+
+              {/* Selection ring: shows exactly which dot was tapped. Drawn
+                  under the hit layer (fill none → never intercepts taps). */}
+              {selected !== null && (
+                <Circle
+                  cx={selected.x}
+                  cy={selected.y}
+                  r={9 / pxPerUnit / scale}
+                  fill="none"
+                  stroke={ThemeConfig.map.peerStarSelectedColor}
+                  strokeWidth={strokeUnit(2)}
+                />
+              )}
+
+              {/* Per-point click targets on top (reliable native hit-test). */}
+              {atlas !== null &&
+                atlas.points.map((p) => (
+                  <Circle
+                    key={`hit-${p.address}`}
+                    cx={p.x}
+                    cy={p.y}
+                    r={dotHitR}
+                    fill={ThemeConfig.map.peerStarColorLow}
+                    opacity={0}
+                    onPress={() => {
+                      setSelectedTopic(null);
+                      setSelected({
+                        address: p.address,
+                        author: p.author,
+                        text: p.text,
+                        isOwn: p.isOwn,
+                        topicLabel: atlas.topics[p.topicId]?.label ?? '',
+                        x: p.x,
+                        y: p.y,
+                      });
+                    }}
+                  />
+                ))}
+            </G>
+          </Svg>
+        </View>
+      </GestureDetector>
+
+      {/* Legend: one chip per topic (its colour + name), plus the "You"
+          swatch. Tapping a chip opens that topic. This replaces the on-map
+          text labels, which overlapped and were hard to read. */}
+      <Surface elevation={2} style={{ backgroundColor: theme.colors.surface, paddingVertical: 6 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 12, alignItems: 'center' }}
+            style={{ flex: 1 }}
+          >
+            <View style={legendChipStyle(theme.colors.surfaceVariant)}>
+              <View style={legendSwatchStyle(ThemeConfig.map.selfStarColor)} />
+              <Text variant="labelSmall" style={{ color: theme.colors.onSurface }}>
+                You
+              </Text>
+            </View>
+            {atlas?.topics.map((t) => (
+              <Pressable
+                key={`legend-${t.id}`}
+                onPress={() => {
+                  setSelected(null);
+                  setSelectedTopic(t);
+                }}
+                style={legendChipStyle(theme.colors.surfaceVariant)}
+              >
+                <View style={legendSwatchStyle(topicColor(t.id, atlas.k))} />
+                <Text
+                  variant="labelSmall"
+                  numberOfLines={1}
+                  style={{ color: theme.colors.onSurface, maxWidth: 130 }}
+                >
+                  {t.label}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+          <IconButton
+            icon="restore"
+            mode="contained-tonal"
+            accessibilityLabel="Reset view"
+            onPress={() => {
+              setTx(0);
+              setTy(0);
+              setScale(1);
+            }}
+          />
+        </View>
+      </Surface>
+
+      {selectedTopic !== null && (
+        <Surface
+          style={{
+            position: 'absolute',
+            bottom: insets.bottom + 96,
+            left: 12,
+            right: 12,
+            padding: 16,
+            backgroundColor: theme.colors.surface,
+            borderRadius: 16,
+          }}
+          elevation={4}
+        >
+          <Text variant="labelLarge" style={{ color: theme.colors.onSurfaceVariant }}>
+            {`Topic · ${selectedTopic.count} ${selectedTopic.count === 1 ? 'post' : 'posts'}`}
+          </Text>
+          <ScrollView style={{ maxHeight: 160, marginTop: 6 }}>
+            <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
+              {selectedTopic.labelFull}
+            </Text>
+          </ScrollView>
+          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
+            <Button onPress={() => setSelectedTopic(null)}>Close</Button>
+          </View>
+        </Surface>
+      )}
+
+      {selected !== null && (
+        <Surface
+          style={{
+            position: 'absolute',
+            bottom: insets.bottom + 96,
+            left: 12,
+            right: 12,
+            padding: 16,
+            backgroundColor: theme.colors.surface,
+            borderRadius: 16,
+          }}
+          elevation={4}
+        >
+          <Text variant="labelLarge" style={{ color: theme.colors.onSurfaceVariant }}>
+            {selected.isOwn ? 'Your post' : shortPeer(selected.author)}
+            {selected.topicLabel.length > 0 ? `  ·  ${selected.topicLabel}` : ''}
+          </Text>
+          <ScrollView style={{ maxHeight: 160, marginTop: 6 }}>
+            <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
+              {selected.text}
+            </Text>
+          </ScrollView>
+          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
+            <Button onPress={() => setSelected(null)}>Close</Button>
+            <Button
+              mode="contained"
+              style={{ marginLeft: 8 }}
+              onPress={() => {
+                const target = selected.address;
+                setSelected(null);
+                router.push({ pathname: '/thread/[id]', params: { id: target } });
+              }}
+            >
+              Open thread
+            </Button>
+          </View>
+        </Surface>
+      )}
+    </View>
+  );
+}

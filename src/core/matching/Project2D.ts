@@ -53,33 +53,10 @@ export function projectToPlane(
   const all: ReadonlyArray<ProjectionInput> = [anchor, ...peers];
   const n = all.length;
 
-  const mean = new Float32Array(dim);
-  for (const item of all) {
-    for (let i = 0; i < dim; i++) {
-      mean[i] += item.embedding[i];
-    }
-  }
-  for (let i = 0; i < dim; i++) {
-    mean[i] /= n;
-  }
-
-  const centered: Float32Array[] = all.map((item) => {
-    const c = new Float32Array(dim);
-    for (let i = 0; i < dim; i++) {
-      c[i] = item.embedding[i] - mean[i];
-    }
-    return c;
-  });
-
-  const axis1 = powerIteration(centered, dim, powerIterations, null);
-  const axis2 = powerIteration(centered, dim, powerIterations, axis1);
-
-  const xRaw = new Float32Array(n);
-  const yRaw = new Float32Array(n);
-  for (let k = 0; k < n; k++) {
-    xRaw[k] = dot(centered[k], axis1);
-    yRaw[k] = dot(centered[k], axis2);
-  }
+  const { xs: xRaw, ys: yRaw } = projectPca2(
+    all.map((item) => item.embedding),
+    powerIterations,
+  );
 
   if (method === 'pca-2') {
     const maxAbs = maxAbsBoth(xRaw, yRaw);
@@ -128,6 +105,54 @@ export function projectToPlane(
     });
   }
   return { anchor: out[0], peers: out.slice(1) };
+}
+
+/**
+ * Raw 2-D PCA projection of a set of equally-dimensioned vectors onto their
+ * two leading principal directions (deflated power iteration). Centering
+ * makes it translation-invariant; deterministic for a fixed input. Returns
+ * the unscaled projected coordinates — callers rescale as they see fit
+ * (e.g. the topic atlas uses this for both its small-N fallback and to
+ * anchor the picture). `projectToPlane` builds on it.
+ */
+export function projectPca2(
+  vectors: ReadonlyArray<Float32Array>,
+  powerIterations: number,
+): { readonly xs: Float32Array; readonly ys: Float32Array } {
+  const n = vectors.length;
+  if (n === 0) {
+    return { xs: new Float32Array(0), ys: new Float32Array(0) };
+  }
+  const dim = vectors[0].length;
+
+  const mean = new Float32Array(dim);
+  for (const v of vectors) {
+    for (let i = 0; i < dim; i++) {
+      mean[i] += v[i];
+    }
+  }
+  for (let i = 0; i < dim; i++) {
+    mean[i] /= n;
+  }
+
+  const centered: Float32Array[] = vectors.map((v) => {
+    const c = new Float32Array(dim);
+    for (let i = 0; i < dim; i++) {
+      c[i] = v[i] - mean[i];
+    }
+    return c;
+  });
+
+  const axis1 = powerIteration(centered, dim, powerIterations, null);
+  const axis2 = powerIteration(centered, dim, powerIterations, axis1);
+
+  const xs = new Float32Array(n);
+  const ys = new Float32Array(n);
+  for (let k = 0; k < n; k++) {
+    xs[k] = dot(centered[k], axis1);
+    ys[k] = dot(centered[k], axis2);
+  }
+  return { xs, ys };
 }
 
 function clamp01(v: number): number {
