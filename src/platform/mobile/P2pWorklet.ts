@@ -3,9 +3,9 @@ import bundle from '../../../bare/p2p.bundle.mjs';
 import { Worklet } from 'react-native-bare-kit';
 import { Paths } from 'expo-file-system';
 import { FramedRpcClient } from './FramedRpcClient';
-import { NetworkConfig } from '@core/config/NetworkConfig';
+import { RoomConfig } from '@core/config/RoomConfig';
 import { StorageConfig } from '@core/config/StorageConfig';
-import type { BucketId, PeerId, SignedRecord } from '@core/domain/types';
+import type { PeerId, SignedRecord } from '@core/domain/types';
 
 interface InitResult {
   readonly outboxKey: string;
@@ -29,18 +29,11 @@ interface PresenceEvent {
   readonly present: boolean;
 }
 
-interface PeerNoiseEvent {
-  readonly peerId: string;
-  readonly noiseKey: string;
-}
-
 interface WirePostBody {
   readonly kind: 'post';
   readonly text: string;
   readonly embedding: number[];
-  readonly bucket: string;
   readonly createdAt: number;
-  readonly authorNoiseKey?: string;
 }
 
 interface WireResponseBody {
@@ -63,7 +56,7 @@ interface WireRecord {
 /**
  * RN-side handle to the Bare P2P worker. Owns the Worklet, the framed
  * RPC channel, and translates between the wire JSON format and the
- * project's `SignedRecord` domain type (embedding base64, hex bytes).
+ * project's `SignedRecord` domain type (embedding as number[], hex bytes).
  */
 export class P2pWorklet {
   private worklet: Worklet | null = null;
@@ -72,7 +65,6 @@ export class P2pWorklet {
   private noiseKey: string | null = null;
   private recordHandlers: Array<(r: SignedRecord) => void> = [];
   private presenceHandlers: Array<(peerId: PeerId, present: boolean) => void> = [];
-  private peerNoiseHandlers: Array<(peerId: string, noiseKey: string) => void> = [];
 
   get isReady(): boolean {
     return this.outboxKey !== null;
@@ -104,17 +96,12 @@ export class P2pWorklet {
         h(peer, evt.present);
       }
     });
-    rpc.on<PeerNoiseEvent>('peerNoise', (evt) => {
-      if (evt === undefined) {
-        return;
-      }
-      for (const h of this.peerNoiseHandlers) {
-        h(evt.peerId, evt.noiseKey);
-      }
-    });
 
     const storagePath = `${Paths.document.uri.replace(/^file:\/\//, '')}${StorageConfig.corestoreDir}`;
-    const initResult = await rpc.request<InitResult>('init', { storagePath });
+    const initResult = await rpc.request<InitResult>('init', {
+      storagePath,
+      maxConnections: RoomConfig.maxConnections,
+    });
 
     this.worklet = worklet;
     this.rpc = rpc;
@@ -149,36 +136,12 @@ export class P2pWorklet {
     return feedIndex;
   }
 
-  async joinBucket(bucket: BucketId): Promise<void> {
+  async joinRoom(): Promise<void> {
     const rpc = this.requireRpc();
-    await rpc.request<OkResult>('joinBucket', {
-      bucketId: String(bucket),
-      topicSeed: NetworkConfig.topicPrefix,
+    await rpc.request<OkResult>('joinRoom', {
+      roomId: RoomConfig.roomId,
+      topicSeed: RoomConfig.topicPrefix,
     });
-  }
-
-  async leaveBucket(bucket: BucketId): Promise<void> {
-    const rpc = this.requireRpc();
-    await rpc.request<OkResult>('leaveBucket', { bucketId: String(bucket) });
-  }
-
-  /**
-   * Tell the swarm to maintain a direct connection to a peer identified
-   * by their Hyperswarm noise public key (hex). Used for sticky peers:
-   * once we have learned a peer's noise key during a swarm topic
-   * connection, we call this on every boot so the connection survives
-   * bucket changes on either side.
-   */
-  async joinPeer(noiseKey: string): Promise<void> {
-    const rpc = this.requireRpc();
-    await rpc.request<OkResult>('joinPeer', { noiseKey });
-  }
-
-  onPeerNoise(handler: (peerId: string, noiseKey: string) => void): () => void {
-    this.peerNoiseHandlers.push(handler);
-    return () => {
-      this.peerNoiseHandlers = this.peerNoiseHandlers.filter((h) => h !== handler);
-    };
   }
 
   onRecord(handler: (record: SignedRecord) => void): () => void {
@@ -206,20 +169,14 @@ export class P2pWorklet {
 function signedRecordToWire(record: SignedRecord): WireRecord {
   const body = record.body;
   if (body.kind === 'post') {
-    const embeddingArr = Array.from(body.embedding);
-    const noiseKey = body.authorNoiseKey;
     return {
       author: record.author,
       feedIndex: record.feedIndex,
       body: {
         kind: 'post',
         text: body.text,
-        embedding: embeddingArr,
-        bucket: String(body.bucket),
+        embedding: Array.from(body.embedding),
         createdAt: body.createdAt,
-        ...(typeof noiseKey === 'string' && noiseKey.length > 0
-          ? { authorNoiseKey: noiseKey }
-          : {}),
       },
       digest: bytesToHex(record.digest),
       signature: bytesToHex(record.signature),
@@ -244,20 +201,14 @@ function wireToSignedRecord(wire: WireRecord): SignedRecord {
   const signature = hexToBytes(wire.signature);
   const author = wire.author as PeerId;
   if (wire.body.kind === 'post') {
-    const embedding = new Float32Array(wire.body.embedding);
-    const noiseKey = wire.body.authorNoiseKey;
     return {
       author,
       feedIndex: wire.feedIndex,
       body: {
         kind: 'post',
         text: wire.body.text,
-        embedding,
-        bucket: wire.body.bucket as BucketId,
+        embedding: new Float32Array(wire.body.embedding),
         createdAt: wire.body.createdAt,
-        ...(typeof noiseKey === 'string' && noiseKey.length > 0
-          ? { authorNoiseKey: noiseKey }
-          : {}),
       },
       digest,
       signature,

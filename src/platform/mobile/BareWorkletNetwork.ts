@@ -1,26 +1,21 @@
-import type { BucketId, PeerId, SignedRecord } from '@core/domain/types';
+import type { PeerId, SignedRecord } from '@core/domain/types';
 import type { IPeerNetwork } from '@core/ports/IPeerNetwork';
 import type { P2pWorklet } from './P2pWorklet';
 
 /**
  * Bridges the `IPeerNetwork` port onto the Bare P2P worker. All actual
  * Hyperswarm/Hypercore work happens in `bare/p2p.mjs`; this class is the
- * thin RN-side facade.
+ * thin RN-side facade. In the single-room model there is exactly one topic
+ * (the shared room), joined once via `joinRoom`.
  */
 export class BareWorkletNetwork implements IPeerNetwork {
-  private joined: BucketId[] = [];
+  private joinedRoom = false;
   private recordHandlers: Array<(r: SignedRecord) => void> = [];
-  private presenceHandlers: Array<
-    (p: PeerId, b: BucketId, present: boolean) => void
-  > = [];
+  private presenceHandlers: Array<(p: PeerId, present: boolean) => void> = [];
   private detachRecord: (() => void) | null = null;
   private detachPresence: (() => void) | null = null;
 
   constructor(private readonly worklet: P2pWorklet) {}
-
-  get joinedBuckets(): ReadonlyArray<BucketId> {
-    return this.joined;
-  }
 
   async initialize(): Promise<void> {
     await this.worklet.initialize();
@@ -29,13 +24,9 @@ export class BareWorkletNetwork implements IPeerNetwork {
         h(record);
       }
     });
-    // Presence is currently emitted without an associated bucket id, so we
-    // surface it against the last-joined bucket. Future iterations can
-    // carry the bucket through the worker event.
     this.detachPresence = this.worklet.onPresence((peerId, present) => {
-      const bucket = this.joined.length > 0 ? this.joined[this.joined.length - 1] : ('' as BucketId);
       for (const h of this.presenceHandlers) {
-        h(peerId, bucket, present);
+        h(peerId, present);
       }
     });
   }
@@ -49,32 +40,23 @@ export class BareWorkletNetwork implements IPeerNetwork {
       this.detachPresence();
       this.detachPresence = null;
     }
-    this.joined = [];
+    this.joinedRoom = false;
     this.recordHandlers = [];
     this.presenceHandlers = [];
   }
 
-  async joinBucket(bucket: BucketId): Promise<void> {
-    if (this.joined.includes(bucket)) {
+  async joinRoom(): Promise<void> {
+    if (this.joinedRoom) {
       return;
     }
-    await this.worklet.joinBucket(bucket);
-    this.joined.push(bucket);
-  }
-
-  async leaveBucket(bucket: BucketId): Promise<void> {
-    if (!this.joined.includes(bucket)) {
-      return;
-    }
-    await this.worklet.leaveBucket(bucket);
-    this.joined = this.joined.filter((b) => b !== bucket);
+    await this.worklet.joinRoom();
+    this.joinedRoom = true;
   }
 
   async publish(_record: SignedRecord): Promise<void> {
     // Publishing is implicit: the record is already in our outbox after
-    // IMailbox.append(), and Hypercore replication propagates it. Calling
-    // append twice (once via mailbox, once via network) writes duplicate
-    // blocks, so this path is intentionally a no-op.
+    // IMailbox.append(), and Hypercore replication + directory gossip
+    // propagate it. Appending again here would write duplicate blocks.
   }
 
   onRecord(handler: (record: SignedRecord) => void): () => void {
@@ -84,9 +66,7 @@ export class BareWorkletNetwork implements IPeerNetwork {
     };
   }
 
-  onPeerPresence(
-    handler: (peer: PeerId, bucket: BucketId, present: boolean) => void,
-  ): () => void {
+  onPeerPresence(handler: (peer: PeerId, present: boolean) => void): () => void {
     this.presenceHandlers.push(handler);
     return () => {
       this.presenceHandlers = this.presenceHandlers.filter((h) => h !== handler);

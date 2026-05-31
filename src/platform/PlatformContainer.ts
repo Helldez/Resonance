@@ -9,16 +9,7 @@ import type { ModelProgressUpdate } from '@qvac/sdk';
  * Shape that the UI layer expects from any platform-specific container.
  * Mobile (`MobileContainer`) and desktop renderer (`RemoteContainer`) both
  * conform to this so screens stay platform-agnostic.
- *
- * The `p2p` field is intentionally structural — both the real
- * `P2pWorklet` on mobile and the renderer-side proxy expose the same
- * subset (`localNoiseKey`, `joinPeer`, `onPeerNoise`).
  */
-export interface PlatformP2p {
-  readonly localNoiseKey: string | null;
-  joinPeer(noiseKey: string): Promise<void>;
-  onPeerNoise(handler: (peerId: string, noiseKey: string) => void): () => void;
-}
 
 /** Embedding service plus model-lifecycle bits the settings UI exposes. */
 export interface PlatformEmbeddingService extends IEmbeddingService {
@@ -38,5 +29,4 @@ export interface PlatformContainer extends AppContainer {
   readonly peers: PeerRepository;
   readonly embedderConcrete: PlatformEmbeddingService;
   readonly llmConcrete: PlatformLlmService;
-  readonly p2p: PlatformP2p;
 }

@@ -8,8 +8,6 @@ import type { IEmbeddingService } from '@core/ports/IEmbeddingService';
 import type { IIdentity } from '@core/ports/IIdentity';
 import type { IMailbox } from '@core/ports/IMailbox';
 import type { IPeerNetwork } from '@core/ports/IPeerNetwork';
-import { lshBucketOf } from '@core/matching/LshBucket';
-import { MatchingConfig } from '@core/config/MatchingConfig';
 import { canonicalDigest, signRecord } from '@core/utils/CanonicalRecord';
 
 export interface CreatePostDeps {
@@ -23,13 +21,6 @@ export interface CreatePostDeps {
 
 export interface CreatePostInput {
   readonly text: string;
-  /**
-   * The author's Hyperswarm noise public key (hex), if available. When
-   * provided, it is embedded in the signed `PostBody` so any peer that
-   * receives the post can dial the author directly via the DHT, bypassing
-   * bucket co-membership requirements. See `docs/SEMANTIC_ROUTING.md` §11.
-   */
-  readonly authorNoiseKey?: string;
 }
 
 export interface CreatePostResult {
@@ -37,8 +28,10 @@ export interface CreatePostResult {
 }
 
 /**
- * Author a new post: embed → compute bucket → join swarm → sign → append to
- * own feed. The published record propagates through Hypercore replication.
+ * Author a new post: embed → sign → append to own feed. In the single-room
+ * model there is no per-post routing: the peer already joined the one shared
+ * room at boot, and the appended record propagates to peers through
+ * Hypercore replication + directory gossip.
  */
 export async function createPost(
   deps: CreatePostDeps,
@@ -50,29 +43,15 @@ export async function createPost(
   }
 
   const embedding = await deps.embedder.embed(trimmed);
-
-  const bucket = lshBucketOf(
-    embedding,
-    MatchingConfig.embeddingDim,
-    MatchingConfig.lshBits,
-    MatchingConfig.lshSeed,
-  );
   console.log(
-    `[rn] createPost bucket=${bucket} textLen=${trimmed.length} embDim=${embedding.length}`,
+    `[rn] createPost textLen=${trimmed.length} embDim=${embedding.length}`,
   );
 
-  await deps.network.joinBucket(bucket);
-
-  const noiseKey = input.authorNoiseKey;
   const body: PostBody = {
     kind: 'post',
     text: trimmed,
     embedding,
-    bucket,
     createdAt: deps.clock.now(),
-    ...(typeof noiseKey === 'string' && noiseKey.length > 0
-      ? { authorNoiseKey: noiseKey }
-      : {}),
   };
 
   const digest = await canonicalDigest(body);

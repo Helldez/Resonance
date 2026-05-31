@@ -8,68 +8,25 @@
  */
 export const MatchingConfig = {
   /**
-   * Embedding dimension. bge-m3 produces 1024-dim dense vectors. Unlike
-   * EmbeddingGemma it is NOT trained with Matryoshka representation
-   * learning, so naive truncation to a smaller dim destroys signal
-   * (information is spread across all dims uniformly, not "head-loaded").
-   * We keep the full 1024. Storage cost: 4KB per embedding — 10k posts
-   * = 40MB total, acceptable on mobile.
+   * Embedding dimension. EmbeddingGemma-300M produces 768-dim dense
+   * vectors; the single-room model (conf 9) uses the full 768 with the
+   * "clustering" prompt template (see `ModelProfiles.embedding`). There is
+   * no Matryoshka truncation here — 768 is the project-wide convention.
    *
    * Network-wide constant: changing the dim or the model implies bumping
-   * NetworkConfig.topicPrefix to isolate peers using incompatible
-   * embedding spaces.
+   * `RoomConfig.topicPrefix` to isolate peers using incompatible embedding
+   * spaces. A mismatch also triggers `PostRepository.dropIfDimChanged`.
    */
-  embeddingDim: 1024,
-
-  /**
-   * Bits in the LSH bucket id. With 8 bits we partition the embedding
-   * space into 256 coarse buckets. Each bucket becomes one Hyperswarm
-   * topic.
-   */
-  lshBits: 8,
-
-  /**
-   * Seed for the LSH random hyperplanes. The same seed across all peers
-   * MUST produce the same hyperplanes — otherwise peers route to
-   * inconsistent buckets. This is a network-wide constant; do not change
-   * post-launch without a coordinated migration.
-   */
-  lshSeed: 0xa57e_b3c1,
-
-  /**
-   * Number of independent LSH tables. Each peer announces in L topics
-   * (one per table). Two peers see each other if they collide in any
-   * table — recall jumps from ~20% (L=1) to ~83% (L=8) at cos_sim 0.85.
-   * See `docs/SEMANTIC_ROUTING.md` §4 (Tier 2).
-   *
-   * Network-wide constant: changing L partitions the network. Coordinate
-   * with the topic prefix bump in `NetworkConfig.topicPrefix` if you
-   * have to change it.
-   */
-  lshTables: 8,
-
-  /**
-   * Seeds for the L tables — one independent hyperplane family each.
-   * Hard-coded so all peers compute the same partitions. Length MUST
-   * equal `lshTables`.
-   */
-  lshSeeds: [
-    0xa57e_b3c1,
-    0x13c5_9f02,
-    0x9e44_27ad,
-    0x5b86_d31e,
-    0x77a0_8e5b,
-    0xc2f9_4760,
-    0x18df_3a92,
-    0xeb31_b2c7,
-  ] as ReadonlyArray<number>,
+  embeddingDim: 768,
 
   /**
    * Default minimum cosine similarity for an incoming post to be surfaced
-   * in the inbox. 0 = show every replicated post (MVP default). Users
-   * raise it in Settings once they have enough peers to want filtering.
+   * in the inbox view. Conf 9 uses the "loose" 0.3 threshold; users can
+   * raise it in Settings. Note this is the user-facing *view* filter — the
+   * hard *admission* threshold for the bounded inbox is
+   * `RoomConfig.inboxMinSimilarity`.
    */
-  defaultInboxSimilarityThreshold: 0.0,
+  defaultInboxSimilarityThreshold: 0.3,
 
   /**
    * Preset choices exposed in the Settings UI for the similarity
@@ -82,12 +39,6 @@ export const MatchingConfig = {
     { label: 'Balanced', value: 0.7, hint: 'Strongly related posts only' },
     { label: 'Strict', value: 0.85, hint: 'Near-identical interests only' },
   ] as ReadonlyArray<{ label: string; value: number; hint: string }>,
-
-  /**
-   * Cap on inbox results per query. Prevents one chatty bucket from
-   * flooding the UI.
-   */
-  inboxMaxResults: 100,
 
   /**
    * Interval at which the Inbox and Thread screens re-poll SQLite to
@@ -105,9 +56,10 @@ export const MatchingConfig = {
   maxResponsesPerPeerPerPost: 1,
 
   /**
-   * Used as the user's interest text when "About you" is empty. Drives
-   * both the LSH bucket and (until the user has posted anything) the
-   * fallback similarity computation in `ScoreIncomingPost`.
+   * Used as the user's interest text when "About you" is empty. In the
+   * single-room model it only drives the cold-start similarity scorer (the
+   * fallback in `ScoreIncomingPost`) until the user has posted anything —
+   * it no longer affects routing.
    */
   fallbackInterestText:
     'general interest in technology, life, and meaningful conversations',
@@ -119,22 +71,6 @@ export const MatchingConfig = {
    * embedding of the user's "About you" text.
    */
   similarityAggregation: 'max-vs-own-posts' as 'max-vs-own-posts',
-
-  /**
-   * Minimum number of own posts before the bucket membership switches
-   * from "About-you driven" to "centroid of recent own posts" driven.
-   * Below this threshold the bucket is determined by `receiverContext`
-   * (or fallback) so a brand-new user still joins a sensible bucket.
-   */
-  postDrivenMinOwnPosts: 3,
-
-  /**
-   * Rolling window of own posts used to compute the centroid that drives
-   * bucket membership. Older posts beyond this window are ignored, so
-   * the bucket follows the user's recent interests rather than ancient
-   * history.
-   */
-  postDrivenWindow: 10,
 
   /**
    * Hard cap on how many remote posts the semantic map will fetch and

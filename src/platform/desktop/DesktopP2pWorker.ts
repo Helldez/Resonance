@@ -1,7 +1,7 @@
 import { BareSubprocess } from './BareSubprocess';
 import { FramedRpcClient } from './FramedRpcClient';
-import { NetworkConfig } from '@core/config/NetworkConfig';
-import type { BucketId, PeerId, SignedRecord } from '@core/domain/types';
+import { RoomConfig } from '@core/config/RoomConfig';
+import type { PeerId, SignedRecord } from '@core/domain/types';
 import { bytesToHex, hexToBytes } from '@core/utils/HexEncoding';
 
 interface InitResult {
@@ -26,18 +26,11 @@ interface PresenceEvent {
   readonly present: boolean;
 }
 
-interface PeerNoiseEvent {
-  readonly peerId: string;
-  readonly noiseKey: string;
-}
-
 interface WirePostBody {
   readonly kind: 'post';
   readonly text: string;
   readonly embedding: number[];
-  readonly bucket: string;
   readonly createdAt: number;
-  readonly authorNoiseKey?: string;
 }
 
 interface WireResponseBody {
@@ -67,12 +60,12 @@ export interface DesktopP2pWorkerOptions {
 /**
  * Desktop counterpart of `P2pWorklet`. Spawns the Bare P2P worker as a
  * child process via `BareSubprocess`, wraps stdin/stdout in a
- * `FramedRpcClient`, and exposes the same surface (init, append, join/
- * leave bucket, joinPeer, event handlers).
+ * `FramedRpcClient`, and exposes the same surface (init, append, joinRoom,
+ * event handlers).
  *
- * The wire format and command set are identical to the mobile path, so
- * the network and mailbox adapters above this class are unchanged
- * relative to the mobile ones.
+ * The wire format and command set are identical to the mobile path, so the
+ * network and mailbox adapters above this class are unchanged relative to
+ * the mobile ones.
  */
 export class DesktopP2pWorker {
   private subprocess: BareSubprocess | null = null;
@@ -81,7 +74,6 @@ export class DesktopP2pWorker {
   private noiseKey: string | null = null;
   private recordHandlers: Array<(r: SignedRecord) => void> = [];
   private presenceHandlers: Array<(peerId: PeerId, present: boolean) => void> = [];
-  private peerNoiseHandlers: Array<(peerId: string, noiseKey: string) => void> = [];
 
   constructor(private readonly options: DesktopP2pWorkerOptions) {}
 
@@ -119,17 +111,10 @@ export class DesktopP2pWorker {
         h(peer, evt.present);
       }
     });
-    rpc.on<PeerNoiseEvent>('peerNoise', (evt) => {
-      if (evt === undefined) {
-        return;
-      }
-      for (const h of this.peerNoiseHandlers) {
-        h(evt.peerId, evt.noiseKey);
-      }
-    });
 
     const initResult = await rpc.request<InitResult>('init', {
       storagePath: this.options.storagePath,
+      maxConnections: RoomConfig.maxConnections,
     });
 
     this.subprocess = sub;
@@ -162,22 +147,12 @@ export class DesktopP2pWorker {
     return feedIndex;
   }
 
-  async joinBucket(bucket: BucketId): Promise<void> {
+  async joinRoom(): Promise<void> {
     const rpc = this.requireRpc();
-    await rpc.request<OkResult>('joinBucket', {
-      bucketId: String(bucket),
-      topicSeed: NetworkConfig.topicPrefix,
+    await rpc.request<OkResult>('joinRoom', {
+      roomId: RoomConfig.roomId,
+      topicSeed: RoomConfig.topicPrefix,
     });
-  }
-
-  async leaveBucket(bucket: BucketId): Promise<void> {
-    const rpc = this.requireRpc();
-    await rpc.request<OkResult>('leaveBucket', { bucketId: String(bucket) });
-  }
-
-  async joinPeer(noiseKey: string): Promise<void> {
-    const rpc = this.requireRpc();
-    await rpc.request<OkResult>('joinPeer', { noiseKey });
   }
 
   onRecord(handler: (record: SignedRecord) => void): () => void {
@@ -194,13 +169,6 @@ export class DesktopP2pWorker {
     };
   }
 
-  onPeerNoise(handler: (peerId: string, noiseKey: string) => void): () => void {
-    this.peerNoiseHandlers.push(handler);
-    return () => {
-      this.peerNoiseHandlers = this.peerNoiseHandlers.filter((h) => h !== handler);
-    };
-  }
-
   private requireRpc(): FramedRpcClient {
     if (this.rpc === null) {
       throw new Error('DesktopP2pWorker: not initialized');
@@ -212,20 +180,14 @@ export class DesktopP2pWorker {
 function signedRecordToWire(record: SignedRecord): WireRecord {
   const body = record.body;
   if (body.kind === 'post') {
-    const embeddingArr = Array.from(body.embedding);
-    const noiseKey = body.authorNoiseKey;
     return {
       author: record.author,
       feedIndex: record.feedIndex,
       body: {
         kind: 'post',
         text: body.text,
-        embedding: embeddingArr,
-        bucket: String(body.bucket),
+        embedding: Array.from(body.embedding),
         createdAt: body.createdAt,
-        ...(typeof noiseKey === 'string' && noiseKey.length > 0
-          ? { authorNoiseKey: noiseKey }
-          : {}),
       },
       digest: bytesToHex(record.digest),
       signature: bytesToHex(record.signature),
@@ -250,20 +212,14 @@ function wireToSignedRecord(wire: WireRecord): SignedRecord {
   const signature = hexToBytes(wire.signature);
   const author = wire.author as PeerId;
   if (wire.body.kind === 'post') {
-    const embedding = new Float32Array(wire.body.embedding);
-    const noiseKey = wire.body.authorNoiseKey;
     return {
       author,
       feedIndex: wire.feedIndex,
       body: {
         kind: 'post',
         text: wire.body.text,
-        embedding,
-        bucket: wire.body.bucket as BucketId,
+        embedding: new Float32Array(wire.body.embedding),
         createdAt: wire.body.createdAt,
-        ...(typeof noiseKey === 'string' && noiseKey.length > 0
-          ? { authorNoiseKey: noiseKey }
-          : {}),
       },
       digest,
       signature,
