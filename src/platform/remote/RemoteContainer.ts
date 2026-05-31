@@ -354,6 +354,10 @@ class RemoteNetwork implements IPeerNetwork {
     // No-op: Hypercore replication propagates after mailbox.append.
   }
 
+  async rescan(): Promise<void> {
+    await this.bridge.call('network', 'rescan', []);
+  }
+
   onRecord(handler: (record: SignedRecord) => void): () => void {
     this.recordHandlers.push(handler);
     return () => {

@@ -59,6 +59,10 @@ export class BareWorkletNetwork implements IPeerNetwork {
     // propagate it. Appending again here would write duplicate blocks.
   }
 
+  async rescan(): Promise<void> {
+    await this.worklet.rescan();
+  }
+
   onRecord(handler: (record: SignedRecord) => void): () => void {
     this.recordHandlers.push(handler);
     return () => {

@@ -3,7 +3,11 @@ import { View } from 'react-native';
 import { TextInput, Button, useTheme, HelperText } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRequireContainer, appendOwnEmbedding } from '@ui/AppContainerContext';
+import {
+  useRequireContainer,
+  appendOwnEmbedding,
+  rescoreInboxAgainstOwnPosts,
+} from '@ui/AppContainerContext';
 import { createPost } from '@core/posts/CreatePost';
 import { addressOf } from '@core/utils/AddressOf';
 
@@ -32,16 +36,27 @@ export default function ComposeScreen() {
         { text },
       );
       if (record.body.kind === 'post') {
+        const ownAddress = addressOf(record.author, record.feedIndex);
         await container.posts.upsert(
-          addressOf(record.author, record.feedIndex),
+          ownAddress,
           record.author,
           record.feedIndex,
           record.body,
           null,
+          null,
         );
         // Push into the in-memory cache so future incoming posts are scored
         // against THIS post too, without waiting for an app restart.
-        appendOwnEmbedding(record.body.embedding);
+        appendOwnEmbedding(ownAddress, record.body.embedding);
+        // Re-score the existing inbox against the now-larger set of own posts
+        // so already-received remote posts can be grouped under this new post
+        // (and cold-start scores get rewritten on a single comparable metric).
+        await rescoreInboxAgainstOwnPosts(container);
+        // Replay the full replicated history so posts that were dropped at
+        // admission (e.g. during cold start, or because they didn't match a
+        // previous topic) are re-evaluated against this new post and can now
+        // be pulled into the inbox if they're related.
+        await container.network.rescan();
       }
       router.replace({
         pathname: '/map',

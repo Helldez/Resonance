@@ -20,4 +20,13 @@ export interface IPeerNetwork extends IPeerNetworkEvents {
 
   /** Publish a signed record into our own append-only feed. */
   publish(record: SignedRecord): Promise<void>;
+
+  /**
+   * Replay every post already replicated into the local cores, re-delivering
+   * each through `onRecord`. Used after publishing a post to re-evaluate the
+   * full history against the new own-post signal — surfacing related posts
+   * that were dropped at admission while the inbox had no (or a different) set
+   * of own posts to score against. Idempotent on the receiver side.
+   */
+  rescan(): Promise<void>;
 }

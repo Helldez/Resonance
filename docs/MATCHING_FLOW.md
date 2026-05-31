@@ -122,10 +122,17 @@ sim = MAX(cosine(remote_embedding, own_post_embedding_i))
    ▼ map / thread screens read the same SQLite projection
 ```
 
-Important: the `similarity` value is **computed once at receive time and
-frozen in SQLite**. Writing new own posts later does NOT recompute the
-similarity of already-received remote posts. This is a deliberate
-performance/UX trade-off and a known candidate for future change.
+The receive-time score also records **which own post produced the MAX**
+(`matched_own_address`), so the inbox can group each remote post beneath the
+own post it most resembles.
+
+Update: the `similarity` value is computed at receive time, but it is **no
+longer frozen forever**. Publishing a new post triggers
+`rescoreInboxAgainstOwnPosts` (`src/ui/AppContainerContext.tsx`), which
+recomputes `similarity` and `matched_own_address` for every stored remote
+post against the now-larger set of own posts. This keeps grouping correct and
+resolves the cold→warm transition (old About-you-based scores are rewritten
+on the same metric the inbox eviction uses).
 
 Source: `src/ui/AppContainerContext.tsx` (`persistRecord`,
 `scoreRemotePost`).

@@ -9,7 +9,14 @@ import { decideAdmission } from '@core/inbox/InboxAdmission';
 import { addressOf } from '@core/utils/AddressOf';
 import { canonicalDigest } from '@core/utils/CanonicalRecord';
 import { cosineOnUnit } from '@core/matching/CosineSimilarity';
+import type { RecordAddress } from '@core/domain/types';
 import type { ModelProgressUpdate } from '@qvac/sdk';
+
+/** An own post embedding tagged with the address of the post it came from. */
+interface OwnEmbedding {
+  readonly address: RecordAddress;
+  readonly embedding: Float32Array;
+}
 
 const AppContainerContext = createContext<PlatformContainer | null>(null);
 
@@ -21,6 +28,7 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
   const setSelf = useBootstrapStore((s) => s.setSelf);
   const aboutYouEmbeddingRef = useRef<Float32Array | null>(null);
   const containerRef = useRef<PlatformContainer | null>(null);
+  const receiverContext = useSettingsStore((s) => s.receiverContext);
 
   useEffect(() => {
     let cancelled = false;
@@ -52,10 +60,11 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
         const aboutYouEmbedding = await c.embedder.embed(interestText);
         aboutYouEmbeddingRef.current = aboutYouEmbedding;
 
-        // Load own posts' embeddings so the receiver-side similarity can be
-        // computed against the user's actual posting history rather than a
-        // static "About you" description.
-        const ownFromDb = await c.posts.getOwnEmbeddings(
+        // Load own posts' embeddings (with their addresses) so the
+        // receiver-side similarity can be computed against the user's actual
+        // posting history rather than a static "About you" description, and so
+        // each remote post can record which own post it matched.
+        const ownFromDb = await c.posts.getOwnEmbeddingsWithAddress(
           c.self,
           MatchingConfig.embeddingDim,
         );
@@ -95,6 +104,38 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Keep the cold-start "About you" embedding live. The empty-state card in
+  // the feed invites a new user to set their interests in Settings; without
+  // this effect that change would not take effect until an app restart,
+  // because the embedding was captured once at boot. Re-embed in the
+  // background whenever the text changes and the container is ready.
+  useEffect(() => {
+    const c = containerRef.current;
+    if (c === null) {
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const interestText = receiverContext.trim().length === 0
+          ? MatchingConfig.fallbackInterestText
+          : receiverContext;
+        const embedding = await c.embedder.embed(interestText);
+        if (!cancelled) {
+          aboutYouEmbeddingRef.current = embedding;
+          console.log('[rn] about-you embedding refreshed');
+        }
+      } catch (e) {
+        console.warn(
+          `[rn] about-you re-embed failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [container, receiverContext]);
+
   return (
     <AppContainerContext.Provider value={container}>{children}</AppContainerContext.Provider>
   );
@@ -119,20 +160,44 @@ export function useRequireContainer(): PlatformContainer {
  * Exposed via a module-level ref because the Compose screen needs to push
  * into it without going through the React tree.
  */
-const externalOwnEmbeddings: { current: Float32Array[] } = { current: [] };
+const externalOwnEmbeddings: { current: OwnEmbedding[] } = { current: [] };
 
-export function appendOwnEmbedding(v: Float32Array): void {
-  externalOwnEmbeddings.current.push(v);
+export function appendOwnEmbedding(address: RecordAddress, v: Float32Array): void {
+  externalOwnEmbeddings.current.push({ address, embedding: v });
 }
 
-export function getOwnEmbeddingsSnapshot(): Float32Array[] {
+export function getOwnEmbeddingsSnapshot(): ReadonlyArray<OwnEmbedding> {
   return externalOwnEmbeddings.current;
+}
+
+/**
+ * Re-score every remote post in the inbox against the user's current own
+ * posts. Called after publishing a post: the set of own posts just grew, so
+ * each remote post's MAX-cosine similarity (and the own post it matched) may
+ * have changed. This keeps the grouped inbox correct — a remote post received
+ * before post #k can now be grouped under post #k — and resolves the cold→warm
+ * transition (old About-you-based scores are overwritten with own-post scores,
+ * restoring a single comparable metric for inbox eviction).
+ */
+export async function rescoreInboxAgainstOwnPosts(
+  c: PlatformContainer,
+): Promise<void> {
+  const own = getOwnEmbeddingsSnapshot();
+  if (own.length === 0) {
+    return;
+  }
+  const remote = await c.posts.getRemoteEmbeddings(c.self, MatchingConfig.embeddingDim);
+  for (const post of remote) {
+    const { similarity, matchedOwnAddress } = scoreRemotePost(post.embedding, own, null);
+    await c.posts.updateScore(post.address, similarity, matchedOwnAddress);
+  }
+  console.log(`[rn] rescored inbox count=${remote.length} ownPosts=${own.length}`);
 }
 
 async function persistRecord(
   c: PlatformContainer,
   record: import('@core/domain/types').SignedRecord,
-  ownEmbeddings: ReadonlyArray<Float32Array>,
+  ownEmbeddings: ReadonlyArray<OwnEmbedding>,
   interestProfile: Float32Array | null,
 ): Promise<void> {
   const shortAuthor = String(record.author).slice(0, 12);
@@ -161,7 +226,11 @@ async function persistRecord(
     // Bounded top-K inbox admission (conf 9). Score the post, then decide
     // whether it earns a slot — drop below threshold, admit while under
     // capacity, or evict the weakest occupant when the newcomer beats it.
-    const similarity = scoreRemotePost(record.body.embedding, ownEmbeddings, interestProfile);
+    const { similarity, matchedOwnAddress } = scoreRemotePost(
+      record.body.embedding,
+      ownEmbeddings,
+      interestProfile,
+    );
     const currentCount = await c.posts.countRemotePosts(c.self);
     const min = await c.posts.minSimilarityRemotePost(c.self);
     const decision = decideAdmission({
@@ -182,7 +251,14 @@ async function persistRecord(
     if (decision.kind === 'replace') {
       await c.posts.delete(decision.evict);
     }
-    await c.posts.upsert(address, record.author, record.feedIndex, record.body, similarity);
+    await c.posts.upsert(
+      address,
+      record.author,
+      record.feedIndex,
+      record.body,
+      similarity,
+      matchedOwnAddress,
+    );
     console.log(
       `[rn] inbox ${decision.kind} author=${shortAuthor} similarity=${similarity === null ? 'null' : similarity.toFixed(3)} count=${currentCount}`,
     );
@@ -194,47 +270,69 @@ async function persistRecord(
   await c.peers.touch(record.author, c.clock.now());
 }
 
+/** Result of scoring an incoming post against the local context. */
+interface RemoteScore {
+  /** MAX cosine vs own posts, or the About-you fallback; null if unscorable. */
+  readonly similarity: number | null;
+  /**
+   * Address of the own post that produced the MAX cosine, so the inbox can
+   * group this remote post beneath it. Null on the cold-start (About-you)
+   * path, where there is no own post to attribute the match to.
+   */
+  readonly matchedOwnAddress: RecordAddress | null;
+}
+
 /**
  * Receiver-side scoring for an incoming post.
  *
  * Primary signal: max cosine against the user's own post embeddings — what
  * the user has actually written about is a stronger signal than what they
- * declared in "About you".
+ * declared in "About you". Also reports which own post won the max, so the
+ * inbox can group the remote post under it.
  *
  * Cold-start fallback: cosine against the interest profile (embedding of
- * the "About you" text). Used until the user has at least one post.
+ * the "About you" text). Used until the user has at least one post; the
+ * matched address is null because there is no own post to attribute it to.
  *
- * Returns null only if neither signal is available.
+ * `similarity` is null only if neither signal is available.
  */
 function scoreRemotePost(
   postEmbedding: Float32Array,
-  ownEmbeddings: ReadonlyArray<Float32Array>,
+  ownEmbeddings: ReadonlyArray<OwnEmbedding>,
   interestProfile: Float32Array | null,
-): number | null {
+): RemoteScore {
   if (ownEmbeddings.length > 0) {
     let best = -Infinity;
+    let bestIndex = -1;
     for (let i = 0; i < ownEmbeddings.length; i++) {
       try {
-        const s = cosineOnUnit(postEmbedding, ownEmbeddings[i]);
+        const s = cosineOnUnit(postEmbedding, ownEmbeddings[i].embedding);
         if (s > best) {
           best = s;
+          bestIndex = i;
         }
       } catch {
         // dimension mismatch on a stale embedding — skip it
       }
     }
-    if (best > -Infinity) {
-      return best;
+    if (bestIndex >= 0) {
+      return {
+        similarity: best,
+        matchedOwnAddress: ownEmbeddings[bestIndex].address,
+      };
     }
   }
   if (interestProfile !== null) {
     try {
-      return cosineOnUnit(postEmbedding, interestProfile);
+      return {
+        similarity: cosineOnUnit(postEmbedding, interestProfile),
+        matchedOwnAddress: null,
+      };
     } catch {
-      return null;
+      return { similarity: null, matchedOwnAddress: null };
     }
   }
-  return null;
+  return { similarity: null, matchedOwnAddress: null };
 }
 
 function bytesToHexShort(bytes: Uint8Array): string {

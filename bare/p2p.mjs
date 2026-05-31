@@ -22,6 +22,7 @@
  *   - 'init'      { storagePath, maxConnections } -> { outboxKey, noiseKey }
  *   - 'append'    { record }                      -> { feedIndex }
  *   - 'joinRoom'  { roomId, topicSeed }           -> { ok: true }
+ *   - 'rescan'    {}                              -> { ok: true, count }
  *   - 'shutdown'  {}                              -> { ok: true }
  *
  * Events emitted to RN:
@@ -267,6 +268,47 @@ async function append({ record }) {
   return { feedIndex }
 }
 
+/**
+ * Re-emit every block already replicated into the local cores, from index 0.
+ *
+ * The drain loop in `watchCore` advances a one-way cursor: each remote block
+ * is delivered to the RN side exactly once, when first seen. The RN side may
+ * DROP a post at inbox admission (e.g. during cold start, when there are no
+ * own posts to score against yet), and that decision is permanent — the block
+ * stays in the local core but is never revisited.
+ *
+ * `rescan` replays the full local history so the RN side can re-evaluate it
+ * against a freshly-published post. The blocks were already downloaded during
+ * the initial drain, so reads are local (`wait: false`) — no network stall.
+ * Re-delivery is safe: the RN handler is idempotent (upsert keyed by address).
+ */
+async function rescanAll() {
+  let count = 0
+  for (const [peerId, core] of knownRemoteCores) {
+    try {
+      await core.update({ wait: false })
+    } catch (err) {
+      // best-effort; fall through to whatever length we have locally
+    }
+    const length = core.length
+    for (let i = 0; i < length; i++) {
+      try {
+        const block = await core.get(i, { wait: false })
+        if (!block) continue
+        const record = recordFromBlock(block, peerId)
+        if (record !== null) {
+          rpc.emit('record', { record })
+          count++
+        }
+      } catch (err) {
+        // skip a block that is not locally available / unreadable
+      }
+    }
+  }
+  console.log(`[p2p] rescan re-emitted ${count} records from ${knownRemoteCores.size} cores`)
+  return { ok: true, count }
+}
+
 async function joinRoom({ roomId, topicSeed }) {
   if (roomDiscovery !== null) {
     console.log('[p2p] joinRoom already joined')
@@ -303,6 +345,8 @@ rpc = new FramedRpc(IPC, async (method, params) => {
       return append(params)
     case 'joinRoom':
       return joinRoom(params)
+    case 'rescan':
+      return rescanAll()
     case 'shutdown':
       return shutdown()
     default:

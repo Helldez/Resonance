@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, FlatList, Pressable, RefreshControl } from 'react-native';
 import { confirmDestructive } from '@ui/confirmDestructive';
 import {
   Text,
   IconButton,
+  Icon,
   Card,
   Surface,
   Button,
@@ -25,8 +26,22 @@ interface FeedRow {
   readonly author: string;
   readonly text: string;
   readonly similarity: number | null;
+  readonly matchedOwnAddress: string | null;
   readonly createdAt: number;
 }
+
+/**
+ * Flattened render units for the grouped feed. Each of the user's own posts
+ * is an anchor; the remote posts that matched it (their MAX cosine) are
+ * nested beneath it, most-similar first. Remote posts with no own match
+ * (cold start, or a match to an own post not in view) fall into the
+ * "Based on your interests" group.
+ */
+type FeedItem =
+  | { readonly kind: 'own'; readonly row: FeedRow; readonly childCount: number }
+  | { readonly kind: 'child'; readonly row: FeedRow }
+  | { readonly kind: 'orphan-header'; readonly count: number }
+  | { readonly kind: 'orphan'; readonly row: FeedRow };
 
 export default function FeedScreen() {
   const container = useRequireContainer();
@@ -40,6 +55,21 @@ export default function FeedScreen() {
   const [rows, setRows] = useState<FeedRow[]>([]);
   const [hiddenCount, setHiddenCount] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  // Addresses of own posts whose resonances are expanded. Collapsed by default
+  // — the user taps the "N resonances" row to reveal the matched remote posts.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+
+  const toggleExpanded = useCallback((address: string): void => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(address)) {
+        next.delete(address);
+      } else {
+        next.add(address);
+      }
+      return next;
+    });
+  }, []);
 
   const load = useCallback(async (): Promise<void> => {
     const data = await container.database.query<{
@@ -47,9 +77,10 @@ export default function FeedScreen() {
       author: string;
       text: string;
       similarity: number | null;
+      matched_own_address: string | null;
       created_at: number;
     }>(
-      'SELECT address, author, text, similarity, created_at FROM posts WHERE author = ? OR similarity IS NULL OR similarity >= ? ORDER BY created_at DESC LIMIT ?',
+      'SELECT address, author, text, similarity, matched_own_address, created_at FROM posts WHERE author = ? OR similarity IS NULL OR similarity >= ? ORDER BY created_at DESC LIMIT ?',
       [container.self, threshold, RoomConfig.inboxCapacity],
     );
     setRows(
@@ -58,6 +89,7 @@ export default function FeedScreen() {
         author: d.author,
         text: d.text,
         similarity: d.similarity,
+        matchedOwnAddress: d.matched_own_address,
         createdAt: d.created_at,
       })),
     );
@@ -109,7 +141,169 @@ export default function FeedScreen() {
     [container, load],
   );
 
+  // Group the flat rows into anchors (own posts) + their matched remote posts,
+  // with a trailing "Based on your interests" group for unmatched remotes.
+  const items = useMemo<FeedItem[]>(() => {
+    const ownPosts: FeedRow[] = [];
+    const ownAddresses = new Set<string>();
+    for (const r of rows) {
+      if (r.author === container.self) {
+        ownPosts.push(r);
+        ownAddresses.add(r.address);
+      }
+    }
+
+    const childrenByOwn = new Map<string, FeedRow[]>();
+    const orphans: FeedRow[] = [];
+    for (const r of rows) {
+      if (r.author === container.self) {
+        continue;
+      }
+      const parent = r.matchedOwnAddress;
+      if (parent !== null && ownAddresses.has(parent)) {
+        const list = childrenByOwn.get(parent);
+        if (list === undefined) {
+          childrenByOwn.set(parent, [r]);
+        } else {
+          list.push(r);
+        }
+      } else {
+        orphans.push(r);
+      }
+    }
+
+    const bySimilarityDesc = (a: FeedRow, b: FeedRow): number =>
+      (b.similarity ?? -Infinity) - (a.similarity ?? -Infinity);
+
+    const out: FeedItem[] = [];
+    // Own posts are already in created_at DESC order from the query.
+    for (const own of ownPosts) {
+      const children = (childrenByOwn.get(own.address) ?? []).sort(bySimilarityDesc);
+      out.push({ kind: 'own', row: own, childCount: children.length });
+      // Resonances are collapsed by default; only expanded groups emit them.
+      if (expanded.has(own.address)) {
+        for (const child of children) {
+          out.push({ kind: 'child', row: child });
+        }
+      }
+    }
+    if (orphans.length > 0) {
+      orphans.sort(bySimilarityDesc);
+      out.push({ kind: 'orphan-header', count: orphans.length });
+      for (const o of orphans) {
+        out.push({ kind: 'orphan', row: o });
+      }
+    }
+    return out;
+  }, [rows, container.self, expanded]);
+
   const aboutEmpty = receiverContext.trim().length === 0;
+
+  const renderPostCard = (item: FeedRow) => {
+    const isOwn = item.author === container.self;
+    const sim = item.similarity;
+    const authorLabel = isOwn
+      ? formatAuthor({
+          self: container.self,
+          peer: container.self,
+          selfDisplayName: displayName,
+        })
+      : shortPeer(item.author);
+    const dotColor = isOwn
+      ? ThemeConfig.map.selfStarColor
+      : sim !== null
+        ? interpolateColor(
+            ThemeConfig.map.peerStarColorLow,
+            ThemeConfig.map.peerStarColorHigh,
+            clamp01((sim + 1) / 2),
+          )
+        : ThemeConfig.map.peerStarColorLow;
+    const openThread = (): void => {
+      router.push({ pathname: '/thread/[id]', params: { id: item.address } });
+    };
+    return (
+      <Card mode="contained" style={{ marginBottom: 10, backgroundColor: theme.colors.surface }}>
+        <Card.Content>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+            <View
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: 5,
+                backgroundColor: dotColor,
+                marginRight: 8,
+              }}
+            />
+            <Text variant="labelMedium" style={{ color: theme.colors.onSurface }}>
+              {authorLabel}
+            </Text>
+            <Text
+              variant="bodySmall"
+              style={{ marginLeft: 8, color: theme.colors.onSurfaceVariant }}
+            >
+              {formatRelative(item.createdAt)}
+            </Text>
+            <View style={{ flex: 1 }} />
+            {!isOwn && sim !== null && (
+              <Surface
+                elevation={0}
+                style={{
+                  paddingHorizontal: 8,
+                  paddingVertical: 2,
+                  borderRadius: 10,
+                  backgroundColor: theme.colors.surfaceVariant,
+                }}
+              >
+                <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                  {`sim ${sim.toFixed(2)}`}
+                </Text>
+              </Surface>
+            )}
+            {isOwn && (
+              <IconButton
+                icon="graph"
+                size={18}
+                accessibilityLabel="View this post on the semantic map"
+                style={{ margin: 0 }}
+                onPress={() =>
+                  router.push({ pathname: '/map', params: { anchor: item.address } })
+                }
+              />
+            )}
+            <IconButton
+              icon="delete-outline"
+              size={18}
+              accessibilityLabel={isOwn ? 'Delete this post' : 'Hide this post from inbox'}
+              style={{ margin: 0 }}
+              onPress={() => askDelete(item.address, isOwn)}
+            />
+          </View>
+          <Pressable onPress={openThread} onLongPress={() => askDelete(item.address, isOwn)}>
+            <Text style={{ color: theme.colors.onSurface }} numberOfLines={4}>
+              {item.text}
+            </Text>
+          </Pressable>
+        </Card.Content>
+      </Card>
+    );
+  };
+
+  // A remote card nested under its matched own post: a vertical connector
+  // line on the left makes the "belongs to the post above" relationship clear.
+  const renderNested = (item: FeedRow) => (
+    <View style={{ flexDirection: 'row', marginLeft: 8 }}>
+      <View
+        style={{
+          width: 2,
+          backgroundColor: theme.colors.outlineVariant ?? theme.colors.outline,
+          borderRadius: 1,
+          marginRight: 10,
+          marginBottom: 10,
+        }}
+      />
+      <View style={{ flex: 1 }}>{renderPostCard(item)}</View>
+    </View>
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
@@ -205,7 +399,7 @@ export default function FeedScreen() {
           </View>
         }
         contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: insets.bottom + 24 }}
-        data={rows}
+        data={items}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -215,129 +409,76 @@ export default function FeedScreen() {
             tintColor={theme.colors.primary}
           />
         }
-        keyExtractor={(it) => it.address}
+        keyExtractor={(it) =>
+          it.kind === 'orphan-header' ? 'orphan-header' : `${it.kind}-${it.row.address}`
+        }
         renderItem={({ item }) => {
-          const isOwn = item.author === container.self;
-          const sim = item.similarity;
-          const authorLabel = isOwn
-            ? formatAuthor({
-                self: container.self,
-                peer: container.self,
-                selfDisplayName: displayName,
-              })
-            : shortPeer(item.author);
-          const dotColor = isOwn
-            ? ThemeConfig.map.selfStarColor
-            : sim !== null
-              ? interpolateColor(
-                  ThemeConfig.map.peerStarColorLow,
-                  ThemeConfig.map.peerStarColorHigh,
-                  clamp01((sim + 1) / 2),
-                )
-              : ThemeConfig.map.peerStarColorLow;
-          const openThread = (): void => {
-            router.push({
-              pathname: '/thread/[id]',
-              params: { id: item.address },
-            });
-          };
-          return (
-            <Card
-              mode="contained"
-              style={{
-                marginBottom: 10,
-                backgroundColor: theme.colors.surface,
-              }}
-            >
-              <Card.Content>
-                <View
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    marginBottom: 8,
-                  }}
-                >
-                  <View
-                    style={{
-                      width: 10,
-                      height: 10,
-                      borderRadius: 5,
-                      backgroundColor: dotColor,
-                      marginRight: 8,
-                    }}
-                  />
-                  <Text
-                    variant="labelMedium"
-                    style={{ color: theme.colors.onSurface }}
-                  >
-                    {authorLabel}
+          switch (item.kind) {
+            case 'own': {
+              const isExpanded = expanded.has(item.row.address);
+              return (
+                <View>
+                  {renderPostCard(item.row)}
+                  {item.childCount > 0 && (
+                    <Pressable
+                      onPress={() => toggleExpanded(item.row.address)}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        marginLeft: 12,
+                        marginTop: -4,
+                        marginBottom: 8,
+                        paddingVertical: 4,
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        isExpanded
+                          ? `Hide ${item.childCount} resonances`
+                          : `Show ${item.childCount} resonances`
+                      }
+                    >
+                      <View style={{ marginRight: 4 }}>
+                        <Icon
+                          source={isExpanded ? 'chevron-down' : 'chevron-right'}
+                          size={18}
+                          color={theme.colors.primary}
+                        />
+                      </View>
+                      <Text
+                        variant="labelSmall"
+                        style={{ color: theme.colors.primary }}
+                      >
+                        {item.childCount === 1
+                          ? '1 resonance'
+                          : `${item.childCount} resonances`}
+                      </Text>
+                    </Pressable>
+                  )}
+                </View>
+              );
+            }
+            case 'child':
+              return renderNested(item.row);
+            case 'orphan-header':
+              return (
+                <View style={{ marginTop: 8, marginBottom: 8 }}>
+                  <Text variant="labelLarge" style={{ color: theme.colors.onSurface }}>
+                    Based on your interests
                   </Text>
                   <Text
                     variant="bodySmall"
-                    style={{
-                      marginLeft: 8,
-                      color: theme.colors.onSurfaceVariant,
-                    }}
+                    style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}
                   >
-                    {formatRelative(item.createdAt)}
+                    Posts close to your "About you" — they don't yet match one of
+                    your own posts. Write a post on the topic to anchor them.
                   </Text>
-                  <View style={{ flex: 1 }} />
-                  {!isOwn && sim !== null && (
-                    <Surface
-                      elevation={0}
-                      style={{
-                        paddingHorizontal: 8,
-                        paddingVertical: 2,
-                        borderRadius: 10,
-                        backgroundColor: theme.colors.surfaceVariant,
-                      }}
-                    >
-                      <Text
-                        variant="labelSmall"
-                        style={{ color: theme.colors.onSurfaceVariant }}
-                      >
-                        {`sim ${sim.toFixed(2)}`}
-                      </Text>
-                    </Surface>
-                  )}
-                  {isOwn && (
-                    <IconButton
-                      icon="graph"
-                      size={18}
-                      accessibilityLabel="View this post on the semantic map"
-                      style={{ margin: 0 }}
-                      onPress={() =>
-                        router.push({
-                          pathname: '/map',
-                          params: { anchor: item.address },
-                        })
-                      }
-                    />
-                  )}
-                  <IconButton
-                    icon="delete-outline"
-                    size={18}
-                    accessibilityLabel={
-                      isOwn ? 'Delete this post' : 'Hide this post from inbox'
-                    }
-                    style={{ margin: 0 }}
-                    onPress={() => askDelete(item.address, isOwn)}
-                  />
                 </View>
-                <Pressable
-                  onPress={openThread}
-                  onLongPress={() => askDelete(item.address, isOwn)}
-                >
-                  <Text
-                    style={{ color: theme.colors.onSurface }}
-                    numberOfLines={4}
-                  >
-                    {item.text}
-                  </Text>
-                </Pressable>
-              </Card.Content>
-            </Card>
-          );
+              );
+            case 'orphan':
+              return renderPostCard(item.row);
+            default:
+              return null;
+          }
         }}
       />
     </View>

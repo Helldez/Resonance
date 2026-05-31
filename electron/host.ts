@@ -169,6 +169,7 @@ const handlers: Record<string, Record<string, Handler>> = {
   },
   network: {
     joinRoom: (c) => c.network.joinRoom(),
+    rescan: (c) => c.network.rescan(),
   },
   mailbox: {
     append: (c, a) => c.mailbox.append(a[0] as SignedRecord),

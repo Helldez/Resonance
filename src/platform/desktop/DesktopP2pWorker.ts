@@ -155,6 +155,11 @@ export class DesktopP2pWorker {
     });
   }
 
+  async rescan(): Promise<void> {
+    const rpc = this.requireRpc();
+    await rpc.request<OkResult>('rescan', {});
+  }
+
   onRecord(handler: (record: SignedRecord) => void): () => void {
     this.recordHandlers.push(handler);
     return () => {

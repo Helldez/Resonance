@@ -56,6 +56,10 @@ export class DesktopNetwork implements IPeerNetwork {
     // mailbox.append.
   }
 
+  async rescan(): Promise<void> {
+    await this.worker.rescan();
+  }
+
   onRecord(handler: (record: SignedRecord) => void): () => void {
     this.recordHandlers.push(handler);
     return () => {

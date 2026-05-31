@@ -38,11 +38,25 @@ export class PostRepository {
         text TEXT NOT NULL,
         embedding BLOB NOT NULL,
         created_at INTEGER NOT NULL,
-        similarity REAL
+        similarity REAL,
+        matched_own_address TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at);
       CREATE INDEX IF NOT EXISTS idx_posts_similarity ON posts(similarity);
     `);
+
+    // Migration: `matched_own_address` records which OWN post a remote post
+    // scored its MAX cosine against, so the inbox can group each remote post
+    // under the user's most-affine post. Added after the initial single-room
+    // schema, so an existing table needs the column appended in place.
+    const after = await this.db.query<{ name: string }>(
+      'PRAGMA table_info(posts)',
+    );
+    if (!after.some((c) => c.name === 'matched_own_address')) {
+      await this.db.exec(
+        'ALTER TABLE posts ADD COLUMN matched_own_address TEXT',
+      );
+    }
   }
 
   /**
@@ -80,11 +94,12 @@ export class PostRepository {
     feedIndex: number,
     post: PostBody,
     similarity: number | null,
+    matchedOwnAddress: RecordAddress | null = null,
   ): Promise<void> {
     await this.db.exec(
       `INSERT OR REPLACE INTO posts
-        (address, author, feed_index, text, embedding, created_at, similarity)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        (address, author, feed_index, text, embedding, created_at, similarity, matched_own_address)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         address,
         author,
@@ -93,7 +108,27 @@ export class PostRepository {
         floatToBlob(post.embedding),
         post.createdAt,
         similarity,
+        matchedOwnAddress,
       ],
+    );
+  }
+
+  /**
+   * Update the score of an already-stored remote post. Used by the inbox
+   * re-scoring pass that runs after the user publishes a post: every remote
+   * post is re-compared against the (now larger) set of own posts so its
+   * `similarity` and `matched_own_address` stay consistent with the current
+   * posting history. Touches only the score columns — embedding/text/etc.
+   * are left untouched.
+   */
+  async updateScore(
+    address: RecordAddress,
+    similarity: number | null,
+    matchedOwnAddress: RecordAddress | null,
+  ): Promise<void> {
+    await this.db.exec(
+      'UPDATE posts SET similarity = ?, matched_own_address = ? WHERE address = ?',
+      [similarity, matchedOwnAddress, address],
     );
   }
 
@@ -166,6 +201,55 @@ export class PostRepository {
         continue;
       }
       out.push(new Float32Array(blob.buffer, blob.byteOffset, expectedDim));
+    }
+    return out;
+  }
+
+  /**
+   * Like `getOwnEmbeddings`, but each embedding carries the address of the
+   * post it came from. The receiver-side scorer needs the address so it can
+   * record WHICH own post a remote post matched against (`matched_own_address`),
+   * which drives the grouped inbox view.
+   */
+  async getOwnEmbeddingsWithAddress(
+    self: PeerId,
+    expectedDim: number,
+  ): Promise<Array<{ address: RecordAddress; embedding: Float32Array }>> {
+    const rows = await this.db.query<{ address: string; embedding: Uint8Array }>(
+      'SELECT address, embedding FROM posts WHERE author = ?',
+      [self],
+    );
+    const out: Array<{ address: RecordAddress; embedding: Float32Array }> = [];
+    for (const row of rows) {
+      const embedding = decodeEmbedding(row.embedding, expectedDim);
+      if (embedding === null) {
+        continue;
+      }
+      out.push({ address: row.address as RecordAddress, embedding });
+    }
+    return out;
+  }
+
+  /**
+   * Remote (non-self) posts with their embeddings decoded. Used by the inbox
+   * re-scoring pass to recompute each post's similarity against the user's
+   * own posts after a new post is published.
+   */
+  async getRemoteEmbeddings(
+    self: PeerId,
+    expectedDim: number,
+  ): Promise<Array<{ address: RecordAddress; embedding: Float32Array }>> {
+    const rows = await this.db.query<{ address: string; embedding: Uint8Array }>(
+      'SELECT address, embedding FROM posts WHERE author != ?',
+      [self],
+    );
+    const out: Array<{ address: RecordAddress; embedding: Float32Array }> = [];
+    for (const row of rows) {
+      const embedding = decodeEmbedding(row.embedding, expectedDim);
+      if (embedding === null) {
+        continue;
+      }
+      out.push({ address: row.address as RecordAddress, embedding });
     }
     return out;
   }
