@@ -23,7 +23,7 @@ import { bootstrapDesktop, defaultAppDataDir } from '@platform/desktop/bootstrap
 import type { DesktopContainer } from '@platform/desktop/bootstrap';
 import { DesktopConfig } from '@core/config/DesktopConfig';
 import type { ModelProgressUpdate } from '@qvac/sdk';
-import type { BucketId, PeerId, SignedRecord } from '@core/domain/types';
+import type { PeerId, SignedRecord } from '@core/domain/types';
 
 const REPO_ROOT = resolve(__dirname, '..');
 
@@ -110,11 +110,8 @@ function attachEventForwarders(c: DesktopContainer): void {
   c.network.onRecord((record: SignedRecord) => {
     broadcast('network/record', record);
   });
-  c.network.onPeerPresence((peer: PeerId, bucket: BucketId, present: boolean) => {
-    broadcast('network/presence', { peerId: peer, bucket, present });
-  });
-  c.p2p.onPeerNoise((peerId: string, noiseKey: string) => {
-    broadcast('p2p/peerNoise', { peerId, noiseKey });
+  c.network.onPeerPresence((peer: PeerId, present: boolean) => {
+    broadcast('network/presence', { peerId: peer, present });
   });
 }
 
@@ -171,16 +168,10 @@ const handlers: Record<string, Record<string, Handler>> = {
     },
   },
   network: {
-    joinBucket: (c, a) => c.network.joinBucket(a[0] as BucketId),
-    leaveBucket: (c, a) => c.network.leaveBucket(a[0] as BucketId),
-    joinedBuckets: (c) => [...c.network.joinedBuckets],
+    joinRoom: (c) => c.network.joinRoom(),
   },
   mailbox: {
     append: (c, a) => c.mailbox.append(a[0] as SignedRecord),
-  },
-  p2p: {
-    localNoiseKey: (c) => c.p2p.localNoiseKey,
-    joinPeer: (c, a) => c.p2p.joinPeer(a[0] as string),
   },
 };
 

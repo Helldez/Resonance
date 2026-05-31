@@ -60,7 +60,11 @@ export class QvacEmbeddingService implements IEmbeddingService {
     if (trimmed.length === 0) {
       throw new Error('QvacEmbeddingService.embed: empty text');
     }
-    const result = (await embed({ modelId, text: trimmed } as never)) as {
+    const prompt = applyPromptTemplate(
+      ModelProfiles.embedding.promptTemplate,
+      trimmed,
+    );
+    const result = (await embed({ modelId, text: prompt } as never)) as {
       embedding: number[];
     };
     return postProcess(result.embedding, this.outputDim);
@@ -77,6 +81,11 @@ export class QvacEmbeddingService implements IEmbeddingService {
   }
 
   private async doLoad(onProgress?: EmbeddingProgressCallback): Promise<void> {
+    // NOTE: decoder-only embedding models (e.g. Qwen3-Embedding) need
+    // `modelConfig: ModelProfiles.embedding.loadConfig` ({ pooling: 'last',
+    // attention: 'causal', device: 'cpu' on Android — the Adreno GPU path
+    // segfaults). EmbeddingGemma is an encoder and loads on the GPU defaults,
+    // so nothing extra is passed.
     this.modelId = await loadWithFallback({
       primary: {
         modelSrc: ModelProfiles.embedding.url,
@@ -85,6 +94,21 @@ export class QvacEmbeddingService implements IEmbeddingService {
       onProgress,
     });
   }
+}
+
+/**
+ * Apply the model's instruction template (if any), substituting `{text}`
+ * with the input. EmbeddingGemma expects a task prompt; with no template
+ * configured the raw text is embedded unchanged.
+ */
+function applyPromptTemplate(
+  template: string | undefined,
+  text: string,
+): string {
+  if (template === undefined || template.length === 0) {
+    return text;
+  }
+  return template.replace('{text}', text);
 }
 
 function postProcess(raw: readonly number[], outputDim: number): Float32Array {

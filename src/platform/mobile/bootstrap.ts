@@ -36,6 +36,11 @@ export interface MobileContainer extends AppContainer {
   readonly peers: PeerRepository;
   readonly embedderConcrete: QvacEmbeddingService;
   readonly llmConcrete: QvacLlmService;
+  /**
+   * The Bare worker handle. Not part of the shared `PlatformContainer`
+   * surface (the UI never touches it) — kept on the concrete container only
+   * for lifecycle (shutdown) by the platform host.
+   */
   readonly p2p: P2pWorklet;
 }
 
