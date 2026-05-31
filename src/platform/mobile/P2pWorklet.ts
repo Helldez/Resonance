@@ -5,7 +5,7 @@ import { Paths } from 'expo-file-system';
 import { FramedRpcClient } from './FramedRpcClient';
 import { RoomConfig } from '@core/config/RoomConfig';
 import { StorageConfig } from '@core/config/StorageConfig';
-import type { PeerId, SignedRecord } from '@core/domain/types';
+import type { PeerId, RecordAddress, ReactionType, SignedRecord } from '@core/domain/types';
 
 interface InitResult {
   readonly outboxKey: string;
@@ -43,7 +43,14 @@ interface WireResponseBody {
   readonly createdAt: number;
 }
 
-type WireBody = WirePostBody | WireResponseBody;
+interface WireReactionBody {
+  readonly kind: 'reaction';
+  readonly inReplyTo: string;
+  readonly reaction: string;
+  readonly createdAt: number;
+}
+
+type WireBody = WirePostBody | WireResponseBody | WireReactionBody;
 
 interface WireRecord {
   readonly author: string;
@@ -187,6 +194,20 @@ function signedRecordToWire(record: SignedRecord): WireRecord {
       signature: bytesToHex(record.signature),
     };
   }
+  if (body.kind === 'reaction') {
+    return {
+      author: record.author,
+      feedIndex: record.feedIndex,
+      body: {
+        kind: 'reaction',
+        inReplyTo: String(body.inReplyTo),
+        reaction: body.reaction,
+        createdAt: body.createdAt,
+      },
+      digest: bytesToHex(record.digest),
+      signature: bytesToHex(record.signature),
+    };
+  }
   return {
     author: record.author,
     feedIndex: record.feedIndex,
@@ -219,13 +240,27 @@ function wireToSignedRecord(wire: WireRecord): SignedRecord {
       signature,
     };
   }
+  if (wire.body.kind === 'reaction') {
+    return {
+      author,
+      feedIndex: wire.feedIndex,
+      body: {
+        kind: 'reaction',
+        inReplyTo: wire.body.inReplyTo as RecordAddress,
+        reaction: wire.body.reaction as ReactionType,
+        createdAt: wire.body.createdAt,
+      },
+      digest,
+      signature,
+    };
+  }
   return {
     author,
     feedIndex: wire.feedIndex,
     body: {
       kind: 'response',
       text: wire.body.text,
-      inReplyTo: wire.body.inReplyTo as SignedRecord['body'] extends { inReplyTo: infer T } ? T : never,
+      inReplyTo: wire.body.inReplyTo as RecordAddress,
       createdAt: wire.body.createdAt,
     },
     digest,

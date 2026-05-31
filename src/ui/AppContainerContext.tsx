@@ -9,8 +9,17 @@ import { decideAdmission } from '@core/inbox/InboxAdmission';
 import { addressOf } from '@core/utils/AddressOf';
 import { canonicalDigest } from '@core/utils/CanonicalRecord';
 import { cosineOnUnit } from '@core/matching/CosineSimilarity';
-import type { RecordAddress } from '@core/domain/types';
+import type { RecordAddress, SignedRecord } from '@core/domain/types';
 import type { ModelProgressUpdate } from '@qvac/sdk';
+import { AgentConfig } from '@core/config/AgentConfig';
+import { normalizeProfile, type AgentProfile } from '@core/agent/AgentProfile';
+import {
+  runAgentTick,
+  runAgentPost,
+  type AgentCandidate,
+  type AgentLoopDeps,
+} from '@core/agent/AgentLoop';
+import { useAgentProfileStore } from '@domain/AgentProfileStore';
 
 /** An own post embedding tagged with the address of the post it came from. */
 interface OwnEmbedding {
@@ -136,6 +145,62 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
     };
   }, [container, receiverContext]);
 
+  // The autonomous agent loop. Once the container is ready and the LLM is
+  // loaded, the agent wakes on a slow timer: perceive the inbox, triage, let
+  // the LLM propose, and run every proposal through the deterministic
+  // ActionGovernor before anything is published. Disabled when the profile is
+  // off — the getState() read keeps the latest profile without re-subscribing.
+  useEffect(() => {
+    const c = containerRef.current;
+    if (c === null || container === null) {
+      return;
+    }
+    let cancelled = false;
+    let running = false;
+    let tick = 0;
+
+    const runOnce = async (): Promise<void> => {
+      if (cancelled || running || !c.llmConcrete.isLoaded) {
+        return;
+      }
+      const { profile, killSwitch } = useAgentProfileStore.getState();
+      const norm = normalizeProfile(profile);
+      if (!norm.enabled || norm.autonomy === 'off') {
+        return;
+      }
+      running = true;
+      try {
+        const deps = buildAgentDeps(c, norm, killSwitch);
+        const report = await runAgentTick(deps);
+        tick++;
+        console.log(
+          `[rn] agent tick considered=${report.considered} published=${report.published} queued=${report.queued} rejected=${report.rejected}`,
+        );
+        // When the inbox yields nothing to act on, occasionally seed a post
+        // toward a goal so conversations can start. The governor still caps it.
+        if (report.published === 0 && report.queued === 0 && tick % 8 === 1) {
+          await runAgentPost(deps);
+        }
+      } catch (e) {
+        console.warn(`[rn] agent tick failed: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        running = false;
+      }
+    };
+
+    const interval = setInterval(() => {
+      void runOnce();
+    }, AgentConfig.tickIntervalMs);
+    const kick = setTimeout(() => {
+      void runOnce();
+    }, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      clearTimeout(kick);
+    };
+  }, [container]);
+
   return (
     <AppContainerContext.Provider value={container}>{children}</AppContainerContext.Provider>
   );
@@ -192,6 +257,79 @@ export async function rescoreInboxAgainstOwnPosts(
     await c.posts.updateScore(post.address, similarity, matchedOwnAddress);
   }
   console.log(`[rn] rescored inbox count=${remote.length} ownPosts=${own.length}`);
+}
+
+/**
+ * Assemble the agent loop's dependencies from the platform container. The data
+ * callbacks below are the only place the loop touches SQLite; the loop itself
+ * stays pure and testable. `persistOwn` mirrors `persistRecord`'s own-record
+ * handling, because the worker does not echo our own appends back to us.
+ */
+function buildAgentDeps(
+  c: PlatformContainer,
+  profile: AgentProfile,
+  killSwitch: boolean,
+): AgentLoopDeps {
+  return {
+    llm: c.llm,
+    embedder: c.embedder,
+    mailbox: c.mailbox,
+    network: c.network,
+    identity: c.identity,
+    clock: c.clock,
+    self: c.self,
+    profile,
+    killSwitch,
+    activity: c.agentActivity,
+    pending: c.pending,
+    listCandidates: async (limit: number): Promise<AgentCandidate[]> => {
+      const rows = await c.database.query<{ address: string; text: string }>(
+        `SELECT address, text FROM posts
+         WHERE author != ?
+           AND NOT EXISTS (SELECT 1 FROM responses r WHERE r.in_reply_to = posts.address AND r.author = ?)
+           AND NOT EXISTS (SELECT 1 FROM reactions x WHERE x.in_reply_to = posts.address AND x.author = ?)
+           AND NOT EXISTS (SELECT 1 FROM agent_pending p WHERE p.target = posts.address)
+         ORDER BY (similarity IS NULL), similarity DESC, created_at DESC
+         LIMIT ?`,
+        [c.self, c.self, c.self, limit],
+      );
+      return rows.map((r) => ({ address: r.address as RecordAddress, text: r.text }));
+    },
+    getThreadContext: async (target: RecordAddress): Promise<string | null> => {
+      const resp = await c.database.query<{ author: string; text: string }>(
+        'SELECT author, text FROM responses WHERE in_reply_to = ? ORDER BY created_at ASC LIMIT 8',
+        [target],
+      );
+      if (resp.length === 0) {
+        return null;
+      }
+      return resp.map((r) => `${r.author === c.self ? 'you' : 'peer'}: ${r.text}`).join('\n');
+    },
+    countAgentTurnsInThread: async (target: RecordAddress): Promise<number> => {
+      const rows = await c.database.query<{ n: number }>(
+        'SELECT COUNT(*) AS n FROM responses WHERE in_reply_to = ? AND author = ?',
+        [target, c.self],
+      );
+      return rows[0]?.n ?? 0;
+    },
+    lastInThreadIsSelfNoHuman: async (target: RecordAddress): Promise<boolean> => {
+      const rows = await c.database.query<{ author: string }>(
+        'SELECT author FROM responses WHERE in_reply_to = ? ORDER BY created_at DESC LIMIT 1',
+        [target],
+      );
+      return rows.length > 0 && rows[0].author === c.self;
+    },
+    persistOwn: async (record: SignedRecord): Promise<void> => {
+      const address = addressOf(record.author, record.feedIndex);
+      if (record.body.kind === 'post') {
+        await c.posts.upsert(address, record.author, record.feedIndex, record.body, null);
+      } else if (record.body.kind === 'reaction') {
+        await c.reactions.applyFromRecord(address, record.author, record.feedIndex, record.body);
+      } else {
+        await c.responses.upsert(address, record.author, record.feedIndex, record.body);
+      }
+    },
+  };
 }
 
 async function persistRecord(
@@ -261,6 +399,17 @@ async function persistRecord(
     );
     console.log(
       `[rn] inbox ${decision.kind} author=${shortAuthor} similarity=${similarity === null ? 'null' : similarity.toFixed(3)} count=${currentCount}`,
+    );
+    await c.peers.touch(record.author, c.clock.now());
+    return;
+  }
+
+  if (record.body.kind === 'reaction') {
+    await c.reactions.applyFromRecord(
+      address,
+      record.author,
+      record.feedIndex,
+      record.body,
     );
     await c.peers.touch(record.author, c.clock.now());
     return;

@@ -20,7 +20,10 @@ import type {
 import type { PeerId, SignedRecord } from '@core/domain/types';
 import { PostRepository } from '@data/PostRepository';
 import { ResponseRepository } from '@data/ResponseRepository';
+import { ReactionRepository } from '@data/ReactionRepository';
 import { PeerRepository } from '@data/PeerRepository';
+import { AgentActivityRepository } from '@data/AgentActivityRepository';
+import { PendingActionRepository } from '@data/PendingActionRepository';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 import type { IpcBridge } from './IpcBridge';
 import { requireBridge } from './IpcBridge';
@@ -59,6 +62,9 @@ export async function bootstrapRemote(): Promise<PlatformContainer> {
   // Repositories are pure SQL — they happily wrap a remote IDatabase.
   const posts = new PostRepository(database);
   const responses = new ResponseRepository(database);
+  const reactions = new ReactionRepository(database);
+  const agentActivity = new AgentActivityRepository(database);
+  const pending = new PendingActionRepository(database);
   const peers = new PeerRepository(database);
 
   return {
@@ -75,6 +81,9 @@ export async function bootstrapRemote(): Promise<PlatformContainer> {
     mailbox,
     posts,
     responses,
+    reactions,
+    agentActivity,
+    pending,
     peers,
     embedderConcrete: embedder,
     llmConcrete: llm,

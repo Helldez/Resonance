@@ -1,0 +1,82 @@
+/**
+ * All tunables for the local-AI agent layer. Per the project rule, no agent
+ * number is inlined at a call site — it lives here. The agent itself is
+ * model-agnostic: it drives whatever LLM `ModelProfiles.llm` points at via the
+ * `ILlmService` port, so nothing here names a specific model.
+ */
+export const AgentConfig = {
+  /**
+   * How often the agent loop wakes on its own timer (ms), in addition to being
+   * nudged when a new record lands. Kept slow: triage runs an LLM call per
+   * candidate, so a tight loop would drain battery on a phone.
+   */
+  tickIntervalMs: 45_000,
+
+  /**
+   * Hard cap on how many inbox candidates a single tick will even look at.
+   * Bounds the LLM work per wake-up regardless of how full the inbox is.
+   */
+  maxCandidatesPerTick: 6,
+
+  /**
+   * Minimum triage score (0..1) for a candidate to advance from triage to the
+   * decision step. Below this the agent does nothing — the cheap gate that
+   * keeps the small model from over-acting.
+   */
+  triageScoreThreshold: 0.55,
+
+  /**
+   * Word-overlap ratio (0..1) above which a freshly proposed text counts as a
+   * duplicate of a recent agent output and is rejected by the governor. Keeps
+   * the agent from posting the same thought twice.
+   */
+  dedupOverlapThreshold: 0.6,
+
+  /** How many recent agent outputs the dedup ledger keeps for comparison. */
+  dedupHistorySize: 40,
+
+  /** Sampling for the routing calls (triage, decide) — low for determinism. */
+  routingTemperature: 0.1,
+  routingMaxTokens: 160,
+
+  /** Sampling for the user-facing text the agent writes. */
+  textTemperature: 0.6,
+  postMaxTokens: 120,
+  commentMaxTokens: 90,
+
+  /** One structured-output retry on malformed JSON before giving up (→ do_nothing). */
+  structuredRetries: 1,
+
+  /** Run the reflection/digest summarisation once every N ticks. */
+  reflectionEveryNTicks: 20,
+
+  /** Defaults applied to a fresh AgentProfile (the form seeds from these). */
+  defaults: {
+    name: 'My agent',
+    tone: 'concise, honest, specific, no fluff',
+    limits: {
+      maxPostsPerDay: 2,
+      maxCommentsPerDay: 8,
+      maxReactionsPerDay: 20,
+      maxTurnsPerThread: 3,
+      /**
+       * Seeded never-list. The agent will not author text whose lowercased
+       * form contains any of these phrases — a deterministic guard, not an
+       * instruction the model is trusted to follow.
+       */
+      never: ['hire me', 'follow me', 'buy now', 'subscribe'],
+    },
+  },
+
+  /** Upper bounds the profile form clamps each limit to. */
+  caps: {
+    maxPostsPerDay: 20,
+    maxCommentsPerDay: 50,
+    maxReactionsPerDay: 100,
+    maxTurnsPerThread: 6,
+    maxInterests: 12,
+    maxGoals: 5,
+  },
+} as const;
+
+export type AgentConfigShape = typeof AgentConfig;

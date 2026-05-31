@@ -6,7 +6,10 @@ import { StorageConfig } from '@core/config/StorageConfig';
 import { bootstrapIdentity } from '@core/identity/IdentityManager';
 import { PostRepository } from '@data/PostRepository';
 import { ResponseRepository } from '@data/ResponseRepository';
+import { ReactionRepository } from '@data/ReactionRepository';
 import { PeerRepository } from '@data/PeerRepository';
+import { AgentActivityRepository } from '@data/AgentActivityRepository';
+import { PendingActionRepository } from '@data/PendingActionRepository';
 
 import { ConsoleLogger } from './ConsoleLogger';
 import { DesktopMailbox } from './DesktopMailbox';
@@ -23,7 +26,10 @@ import { SystemClock } from './SystemClock';
 export interface DesktopContainer extends AppContainer {
   readonly posts: PostRepository;
   readonly responses: ResponseRepository;
+  readonly reactions: ReactionRepository;
   readonly peers: PeerRepository;
+  readonly agentActivity: AgentActivityRepository;
+  readonly pending: PendingActionRepository;
   readonly embedderConcrete: QvacEmbeddingService;
   readonly llmConcrete: QvacLlmService;
   /**
@@ -88,6 +94,12 @@ export async function bootstrapDesktop(
   }
   const responses = new ResponseRepository(database);
   await responses.createSchema();
+  const reactions = new ReactionRepository(database);
+  await reactions.createSchema();
+  const agentActivity = new AgentActivityRepository(database);
+  await agentActivity.createSchema();
+  const pending = new PendingActionRepository(database);
+  await pending.createSchema();
   const peers = new PeerRepository(database);
   await peers.createSchema();
 
@@ -120,6 +132,9 @@ export async function bootstrapDesktop(
     mailbox,
     posts,
     responses,
+    reactions,
+    agentActivity,
+    pending,
     peers,
     embedderConcrete: embedder,
     llmConcrete: llm,

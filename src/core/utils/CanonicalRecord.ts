@@ -22,6 +22,15 @@ export function canonicalBytes(body: RecordBody): Uint8Array {
     };
     return utf8(JSON.stringify(obj));
   }
+  if (body.kind === 'reaction') {
+    const obj = {
+      kind: body.kind,
+      inReplyTo: body.inReplyTo,
+      reaction: body.reaction,
+      createdAt: body.createdAt,
+    };
+    return utf8(JSON.stringify(obj));
+  }
   const obj = {
     kind: body.kind,
     text: body.text,

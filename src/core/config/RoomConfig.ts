@@ -31,8 +31,12 @@ export const RoomConfig = {
    *             reverts to EmbeddingGemma-300M 768-dim (clustering prompt).
    *             Peers and record signatures are incompatible across this
    *             boundary, so the prefix bump isolates them.
+   *   v3 → v4 — new signed `reaction` RecordKind (like/insightful/agree/curious).
+   *             The wire/codec gains a third body variant; v4 isolates peers on
+   *             the old format. (Agent provenance fields will land in a later
+   *             bump once the agent layer exists.)
    */
-  topicPrefix: 'resonance/v3/room/',
+  topicPrefix: 'resonance/v4/room/',
 
   /**
    * Maximum concurrent Hyperswarm connections per node. Mirrors the conf-9

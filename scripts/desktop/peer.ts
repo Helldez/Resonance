@@ -94,6 +94,19 @@ async function onIncoming(
     );
     return;
   }
+  if (record.body.kind === 'reaction') {
+    const reaction = record.body;
+    await container.reactions.applyFromRecord(
+      addressOf(record.author, record.feedIndex),
+      record.author,
+      record.feedIndex,
+      reaction,
+    );
+    console.log(
+      `[peer] react ${record.author.slice(0, 12)}  → ${reaction.inReplyTo.slice(0, 18)}  ${reaction.reaction}`,
+    );
+    return;
+  }
   const resp = record.body;
   await container.responses.upsert(
     addressOf(record.author, record.feedIndex),

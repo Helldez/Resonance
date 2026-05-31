@@ -1,7 +1,10 @@
 import type { AppContainer } from '@core/bootstrap/AppContainer';
 import type { PostRepository } from '@data/PostRepository';
 import type { ResponseRepository } from '@data/ResponseRepository';
+import type { ReactionRepository } from '@data/ReactionRepository';
 import type { PeerRepository } from '@data/PeerRepository';
+import type { AgentActivityRepository } from '@data/AgentActivityRepository';
+import type { PendingActionRepository } from '@data/PendingActionRepository';
 import type { IEmbeddingService, ILlmService } from '@core/ports';
 import type { ModelProgressUpdate } from '@qvac/sdk';
 
@@ -26,7 +29,10 @@ export interface PlatformLlmService extends ILlmService {
 export interface PlatformContainer extends AppContainer {
   readonly posts: PostRepository;
   readonly responses: ResponseRepository;
+  readonly reactions: ReactionRepository;
   readonly peers: PeerRepository;
+  readonly agentActivity: AgentActivityRepository;
+  readonly pending: PendingActionRepository;
   readonly embedderConcrete: PlatformEmbeddingService;
   readonly llmConcrete: PlatformLlmService;
 }

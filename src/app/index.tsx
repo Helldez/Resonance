@@ -19,7 +19,14 @@ import { RoomConfig } from '@core/config/RoomConfig';
 import { ThemeConfig } from '@core/config/ThemeConfig';
 import { formatAuthor, shortPeer } from '@domain/AuthorFormatting';
 import { clamp01, interpolateColor } from '@ui/colorMath';
-import type { RecordAddress } from '@core/domain/types';
+import type { RecordAddress, ReactionType } from '@core/domain/types';
+import { publishReaction } from '@core/reactions/PublishReaction';
+import { addressOf } from '@core/utils/AddressOf';
+import {
+  ReactionRow,
+  EMPTY_REACTION_COUNTS,
+  type ReactionCounts,
+} from '@ui/components/ReactionRow';
 
 interface FeedRow {
   readonly address: string;
@@ -58,6 +65,10 @@ export default function FeedScreen() {
   // Addresses of own posts whose resonances are expanded. Collapsed by default
   // — the user taps the "N resonances" row to reveal the matched remote posts.
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const [reactions, setReactions] = useState<
+    Map<string, { counts: ReactionCounts; mine: ReactionType | null }>
+  >(new Map());
+  const [commentCounts, setCommentCounts] = useState<Map<string, number>>(new Map());
 
   const toggleExpanded = useCallback((address: string): void => {
     setExpanded((prev) => {
@@ -99,6 +110,46 @@ export default function FeedScreen() {
       [container.self, threshold],
     );
     setHiddenCount(hidden[0]?.n ?? 0);
+
+    // Batch-load reaction counts + my reaction + comment counts for every
+    // visible post, in three queries (no N+1 per card).
+    const addresses = data.map((d) => d.address) as RecordAddress[];
+    const [countRows, mineRows] = await Promise.all([
+      container.reactions.countsForTargets(addresses),
+      container.reactions.myReactionsForTargets(container.self, addresses),
+    ]);
+    const byTarget = new Map<string, { counts: ReactionCounts; mine: ReactionType | null }>();
+    for (const a of addresses) {
+      byTarget.set(a, { counts: { ...EMPTY_REACTION_COUNTS }, mine: null });
+    }
+    for (const cr of countRows) {
+      const e = byTarget.get(cr.target);
+      if (e !== undefined) {
+        e.counts[cr.reaction] = cr.count;
+      }
+    }
+    for (const mr of mineRows) {
+      const e = byTarget.get(mr.target);
+      if (e !== undefined) {
+        byTarget.set(mr.target, { counts: e.counts, mine: mr.reaction });
+      }
+    }
+    setReactions(byTarget);
+
+    const commentRows =
+      addresses.length === 0
+        ? []
+        : await container.database.query<{ in_reply_to: string; n: number }>(
+            `SELECT in_reply_to, COUNT(*) AS n FROM responses
+             WHERE in_reply_to IN (${addresses.map(() => '?').join(', ')})
+             GROUP BY in_reply_to`,
+            addresses,
+          );
+    const commentMap = new Map<string, number>();
+    for (const cr of commentRows) {
+      commentMap.set(cr.in_reply_to, cr.n);
+    }
+    setCommentCounts(commentMap);
   }, [container, threshold]);
 
   useEffect(() => {
@@ -139,6 +190,36 @@ export default function FeedScreen() {
       });
     },
     [container, load],
+  );
+
+  const reactTo = useCallback(
+    async (target: string, type: ReactionType): Promise<void> => {
+      const mine = reactions.get(target)?.mine ?? null;
+      if (mine === type) {
+        await container.reactions.clear(container.self, target as RecordAddress);
+      } else {
+        const record = await publishReaction(
+          {
+            mailbox: container.mailbox,
+            network: container.network,
+            identity: container.identity,
+            clock: container.clock,
+            self: container.self,
+          },
+          { inReplyTo: target as RecordAddress, reaction: type },
+        );
+        if (record.body.kind === 'reaction') {
+          await container.reactions.applyFromRecord(
+            addressOf(record.author, record.feedIndex),
+            record.author,
+            record.feedIndex,
+            record.body,
+          );
+        }
+      }
+      await load();
+    },
+    [container, reactions, load],
   );
 
   // Group the flat rows into anchors (own posts) + their matched remote posts,
@@ -283,6 +364,15 @@ export default function FeedScreen() {
               {item.text}
             </Text>
           </Pressable>
+          <ReactionRow
+            counts={reactions.get(item.address)?.counts ?? EMPTY_REACTION_COUNTS}
+            mine={reactions.get(item.address)?.mine ?? null}
+            commentCount={commentCounts.get(item.address) ?? 0}
+            onReact={(t) => {
+              void reactTo(item.address, t);
+            }}
+            onComment={openThread}
+          />
         </Card.Content>
       </Card>
     );
@@ -325,6 +415,9 @@ export default function FeedScreen() {
           </Button>
         </Link>
         <View style={{ flex: 1 }} />
+        <Link href="/agent" asChild>
+          <IconButton icon="robot-outline" mode="contained-tonal" accessibilityLabel="My agent" />
+        </Link>
         <Link href="/map" asChild>
           <IconButton icon="graph" mode="contained-tonal" accessibilityLabel="Semantic map" />
         </Link>

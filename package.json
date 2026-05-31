@@ -96,7 +96,7 @@
     "@types/react": "~19.1.0",
     "babel-plugin-module-resolver": "^5.0.3",
     "better-sqlite3": "^11.7.0",
-    "electron": "^33.2.0",
+    "electron": "^42.3.0",
     "patch-package": "^8.0.1",
     "tsx": "^4.19.2",
     "typescript": "~5.9.2"

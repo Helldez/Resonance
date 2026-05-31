@@ -17,10 +17,16 @@ import { useRequireContainer } from '@ui/AppContainerContext';
 import { useSettingsStore } from '@domain/SettingsStore';
 import { draftResponse } from '@core/responses/DraftResponse';
 import { publishResponse } from '@core/responses/PublishResponse';
-import type { RecordAddress, ScoredPost } from '@core/domain/types';
+import { publishReaction } from '@core/reactions/PublishReaction';
+import type { RecordAddress, ReactionType, ScoredPost } from '@core/domain/types';
 import { cosineOnUnit } from '@core/matching/CosineSimilarity';
 import { addressOf } from '@core/utils/AddressOf';
 import { MatchingConfig } from '@core/config/MatchingConfig';
+import {
+  ReactionRow,
+  EMPTY_REACTION_COUNTS,
+  type ReactionCounts,
+} from '@ui/components/ReactionRow';
 
 interface ThreadPost {
   readonly address: string;
@@ -47,6 +53,9 @@ export default function ThreadScreen() {
 
   const [post, setPost] = useState<ThreadPost | null>(null);
   const [responses, setResponses] = useState<ThreadResponse[]>([]);
+  const [reactions, setReactions] = useState<
+    Map<string, { counts: ReactionCounts; mine: ReactionType | null }>
+  >(new Map());
   const [loading, setLoading] = useState(true);
   const [drafting, setDrafting] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -92,8 +101,63 @@ export default function ThreadScreen() {
         createdAt: r.created_at,
       })),
     );
+
+    const addresses = [id, ...respRows.map((r) => r.address)] as RecordAddress[];
+    const [countRows, mineRows] = await Promise.all([
+      container.reactions.countsForTargets(addresses),
+      container.reactions.myReactionsForTargets(container.self, addresses),
+    ]);
+    const byTarget = new Map<string, { counts: ReactionCounts; mine: ReactionType | null }>();
+    for (const a of addresses) {
+      byTarget.set(a, { counts: { ...EMPTY_REACTION_COUNTS }, mine: null });
+    }
+    for (const cr of countRows) {
+      const e = byTarget.get(cr.target);
+      if (e !== undefined) {
+        e.counts[cr.reaction] = cr.count;
+      }
+    }
+    for (const mr of mineRows) {
+      const e = byTarget.get(mr.target);
+      if (e !== undefined) {
+        byTarget.set(mr.target, { counts: e.counts, mine: mr.reaction });
+      }
+    }
+    setReactions(byTarget);
     setLoading(false);
   }, [container, id]);
+
+  const reactTo = useCallback(
+    async (target: string, type: ReactionType): Promise<void> => {
+      const mine = reactions.get(target)?.mine ?? null;
+      if (mine === type) {
+        // Tapping your current reaction clears it locally (cross-peer retract
+        // over an append-only feed is a later refinement).
+        await container.reactions.clear(container.self, target as RecordAddress);
+      } else {
+        const record = await publishReaction(
+          {
+            mailbox: container.mailbox,
+            network: container.network,
+            identity: container.identity,
+            clock: container.clock,
+            self: container.self,
+          },
+          { inReplyTo: target as RecordAddress, reaction: type },
+        );
+        if (record.body.kind === 'reaction') {
+          await container.reactions.applyFromRecord(
+            addressOf(record.author, record.feedIndex),
+            record.author,
+            record.feedIndex,
+            record.body,
+          );
+        }
+      }
+      await load();
+    },
+    [container, reactions, load],
+  );
 
   useEffect(() => {
     void load();
@@ -235,6 +299,14 @@ export default function ThreadScreen() {
                 View on map
               </Button>
             )}
+            <ReactionRow
+              counts={reactions.get(post.address)?.counts ?? EMPTY_REACTION_COUNTS}
+              mine={reactions.get(post.address)?.mine ?? null}
+              commentCount={responses.length}
+              onReact={(t) => {
+                void reactTo(post.address, t);
+              }}
+            />
           </Card.Content>
         </Card>
       ) : (
@@ -285,6 +357,13 @@ export default function ThreadScreen() {
                   onPress={askDelete}
                 />
               </View>
+              <ReactionRow
+                counts={reactions.get(r.address)?.counts ?? EMPTY_REACTION_COUNTS}
+                mine={reactions.get(r.address)?.mine ?? null}
+                onReact={(t) => {
+                  void reactTo(r.address, t);
+                }}
+              />
             </Card.Content>
           </Card>
         );
