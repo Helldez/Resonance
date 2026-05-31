@@ -19,6 +19,17 @@ export class PostRepository {
   constructor(private readonly db: IDatabase) {}
 
   async createSchema(): Promise<void> {
+    // Legacy migration: the pre-single-room schema had a `bucket TEXT NOT
+    // NULL` column. Inserts now omit `bucket`, which would violate that
+    // constraint on an existing DB, so drop the old table. The single-room
+    // switch is a v3 network reset (and an embedding-dim change), so stored
+    // posts are discarded anyway — see `dropIfDimChanged`.
+    const cols = await this.db.query<{ name: string }>(
+      'PRAGMA table_info(posts)',
+    );
+    if (cols.some((c) => c.name === 'bucket')) {
+      await this.db.exec('DROP TABLE IF EXISTS posts');
+    }
     await this.db.exec(`
       CREATE TABLE IF NOT EXISTS posts (
         address TEXT PRIMARY KEY,
@@ -26,12 +37,11 @@ export class PostRepository {
         feed_index INTEGER NOT NULL,
         text TEXT NOT NULL,
         embedding BLOB NOT NULL,
-        bucket TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         similarity REAL
       );
       CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at);
-      CREATE INDEX IF NOT EXISTS idx_posts_bucket ON posts(bucket);
+      CREATE INDEX IF NOT EXISTS idx_posts_similarity ON posts(similarity);
     `);
   }
 
@@ -73,15 +83,14 @@ export class PostRepository {
   ): Promise<void> {
     await this.db.exec(
       `INSERT OR REPLACE INTO posts
-        (address, author, feed_index, text, embedding, bucket, created_at, similarity)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        (address, author, feed_index, text, embedding, created_at, similarity)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         address,
         author,
         feedIndex,
         post.text,
         floatToBlob(post.embedding),
-        post.bucket,
         post.createdAt,
         similarity,
       ],
@@ -95,6 +104,44 @@ export class PostRepository {
    */
   async delete(address: RecordAddress): Promise<void> {
     await this.db.exec('DELETE FROM posts WHERE address = ?', [address]);
+  }
+
+  /**
+   * Number of remote (non-self) posts currently held — the size of the
+   * bounded inbox, used by the conf-9 admission rule. Own posts do not
+   * count against the inbox budget.
+   */
+  async countRemotePosts(self: PeerId): Promise<number> {
+    const rows = await this.db.query<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM posts WHERE author != ?',
+      [self],
+    );
+    return rows[0]?.n ?? 0;
+  }
+
+  /**
+   * The weakest remote post in the inbox (lowest scored similarity), or
+   * `null` when there is none. The candidate for eviction when the inbox
+   * is full and a higher-scoring post arrives. Rows with a null similarity
+   * are ignored — they were admitted without a comparable score.
+   */
+  async minSimilarityRemotePost(
+    self: PeerId,
+  ): Promise<{ address: RecordAddress; similarity: number } | null> {
+    const rows = await this.db.query<{ address: string; similarity: number }>(
+      `SELECT address, similarity FROM posts
+       WHERE author != ? AND similarity IS NOT NULL
+       ORDER BY similarity ASC
+       LIMIT 1`,
+      [self],
+    );
+    if (rows.length === 0) {
+      return null;
+    }
+    return {
+      address: rows[0].address as RecordAddress,
+      similarity: rows[0].similarity,
+    };
   }
 
   /**
@@ -172,7 +219,28 @@ export class PostRepository {
     self: PeerId,
     limit: number,
     expectedDim: number,
+    opts: { includeSelf?: boolean; excludeAddress?: RecordAddress } = {},
   ): Promise<MapPostRow[]> {
+    // The per-post map plots peers only (`author != self`). The global "my
+    // posts" map (`includeSelf`) plots everyone, omitting just the anchor so
+    // it is not duplicated.
+    const { sql, params } = opts.includeSelf
+      ? {
+          sql: `SELECT address, author, text, embedding, created_at, similarity
+                FROM posts
+                WHERE address != ?
+                ORDER BY created_at DESC
+                LIMIT ?`,
+          params: [opts.excludeAddress ?? '', limit] as ReadonlyArray<unknown>,
+        }
+      : {
+          sql: `SELECT address, author, text, embedding, created_at, similarity
+                FROM posts
+                WHERE author != ?
+                ORDER BY created_at DESC
+                LIMIT ?`,
+          params: [self, limit] as ReadonlyArray<unknown>,
+        };
     const rows = await this.db.query<{
       address: string;
       author: string;
@@ -180,14 +248,7 @@ export class PostRepository {
       embedding: Uint8Array;
       created_at: number;
       similarity: number | null;
-    }>(
-      `SELECT address, author, text, embedding, created_at, similarity
-       FROM posts
-       WHERE author != ?
-       ORDER BY created_at DESC
-       LIMIT ?`,
-      [self, limit],
-    );
+    }>(sql, params);
     const out: MapPostRow[] = [];
     for (const row of rows) {
       const embedding = decodeEmbedding(row.embedding, expectedDim);
