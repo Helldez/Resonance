@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { View } from 'react-native';
 import { TextInput, Button, useTheme, HelperText } from 'react-native-paper';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireContainer, appendOwnEmbedding } from '@ui/AppContainerContext';
 import { createPost } from '@core/posts/CreatePost';
 import { addressOf } from '@core/utils/AddressOf';
@@ -13,6 +14,7 @@ export default function ComposeScreen() {
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
 
   const submit = async (): Promise<void> => {
     setSubmitting(true);
@@ -27,13 +29,7 @@ export default function ComposeScreen() {
           clock: container.clock,
           self: container.self,
         },
-        {
-          text,
-          // Stamp the post with our current DHT noise key so anyone who
-          // receives the post can dial us back directly later, even if
-          // we drift to a different LSH bucket. See SEMANTIC_ROUTING.md §11.
-          authorNoiseKey: container.p2p.localNoiseKey ?? undefined,
-        },
+        { text },
       );
       if (record.body.kind === 'post') {
         await container.posts.upsert(
@@ -59,7 +55,14 @@ export default function ComposeScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.background, padding: 12 }}>
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: theme.colors.background,
+        padding: 12,
+        paddingBottom: insets.bottom + 12,
+      }}
+    >
       <TextInput
         mode="outlined"
         multiline

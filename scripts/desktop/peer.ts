@@ -3,12 +3,11 @@
  * Headless desktop peer.
  *
  * Boots the desktop container (same ports as mobile, different concrete
- * adapters), joins the Resonance Hyperswarm fabric via the Bare
+ * adapters), joins the single shared Resonance room via the Bare
  * subprocess, and exposes a tiny REPL so the operator can:
  *
- *   publish <text>     Author and publish a post (embed → bucket → join → sign → append).
- *   peers              List known peer noise keys.
- *   buckets            List buckets currently joined.
+ *   publish <text>     Author and publish a post (embed → sign → append).
+ *   room               Show the single-room join status.
  *   exit               Shut down cleanly.
  *
  * Incoming records are verified (Ed25519), printed to the console, and
@@ -62,11 +61,14 @@ async function main(): Promise<void> {
   container.network.onRecord((record) => {
     void onIncoming(container, record);
   });
-  container.network.onPeerPresence((peer, bucket, present) => {
-    console.log(
-      `[peer] presence: peer=${peer.slice(0, 12)} bucket=${bucket} present=${present}`,
-    );
+  container.network.onPeerPresence((peer, present) => {
+    console.log(`[peer] presence: peer=${peer.slice(0, 12)} present=${present}`);
   });
+
+  // Single-room model: join the one shared room so we both publish into and
+  // receive from the global gossip fabric.
+  await container.network.joinRoom();
+  console.log('[peer] joined single room');
 
   startRepl(container);
 }
@@ -88,7 +90,7 @@ async function onIncoming(
     const address = addressOf(record.author, record.feedIndex);
     await container.posts.upsert(address, record.author, record.feedIndex, post, null);
     console.log(
-      `[peer] post  ${address.slice(0, 18)}  bucket=${post.bucket}  "${post.text.slice(0, 80)}"`,
+      `[peer] post  ${address.slice(0, 18)}  "${post.text.slice(0, 80)}"`,
     );
     return;
   }
@@ -112,7 +114,7 @@ function startRepl(
     rl.setPrompt('resonance> ');
     rl.prompt();
   };
-  console.log('[peer] REPL: publish <text> | peers | buckets | exit');
+  console.log('[peer] REPL: publish <text> | room | exit');
   prompt();
 
   rl.on('line', (raw) => {
@@ -154,40 +156,19 @@ async function handleCommand(
           clock: container.clock,
           self: container.self,
         },
-        {
-          text: arg,
-          ...(typeof container.p2p.localNoiseKey === 'string'
-            ? { authorNoiseKey: container.p2p.localNoiseKey }
-            : {}),
-        },
+        { text: arg },
       );
       if (record.body.kind === 'post') {
         console.log(
-          `[peer] published bucket=${record.body.bucket} feedIndex=${record.feedIndex} dim=${MatchingConfig.embeddingDim}`,
+          `[peer] published feedIndex=${record.feedIndex} dim=${MatchingConfig.embeddingDim}`,
         );
       }
       return;
     }
-    case 'peers': {
-      const noiseKeys = await container.peers.listNoiseKeys();
-      if (noiseKeys.length === 0) {
-        console.log('(no known peers yet)');
-        return;
-      }
-      for (const k of noiseKeys) {
-        console.log(`  noise=${k.slice(0, 12)}`);
-      }
-      return;
-    }
-    case 'buckets': {
-      const buckets = container.network.joinedBuckets;
-      if (buckets.length === 0) {
-        console.log('(no buckets joined yet — publish to join one)');
-        return;
-      }
-      for (const b of buckets) {
-        console.log(`  bucket=${b}`);
-      }
+    case 'room': {
+      console.log(
+        `[peer] single room — outbox ${container.p2p.isReady ? 'ready' : 'pending'}, noise=${container.p2p.localNoiseKey?.slice(0, 12) ?? '(pending)'}`,
+      );
       return;
     }
     case 'exit':

@@ -10,9 +10,11 @@ import {
   useTheme,
 } from 'react-native-paper';
 import { Link, useFocusEffect, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireContainer } from '@ui/AppContainerContext';
 import { useSettingsStore } from '@domain/SettingsStore';
 import { MatchingConfig } from '@core/config/MatchingConfig';
+import { RoomConfig } from '@core/config/RoomConfig';
 import { ThemeConfig } from '@core/config/ThemeConfig';
 import { formatAuthor, shortPeer } from '@domain/AuthorFormatting';
 import { clamp01, interpolateColor } from '@ui/colorMath';
@@ -30,6 +32,7 @@ export default function FeedScreen() {
   const container = useRequireContainer();
   const router = useRouter();
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const threshold = useSettingsStore((s) => s.similarityThreshold);
   const receiverContext = useSettingsStore((s) => s.receiverContext);
   const displayName = useSettingsStore((s) => s.displayName);
@@ -46,8 +49,8 @@ export default function FeedScreen() {
       similarity: number | null;
       created_at: number;
     }>(
-      'SELECT address, author, text, similarity, created_at FROM posts WHERE author = ? OR similarity IS NULL OR similarity >= ? ORDER BY created_at DESC LIMIT 100',
-      [container.self, threshold],
+      'SELECT address, author, text, similarity, created_at FROM posts WHERE author = ? OR similarity IS NULL OR similarity >= ? ORDER BY created_at DESC LIMIT ?',
+      [container.self, threshold, RoomConfig.inboxCapacity],
     );
     setRows(
       data.map((d) => ({
@@ -128,6 +131,9 @@ export default function FeedScreen() {
           </Button>
         </Link>
         <View style={{ flex: 1 }} />
+        <Link href="/map" asChild>
+          <IconButton icon="graph" mode="contained-tonal" accessibilityLabel="Semantic map" />
+        </Link>
         <Link href="/settings" asChild>
           <IconButton icon="cog" mode="contained-tonal" accessibilityLabel="Settings" />
         </Link>
@@ -146,15 +152,15 @@ export default function FeedScreen() {
               >
                 <Card.Content>
                   <Text variant="titleSmall" style={{ color: theme.colors.onSurface }}>
-                    Tell peers what you care about
+                    Tell us what you care about
                   </Text>
                   <Text
                     variant="bodySmall"
                     style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}
                   >
-                    Your "About you" routes you to peers in the same semantic
-                    bucket. Without it, you bucket on a generic fallback and
-                    rarely meet anyone.
+                    Everyone shares one room. Your "About you" ranks incoming
+                    posts before you've written anything, so your inbox starts
+                    with the things closest to you.
                   </Text>
                   <Link href="/settings" asChild>
                     <Button
@@ -193,13 +199,12 @@ export default function FeedScreen() {
                 }}
               >
                 No posts yet. Tap "Post" to write your first one — it will be
-                embedded on-device and broadcast to peers in the same semantic
-                bucket.
+                embedded on-device and broadcast to everyone in the room.
               </Text>
             )}
           </View>
         }
-        contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 24 }}
+        contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: insets.bottom + 24 }}
         data={rows}
         refreshControl={
           <RefreshControl

@@ -18,9 +18,11 @@ import { useSettingsStore } from '@domain/SettingsStore';
 import { getMapView } from '@core/posts/GetMapCandidates';
 import type { MapView } from '@core/posts/GetMapCandidates';
 import { MatchingConfig } from '@core/config/MatchingConfig';
+import { RoomConfig } from '@core/config/RoomConfig';
 import { ThemeConfig } from '@core/config/ThemeConfig';
 import { formatAuthor, shortPeer } from '@domain/AuthorFormatting';
-import { clamp01, interpolateColor } from '@ui/colorMath';
+import { clamp01, interpolateColor, colorForAuthor } from '@ui/colorMath';
+import { TopicAtlasView } from '@ui/TopicAtlasView';
 import type { PeerId, RecordAddress } from '@core/domain/types';
 
 interface SelectedPoint {
@@ -31,7 +33,20 @@ interface SelectedPoint {
   readonly isAnchor: boolean;
 }
 
+/**
+ * The `/map` route. With an explicit `anchor` (opened from a post) it shows
+ * the per-post radial map. With no anchor (the Feed "Map" button) it shows
+ * the global topic atlas of all local posts.
+ */
 export default function MapScreen() {
+  const { anchor } = useLocalSearchParams<{ anchor: string }>();
+  if (typeof anchor === 'string' && anchor.length > 0) {
+    return <PerPostMapScreen />;
+  }
+  return <TopicAtlasView />;
+}
+
+function PerPostMapScreen() {
   const { anchor: anchorParam } = useLocalSearchParams<{ anchor: string }>();
   const container = useRequireContainer();
   const router = useRouter();
@@ -95,16 +110,29 @@ export default function MapScreen() {
   };
 
   useEffect(() => {
-    if (typeof anchorParam !== 'string' || anchorParam.length === 0) {
-      setLoadError('Missing anchor address');
-      return;
-    }
     let cancelled = false;
     void (async () => {
       try {
+        // An explicit anchor (tapped post) wins and shows the per-post map
+        // (peers only). With no anchor this is the global "my posts" map:
+        // anchor on the most recent own post and plot ALL local posts,
+        // including the user's own, so the whole personal history is visible.
+        const explicit =
+          typeof anchorParam === 'string' && anchorParam.length > 0;
+        const anchorAddress = explicit
+          ? (anchorParam as RecordAddress)
+          : await resolveDefaultAnchor(container);
+        if (cancelled) {
+          return;
+        }
+        if (anchorAddress === null) {
+          setLoadError('No posts yet to anchor the map. Write a post first.');
+          return;
+        }
         const result = await getMapView(
           { posts: container.posts, self: container.self },
-          anchorParam as RecordAddress,
+          anchorAddress,
+          { includeSelf: !explicit },
         );
         if (cancelled) {
           return;
@@ -123,7 +151,7 @@ export default function MapScreen() {
     return () => {
       cancelled = true;
     };
-  }, [anchorParam, container.posts, container.self]);
+  }, [anchorParam, container]);
 
   // Conversion factor in pixels per viewBox unit. The SVG uses
   // `preserveAspectRatio="xMidYMid meet"` with a 2.4×2.4 viewBox inside
@@ -316,26 +344,23 @@ export default function MapScreen() {
 
   const peerRadius = ThemeConfig.map.peerStarRadiusPx / sideUnits / scale;
   const peerRadiusSelected = ThemeConfig.map.peerStarSelectedRadiusPx / sideUnits / scale;
+  // Invisible, generously-sized hit target per point. Native SVG hit-testing
+  // (onPress on the circle) is far more reliable than the manual pixel→viewBox
+  // tap math on react-native-web, which is why desktop clicks were missing.
+  const hitRadius = 18 / sideUnits / scale;
   const anchorRadius = ThemeConfig.map.selfStarRadiusPx / sideUnits / scale;
   const anchorOuterRadius = ThemeConfig.map.selfStarOuterRadiusPx / sideUnits / scale;
-  const labelFontSize = 12 / sideUnits / scale;
   const ringStrokeWidth =
     ThemeConfig.map.referenceRingStrokeWidthPx / sideUnits / scale;
   const ringLabelFontSize = 10 / sideUnits / scale;
 
-  const topLabeled = new Set<string>();
-  const sortedBySim = [...peers].sort(
-    (a, b) => b.plot.similarityToAnchor - a.plot.similarityToAnchor,
-  );
-  const labelMax = Math.min(MatchingConfig.mapLabelTopK, sortedBySim.length);
-  for (let i = 0; i < labelMax; i++) {
-    const p = sortedBySim[i];
-    if (p.plot.similarityToAnchor >= MatchingConfig.mapLabelMinSimilarity) {
-      topLabeled.add(p.address);
-    }
-  }
-
   const radialMode = MatchingConfig.mapProjectionMethod === 'radial-sim';
+  // Cartesian PCA-2 view (the simulator's "Space"): a grid + axes with one
+  // colored dot per local post. Radial-sim keeps the concentric similarity
+  // rings instead.
+  const cartesianMode = !radialMode;
+  const gridStrokeWidth = 1 / sideUnits / scale;
+  const axisStrokeWidth = 1.5 / sideUnits / scale;
   const activeRingStrokeWidth =
     ThemeConfig.map.referenceRingActiveStrokeWidthPx / sideUnits / scale;
   // Rings are derived from MatchingConfig.mapReferenceRings, which is itself
@@ -394,6 +419,54 @@ export default function MapScreen() {
               fill={ThemeConfig.map.backgroundColor}
             />
             <G transform={`translate(${tx} ${ty}) scale(${scale})`}>
+              {cartesianMode &&
+                GRID_TICKS.map((t) => (
+                  <Line
+                    key={`grid-v-${t}`}
+                    x1={t}
+                    y1={-1}
+                    x2={t}
+                    y2={1}
+                    stroke={ThemeConfig.map.referenceRingColor}
+                    strokeWidth={gridStrokeWidth}
+                    opacity={0.25}
+                  />
+                ))}
+              {cartesianMode &&
+                GRID_TICKS.map((t) => (
+                  <Line
+                    key={`grid-h-${t}`}
+                    x1={-1}
+                    y1={t}
+                    x2={1}
+                    y2={t}
+                    stroke={ThemeConfig.map.referenceRingColor}
+                    strokeWidth={gridStrokeWidth}
+                    opacity={0.25}
+                  />
+                ))}
+              {cartesianMode && (
+                <>
+                  <Line
+                    x1={0}
+                    y1={-1}
+                    x2={0}
+                    y2={1}
+                    stroke={ThemeConfig.map.referenceRingColor}
+                    strokeWidth={axisStrokeWidth}
+                    opacity={0.6}
+                  />
+                  <Line
+                    x1={-1}
+                    y1={0}
+                    x2={1}
+                    y2={0}
+                    stroke={ThemeConfig.map.referenceRingColor}
+                    strokeWidth={axisStrokeWidth}
+                    opacity={0.6}
+                  />
+                </>
+              )}
               {referenceRings.map((ring) => (
                 <Circle
                   key={`ring-${ring.sim}`}
@@ -432,7 +505,11 @@ export default function MapScreen() {
                 </SvgText>
               ))}
 
-              {peers.map((p) => {
+              {/* Connecting links only make sense in radial mode, where the
+                  geometry is anchor-centric. The cartesian view mirrors the
+                  simulator's plain scatter — no links. */}
+              {radialMode &&
+                peers.map((p) => {
                 if (p.plot.similarityToAnchor < MatchingConfig.mapLineMinSimilarity) {
                   return null;
                 }
@@ -454,13 +531,18 @@ export default function MapScreen() {
 
               {peers.map((p) => {
                 const isSelected = selected !== null && selected.address === p.address;
+                const isOwn = p.author === container.self;
                 const color = isSelected
                   ? ThemeConfig.map.peerStarSelectedColor
-                  : interpolateColor(
-                      ThemeConfig.map.peerStarColorLow,
-                      ThemeConfig.map.peerStarColorHigh,
-                      clamp01((p.plot.similarityToAnchor + 1) / 2),
-                    );
+                  : isOwn
+                    ? ThemeConfig.map.selfStarColor
+                    : cartesianMode
+                      ? colorForAuthor(p.author)
+                      : interpolateColor(
+                          ThemeConfig.map.peerStarColorLow,
+                          ThemeConfig.map.peerStarColorHigh,
+                          clamp01((p.plot.similarityToAnchor + 1) / 2),
+                        );
                 const r = isSelected ? peerRadiusSelected : peerRadius;
                 return (
                   <Circle
@@ -473,28 +555,9 @@ export default function MapScreen() {
                 );
               })}
 
-              {/* In radial-sim mode the distance already encodes similarity,
-                  so numeric labels on each peer would be redundant and clutter
-                  the view. The exact value is still shown in the bottom sheet
-                  when a star is tapped. */}
-              {!radialMode &&
-                peers.map((p) => {
-                  if (!topLabeled.has(p.address)) {
-                    return null;
-                  }
-                  return (
-                    <SvgText
-                      key={`label-${p.address}`}
-                      x={p.plot.x + peerRadiusSelected * 1.4}
-                      y={p.plot.y - peerRadiusSelected * 0.4}
-                      fontSize={labelFontSize}
-                      fill={theme.colors.onSurface}
-                      opacity={0.9}
-                    >
-                      {p.plot.similarityToAnchor.toFixed(2)}
-                    </SvgText>
-                  );
-                })}
+              {/* No per-point numeric labels — like the simulator's Space
+                  view, the exact similarity is shown in the bottom sheet when
+                  a point is tapped. */}
 
               <Circle
                 cx={anchor.plot.x}
@@ -508,6 +571,45 @@ export default function MapScreen() {
                 cy={anchor.plot.y}
                 r={anchorRadius}
                 fill={ThemeConfig.map.selfStarColor}
+              />
+
+              {/* Top layer of invisible, large hit targets. Native SVG
+                  onPress per point is reliable on web where the manual tap
+                  hit-test is not. Rendered last so it catches the click. */}
+              {peers.map((p) => (
+                <Circle
+                  key={`hit-${p.address}`}
+                  cx={p.plot.x}
+                  cy={p.plot.y}
+                  r={hitRadius}
+                  fill={ThemeConfig.map.peerStarColorLow}
+                  opacity={0}
+                  onPress={() =>
+                    setSelected({
+                      address: p.address,
+                      author: p.author,
+                      text: p.text,
+                      similarity: p.plot.similarityToAnchor,
+                      isAnchor: false,
+                    })
+                  }
+                />
+              ))}
+              <Circle
+                cx={anchor.plot.x}
+                cy={anchor.plot.y}
+                r={hitRadius}
+                fill={ThemeConfig.map.selfStarColor}
+                opacity={0}
+                onPress={() =>
+                  setSelected({
+                    address: anchor.address,
+                    author: anchor.author,
+                    text: anchor.text,
+                    similarity: anchor.plot.similarityToAnchor,
+                    isAnchor: true,
+                  })
+                }
               />
             </G>
           </Svg>
@@ -540,47 +642,81 @@ export default function MapScreen() {
         <Dialog visible={infoOpen} onDismiss={() => setInfoOpen(false)}>
           <Dialog.Title>How to read this map</Dialog.Title>
           <Dialog.Content>
-            <Text variant="bodyMedium" style={{ marginBottom: 8 }}>
-              The bright white star at the center is your anchor post.
-            </Text>
-            <Text variant="bodyMedium" style={{ marginBottom: 8 }}>
-              Every other star is a recent post from a peer.{' '}
-              <Text style={{ fontWeight: '700' }}>
-                Distance from the center = semantic similarity.
-              </Text>{' '}
-              Closer to center means more affine; near the edge means unrelated.
-            </Text>
-            <Text variant="bodyMedium" style={{ marginBottom: 8 }}>
-              The concentric rings are reference cosine values, aligned with the
-              inbox threshold presets in Settings:
-            </Text>
-            {MatchingConfig.mapReferenceRings.similarities.map((sim) => (
-              <Text key={`legend-${sim}`} variant="bodyMedium" style={{ marginLeft: 12 }}>
-                {`• sim ${sim.toFixed(2)} — `}
-                {sim >= 0.85
-                  ? 'near-identical interests'
-                  : sim >= 0.7
-                    ? 'strongly related'
-                    : sim >= 0.5
-                      ? 'sharing a clear theme'
-                      : 'loosely related'}
-              </Text>
-            ))}
-            <Text variant="bodyMedium" style={{ marginTop: 8, marginBottom: 8 }}>
-              The dashed purple ring marks{' '}
-              <Text style={{ fontWeight: '700' }}>your active inbox threshold</Text>.
-              Stars inside it pass your filter; stars outside it are dropped.
-            </Text>
-            <Text variant="bodyMedium" style={{ marginBottom: 8 }}>
-              <Text style={{ fontWeight: '700' }}>Angle around the center has no
-              semantic meaning</Text> in this view — it is only used to spread the
-              points so they do not overlap. Two stars at the same angle are NOT
-              more related to each other than two at opposite angles; only the
-              distance from the center matters.
-            </Text>
-            <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
-              Pinch to zoom. Drag to pan. Tap any star to read.
-            </Text>
+            {cartesianMode ? (
+              <>
+                <Text variant="bodyMedium" style={{ marginBottom: 8 }}>
+                  The bright star is your anchor post. Every other point is a
+                  post your device currently holds from the room.
+                </Text>
+                <Text variant="bodyMedium" style={{ marginBottom: 8 }}>
+                  This is a{' '}
+                  <Text style={{ fontWeight: '700' }}>
+                    2-D PCA projection of the embedding space
+                  </Text>
+                  : points that sit close together are semantically similar.
+                  The axes have no intrinsic meaning — only relative positions
+                  do.
+                </Text>
+                <Text variant="bodyMedium" style={{ marginBottom: 8 }}>
+                  Each point is{' '}
+                  <Text style={{ fontWeight: '700' }}>coloured by its author</Text>
+                  , so one person's posts share a hue.
+                </Text>
+                <Text variant="bodyMedium" style={{ marginBottom: 8 }}>
+                  Unlike a simulation's global view, this shows only your{' '}
+                  <Text style={{ fontWeight: '700' }}>local slice of the room</Text>
+                  : your own posts plus your bounded top-
+                  {RoomConfig.inboxCapacity} inbox.
+                </Text>
+                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                  Pinch to zoom. Drag to pan. Tap any point to read.
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text variant="bodyMedium" style={{ marginBottom: 8 }}>
+                  The bright white star at the center is your anchor post.
+                </Text>
+                <Text variant="bodyMedium" style={{ marginBottom: 8 }}>
+                  Every other star is a recent post from a peer.{' '}
+                  <Text style={{ fontWeight: '700' }}>
+                    Distance from the center = semantic similarity.
+                  </Text>{' '}
+                  Closer to center means more affine; near the edge means
+                  unrelated.
+                </Text>
+                <Text variant="bodyMedium" style={{ marginBottom: 8 }}>
+                  The concentric rings are reference cosine values, aligned with
+                  the inbox threshold presets in Settings:
+                </Text>
+                {MatchingConfig.mapReferenceRings.similarities.map((sim) => (
+                  <Text key={`legend-${sim}`} variant="bodyMedium" style={{ marginLeft: 12 }}>
+                    {`• sim ${sim.toFixed(2)} — `}
+                    {sim >= 0.85
+                      ? 'near-identical interests'
+                      : sim >= 0.7
+                        ? 'strongly related'
+                        : sim >= 0.5
+                          ? 'sharing a clear theme'
+                          : 'loosely related'}
+                  </Text>
+                ))}
+                <Text variant="bodyMedium" style={{ marginTop: 8, marginBottom: 8 }}>
+                  <Text style={{ fontWeight: '700' }}>The angle has no precise
+                  meaning.</Text>{' '}
+                  Only the distance from the centre is exact (how similar a post
+                  is to yours). The angle is a weak, approximate hint: posts that
+                  resemble <Text style={{ fontStyle: 'italic' }}>each other</Text>{' '}
+                  tend to fall in the same direction, so a wedge loosely groups
+                  related peers — but there is no labelled axis, and two posts at
+                  the same angle share no fixed "topic". For named groups, use the
+                  global topic map instead.
+                </Text>
+                <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                  Pinch to zoom. Drag to pan. Tap any star to read.
+                </Text>
+              </>
+            )}
           </Dialog.Content>
           <Dialog.Actions>
             <Button onPress={() => setInfoOpen(false)}>Got it</Button>
@@ -622,8 +758,8 @@ function MapHeader(props: {
           numberOfLines={2}
         >
           {hasPeers
-            ? `${peerCount} nearby ${peerCount === 1 ? 'post' : 'posts'} — closer = more similar. Tap a star to read.`
-            : 'No peers in range yet — your post is now broadcasting.'}
+            ? `${peerCount} ${peerCount === 1 ? 'post' : 'posts'} in your local room view — tap a point to read.`
+            : 'No posts in view yet — yours is broadcasting to the room.'}
         </Text>
       </View>
       <IconButton
@@ -770,4 +906,32 @@ function fillCentered(background: string) {
     backgroundColor: background,
     padding: 24,
   };
+}
+
+/** Grid tick positions for the cartesian (PCA-2) view, in viewBox units. */
+const GRID_TICKS = [-1, -0.75, -0.5, -0.25, 0.25, 0.5, 0.75, 1] as const;
+
+/**
+ * Resolve a default map anchor when the screen is opened without an explicit
+ * post: prefer the user's most recent own post, else the best-scoring inbox
+ * post, else none (caller shows an empty-state message).
+ */
+async function resolveDefaultAnchor(
+  container: ReturnType<typeof useRequireContainer>,
+): Promise<RecordAddress | null> {
+  const own = await container.database.query<{ address: string }>(
+    'SELECT address FROM posts WHERE author = ? ORDER BY created_at DESC LIMIT 1',
+    [container.self],
+  );
+  if (own.length > 0) {
+    return own[0].address as RecordAddress;
+  }
+  const remote = await container.database.query<{ address: string }>(
+    'SELECT address FROM posts WHERE author != ? AND similarity IS NOT NULL ORDER BY similarity DESC LIMIT 1',
+    [container.self],
+  );
+  if (remote.length > 0) {
+    return remote[0].address as RecordAddress;
+  }
+  return null;
 }

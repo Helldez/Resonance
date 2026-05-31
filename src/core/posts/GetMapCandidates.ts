@@ -23,6 +23,17 @@ export interface MapPostSource {
   readonly createdAt: number;
 }
 
+export interface ListForMapOptions {
+  /**
+   * Include the user's OWN posts in the candidate set (default false, which
+   * keeps the per-post map focused on peers). The global "my posts" map sets
+   * this so every own post is plotted, not just the anchor.
+   */
+  readonly includeSelf?: boolean;
+  /** Address to omit (the anchor, added separately to avoid a duplicate). */
+  readonly excludeAddress?: RecordAddress;
+}
+
 export interface MapRepository {
   getOneWithEmbedding(
     address: RecordAddress,
@@ -32,7 +43,13 @@ export interface MapRepository {
     self: PeerId,
     limit: number,
     expectedDim: number,
+    opts?: ListForMapOptions,
   ): Promise<MapPostSource[]>;
+}
+
+export interface GetMapViewOptions {
+  /** Plot the user's own posts too (the global "my posts" map). */
+  readonly includeSelf?: boolean;
 }
 
 /**
@@ -48,6 +65,7 @@ export interface MapRepository {
 export async function getMapView(
   deps: { posts: MapRepository; self: PeerId },
   anchorAddress: RecordAddress,
+  opts: GetMapViewOptions = {},
 ): Promise<MapView | null> {
   const dim = MatchingConfig.embeddingDim;
   const anchor = await deps.posts.getOneWithEmbedding(anchorAddress, dim);
@@ -58,6 +76,7 @@ export async function getMapView(
     deps.self,
     MatchingConfig.mapMaxCandidates,
     dim,
+    { includeSelf: opts.includeSelf === true, excludeAddress: anchorAddress },
   );
 
   const projection = projectToPlane(

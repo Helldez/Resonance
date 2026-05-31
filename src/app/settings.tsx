@@ -11,12 +11,9 @@ import {
   Divider,
   HelperText,
 } from 'react-native-paper';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSettingsStore } from '@domain/SettingsStore';
-import {
-  useRequireContainer,
-  getCurrentBuckets,
-  getCurrentBucketSource,
-} from '@ui/AppContainerContext';
+import { useRequireContainer } from '@ui/AppContainerContext';
 import { ModelProfiles } from '@core/config/ModelProfiles';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 
@@ -39,6 +36,7 @@ function presetForValue(v: number): ThresholdPreset {
 
 export default function SettingsScreen() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const container = useRequireContainer();
   const responseMode = useSettingsStore((s) => s.responseMode);
   const setResponseMode = useSettingsStore((s) => s.setResponseMode);
@@ -75,7 +73,7 @@ export default function SettingsScreen() {
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: theme.colors.background }}
-      contentContainerStyle={{ padding: 12 }}
+      contentContainerStyle={{ padding: 12, paddingBottom: insets.bottom + 24 }}
     >
       <Text variant="titleMedium">Display name</Text>
       <TextInput
@@ -101,62 +99,10 @@ export default function SettingsScreen() {
         placeholder="A short, honest description of who you are and what you actually know."
       />
       <HelperText type="info">
-        Used to compute your interest bucket and to draft replies. Restart the
-        app after changing this so the bucket re-routes you.
+        Used to rank incoming posts before you have written anything (cold
+        start), and to draft replies. Everyone shares one room — this only
+        shapes what surfaces in your inbox, not who you connect to.
       </HelperText>
-
-      <View
-        style={{
-          marginTop: 4,
-          padding: 8,
-          borderRadius: 8,
-          backgroundColor: theme.colors.surfaceVariant,
-        }}
-      >
-        <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-          Current buckets ({(() => {
-            const src = getCurrentBucketSource();
-            if (src === null) {
-              return 'not joined';
-            }
-            if (src.kind === 'per-post-only') {
-              return `from ${src.postsConsidered} recent post${src.postsConsidered === 1 ? '' : 's'}`;
-            }
-            if (src.kind === 'per-post-plus-centroid-fill') {
-              return `from ${src.postsConsidered} post${src.postsConsidered === 1 ? '' : 's'} + ${src.filled} centroid fill`;
-            }
-            if (src.kind === 'about-you-plus-fill') {
-              return `from About-you + ${src.filled} centroid fill`;
-            }
-            if (src.kind === 'about-you-only') {
-              return 'from About-you';
-            }
-            if (src.kind === 'none') {
-              return 'no source available';
-            }
-            return 'unknown source';
-          })()})
-        </Text>
-        <Text
-          variant="bodySmall"
-          style={{ color: theme.colors.onSurface, marginTop: 4, fontFamily: 'monospace' }}
-        >
-          {(() => {
-            const bs = getCurrentBuckets();
-            if (bs.length === 0) {
-              return '— (network not joined yet)';
-            }
-            return bs.join('\n');
-          })()}
-        </Text>
-        <HelperText type="info" padding="none">
-          You listen on the same buckets where your most recent posts were
-          published. Two peers see each other when their posts land in the
-          same bucket. If your posts collapse into few distinct buckets
-          (mono-topic), the remaining slots are filled with multi-table
-          buckets of your interest centroid to keep recall high.
-        </HelperText>
-      </View>
 
       <Divider style={{ marginVertical: 16 }} />
 

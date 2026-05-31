@@ -12,6 +12,7 @@ import {
   useTheme,
 } from 'react-native-paper';
 import { useLocalSearchParams, useFocusEffect, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireContainer } from '@ui/AppContainerContext';
 import { useSettingsStore } from '@domain/SettingsStore';
 import { draftResponse } from '@core/responses/DraftResponse';
@@ -41,6 +42,7 @@ export default function ThreadScreen() {
   const container = useRequireContainer();
   const router = useRouter();
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const receiverContext = useSettingsStore((s) => s.receiverContext);
 
   const [post, setPost] = useState<ThreadPost | null>(null);
@@ -129,7 +131,6 @@ export default function ThreadScreen() {
           kind: 'post',
           text: post.text,
           embedding,
-          bucket: '' as ScoredPost['post']['bucket'],
           createdAt: post.createdAt,
         },
         similarity: cosineOnUnit(embedding, embedding),
@@ -204,7 +205,7 @@ export default function ThreadScreen() {
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: theme.colors.background }}
-      contentContainerStyle={{ padding: 12 }}
+      contentContainerStyle={{ padding: 12, paddingBottom: insets.bottom + 32 }}
       refreshControl={
         <RefreshControl
           refreshing={false}
