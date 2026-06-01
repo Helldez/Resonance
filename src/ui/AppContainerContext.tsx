@@ -190,6 +190,13 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
         console.log(
           `[rn] agent tick considered=${report.considered} published=${report.published} queued=${report.queued} rejected=${report.rejected}`,
         );
+        if (report.considered === 0) {
+          await c.agentLog.append(
+            c.clock.now(),
+            'tick',
+            'Woke up — nothing new in the inbox to consider',
+          );
+        }
         // When the inbox yields nothing to act on, seed a post toward a goal so
         // conversations can start. Try early (2nd tick) and periodically after.
         // The governor still caps it; runAgentPost no-ops without a goal.
@@ -198,7 +205,13 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
           console.log(`[agent] proactive post attempted=${posted}`);
         }
       } catch (e) {
-        console.warn(`[rn] agent tick failed: ${e instanceof Error ? e.message : String(e)}`);
+        const msg = e instanceof Error ? e.message : String(e);
+        console.warn(`[rn] agent tick failed: ${msg}`);
+        try {
+          await c.agentLog.append(c.clock.now(), 'error', `Tick failed: ${msg}`);
+        } catch {
+          // logging must never crash the loop
+        }
       } finally {
         running = false;
       }
@@ -298,6 +311,10 @@ function buildAgentDeps(
     killSwitch,
     activity: c.agentActivity,
     pending: c.pending,
+    logSink: {
+      log: (phase, summary, target, text) =>
+        c.agentLog.append(c.clock.now(), phase, summary, target ?? null, text ?? null),
+    },
     listCandidates: async (limit: number): Promise<AgentCandidate[]> => {
       const rows = await c.database.query<{ address: string; text: string }>(
         `SELECT address, text FROM posts

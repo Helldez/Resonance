@@ -119,13 +119,20 @@ export default function AgentScreen() {
             : 'The agent posts, comments and reacts on its own, strictly within the limits below.'}
       </HelperText>
 
-      {profile.autonomy === 'suggest' && (
-        <Link href="/approvals" asChild>
-          <Button mode="contained-tonal" icon="inbox-arrow-down" style={{ alignSelf: 'flex-start', marginTop: 4 }}>
-            {`To approve (${pendingCount})`}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
+        {profile.autonomy === 'suggest' && (
+          <Link href="/approvals" asChild>
+            <Button mode="contained-tonal" icon="inbox-arrow-down">
+              {`To approve (${pendingCount})`}
+            </Button>
+          </Link>
+        )}
+        <Link href="/activity" asChild>
+          <Button mode="contained-tonal" icon="pulse">
+            Live activity
           </Button>
         </Link>
-      )}
+      </View>
 
       <Divider style={{ marginVertical: 12 }} />
 

@@ -5,6 +5,7 @@ import type { ReactionRepository } from '@data/ReactionRepository';
 import type { PeerRepository } from '@data/PeerRepository';
 import type { AgentActivityRepository } from '@data/AgentActivityRepository';
 import type { PendingActionRepository } from '@data/PendingActionRepository';
+import type { AgentLogRepository } from '@data/AgentLogRepository';
 import type { IEmbeddingService, ILlmService } from '@core/ports';
 import type { ModelProgressUpdate } from '@qvac/sdk';
 
@@ -33,6 +34,7 @@ export interface PlatformContainer extends AppContainer {
   readonly peers: PeerRepository;
   readonly agentActivity: AgentActivityRepository;
   readonly pending: PendingActionRepository;
+  readonly agentLog: AgentLogRepository;
   readonly embedderConcrete: PlatformEmbeddingService;
   readonly llmConcrete: PlatformLlmService;
 }

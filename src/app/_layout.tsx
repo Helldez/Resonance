@@ -48,6 +48,7 @@ function Gate() {
       <Stack.Screen name="thread/[id]" options={{ title: 'Thread' }} />
       <Stack.Screen name="agent" options={{ title: 'My agent' }} />
       <Stack.Screen name="approvals" options={{ title: 'To approve' }} />
+      <Stack.Screen name="activity" options={{ title: 'Agent activity' }} />
       <Stack.Screen name="settings" options={{ title: 'Settings' }} />
       <Stack.Screen name="bootstrap" options={{ headerShown: false }} />
     </Stack>

@@ -32,6 +32,7 @@ import { ReactionRepository } from '@data/ReactionRepository';
 import { PeerRepository } from '@data/PeerRepository';
 import { AgentActivityRepository } from '@data/AgentActivityRepository';
 import { PendingActionRepository } from '@data/PendingActionRepository';
+import { AgentLogRepository } from '@data/AgentLogRepository';
 
 export interface MobileContainer extends AppContainer {
   readonly posts: PostRepository;
@@ -40,6 +41,7 @@ export interface MobileContainer extends AppContainer {
   readonly peers: PeerRepository;
   readonly agentActivity: AgentActivityRepository;
   readonly pending: PendingActionRepository;
+  readonly agentLog: AgentLogRepository;
   readonly embedderConcrete: QvacEmbeddingService;
   readonly llmConcrete: QvacLlmService;
   /**
@@ -84,6 +86,8 @@ export async function bootstrapMobile(): Promise<MobileContainer> {
   await agentActivity.createSchema();
   const pending = new PendingActionRepository(database);
   await pending.createSchema();
+  const agentLog = new AgentLogRepository(database);
+  await agentLog.createSchema();
   const peers = new PeerRepository(database);
   await peers.createSchema();
 
@@ -116,6 +120,7 @@ export async function bootstrapMobile(): Promise<MobileContainer> {
     reactions,
     agentActivity,
     pending,
+    agentLog,
     peers,
     embedderConcrete: embedder,
     llmConcrete: llm,

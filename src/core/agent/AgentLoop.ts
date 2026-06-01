@@ -65,6 +65,33 @@ export interface PendingSink {
   hasForTarget(target: string): Promise<boolean>;
 }
 
+/** Phase of a structured activity event, mirrored by AgentLogRepository. */
+export type AgentLogPhase =
+  | 'tick'
+  | 'triage'
+  | 'decide'
+  | 'govern'
+  | 'publish'
+  | 'queue'
+  | 'post'
+  | 'error';
+
+/**
+ * Where the loop reports what it is doing, in real time. Backed by
+ * AgentLogRepository so the in-app Activity dashboard can show every decision
+ * and its rationale. A no-op default keeps the loop usable without a sink.
+ */
+export interface AgentLogSink {
+  log(
+    phase: AgentLogPhase,
+    summary: string,
+    target?: string | null,
+    text?: string | null,
+  ): Promise<void> | void;
+}
+
+const NOOP_LOG: AgentLogSink = { log: () => {} };
+
 export interface AgentLoopDeps {
   readonly llm: ILlmService;
   readonly embedder: IEmbeddingService;
@@ -77,6 +104,8 @@ export interface AgentLoopDeps {
   readonly killSwitch: boolean;
   readonly activity: ActivityCounters;
   readonly pending: PendingSink;
+  /** Optional activity log for the in-app dashboard. */
+  readonly logSink?: AgentLogSink;
   /** Inbox candidates not yet acted on, most relevant first. */
   listCandidates(limit: number): Promise<AgentCandidate[]>;
   /** Oldest-first text of the thread under `target`, or null. */
@@ -103,6 +132,7 @@ export interface TickReport {
  */
 export async function runAgentTick(deps: AgentLoopDeps): Promise<TickReport> {
   const { profile } = deps;
+  const sink = deps.logSink ?? NOOP_LOG;
   const empty: TickReport = { considered: 0, published: 0, queued: 0, rejected: 0 };
   if (!profile.enabled || profile.autonomy === 'off' || deps.killSwitch) {
     return empty;
@@ -112,27 +142,50 @@ export async function runAgentTick(deps: AgentLoopDeps): Promise<TickReport> {
   const candidates = await deps.listCandidates(AgentConfig.maxCandidatesPerTick);
   const recent = await deps.activity.recentOutputs(AgentConfig.dedupHistorySize);
   console.log(`[agent] candidates=${candidates.length} recentDedup=${recent.length} autonomy=${profile.autonomy}`);
+  await sink.log('tick', `Woke up · ${candidates.length} posts to consider · mode ${profile.autonomy}`);
 
   let published = 0;
   let queued = 0;
   let rejected = 0;
 
   for (const cand of candidates) {
+    const short = cand.address.slice(0, 10);
     const triage = await assessRelevance({ llm: deps.llm }, profile, cand.text);
     console.log(
-      `[agent] triage ${cand.address.slice(0, 10)} -> ${triage === null ? 'NULL(parse-fail)' : `relevant=${triage.relevant} score=${triage.score.toFixed(2)} thr=${AgentConfig.triageScoreThreshold}`}`,
+      `[agent] triage ${short} -> ${triage === null ? 'NULL(parse-fail)' : `relevant=${triage.relevant} score=${triage.score.toFixed(2)} thr=${AgentConfig.triageScoreThreshold}`}`,
     );
-    if (triage === null || !triage.relevant || triage.score < AgentConfig.triageScoreThreshold) {
+    if (triage === null) {
+      await sink.log('triage', 'Could not read the post (model output unparseable)', cand.address, cand.text);
+      continue;
+    }
+    await sink.log(
+      'triage',
+      `Relevance ${(triage.score * 100).toFixed(0)}% (need ${(AgentConfig.triageScoreThreshold * 100).toFixed(0)}%)${triage.reason ? ` — ${triage.reason}` : ''}`,
+      cand.address,
+      cand.text,
+    );
+    if (!triage.relevant || triage.score < AgentConfig.triageScoreThreshold) {
       continue;
     }
     const threadContext = await deps.getThreadContext(cand.address);
     const decision = await decideAction({ llm: deps.llm }, profile, cand.text, threadContext);
     console.log(
-      `[agent] decide ${cand.address.slice(0, 10)} -> ${decision === null ? 'NULL(parse-fail)' : `action=${decision.action}${decision.reaction ? ` react=${decision.reaction}` : ''}`}`,
+      `[agent] decide ${short} -> ${decision === null ? 'NULL(parse-fail)' : `action=${decision.action}${decision.reaction ? ` react=${decision.reaction}` : ''}`}`,
     );
-    if (decision === null || decision.action === 'do_nothing') {
+    if (decision === null) {
+      await sink.log('decide', 'Could not decide (model output unparseable)', cand.address);
       continue;
     }
+    if (decision.action === 'do_nothing') {
+      await sink.log('decide', `Chose to do nothing${decision.rationale ? ` — ${decision.rationale}` : ''}`, cand.address);
+      continue;
+    }
+    await sink.log(
+      'decide',
+      `Wants to ${decision.action === 'react' ? `react "${decision.reaction}"` : 'reply'}${decision.rationale ? ` — ${decision.rationale}` : ''}`,
+      cand.address,
+      decision.action === 'respond' ? decision.text : null,
+    );
 
     const proposed: ProposedAction =
       decision.action === 'react' && decision.reaction !== null
@@ -160,13 +213,21 @@ export async function runAgentTick(deps: AgentLoopDeps): Promise<TickReport> {
     console.log(
       `[agent] verdict ${proposed.kind} -> ${verdict.verdict}${verdict.verdict === 'reject' ? ` reason=${verdict.reason}` : ''}`,
     );
+    const actionText = proposed.kind === 'respond' ? proposed.text : null;
     if (verdict.verdict === 'reject') {
+      await sink.log('govern', `Blocked: ${verdict.reason}`, cand.address, actionText);
       rejected++;
       continue;
     }
     if (verdict.verdict === 'queue') {
       if (proposed.kind !== 'none' && !(await deps.pending.hasForTarget(cand.address))) {
         await deps.pending.add(toPending(proposed, decision.rationale, deps.clock.now()));
+        await sink.log(
+          'queue',
+          `Drafted a ${proposed.kind === 'react' ? `reaction "${proposed.reaction}"` : 'reply'} for your approval`,
+          cand.address,
+          actionText,
+        );
         queued++;
       }
       continue;
@@ -178,8 +239,10 @@ export async function runAgentTick(deps: AgentLoopDeps): Promise<TickReport> {
       await deps.activity.incrementToday(day, 'comment');
       await deps.activity.recordOutput(proposed.text, deps.clock.now(), AgentConfig.dedupHistorySize);
       recent.unshift(proposed.text);
+      await sink.log('publish', 'Published a reply', cand.address, proposed.text);
     } else if (proposed.kind === 'react') {
       await deps.activity.incrementToday(day, 'reaction');
+      await sink.log('publish', `Reacted "${proposed.reaction}"`, cand.address);
     }
     published++;
   }
@@ -194,10 +257,12 @@ export async function runAgentTick(deps: AgentLoopDeps): Promise<TickReport> {
  */
 export async function runAgentPost(deps: AgentLoopDeps): Promise<boolean> {
   const { profile } = deps;
+  const sink = deps.logSink ?? NOOP_LOG;
   if (!profile.enabled || profile.autonomy === 'off' || deps.killSwitch) {
     return false;
   }
   if (profile.goals.length === 0) {
+    await sink.log('post', 'Skipped a proactive post — no goals set. Add a goal in My agent.');
     return false;
   }
   const day = dayKey(deps.clock.now());
@@ -219,6 +284,7 @@ export async function runAgentPost(deps: AgentLoopDeps): Promise<boolean> {
     `[agent] post drafted=${drafted === null ? 'NULL(parse-fail)' : `"${drafted.text.slice(0, 60)}"`} goal="${goal.slice(0, 40)}"`,
   );
   if (drafted === null) {
+    await sink.log('post', 'Tried to write a post but the model output was unparseable');
     return false;
   }
   const recent = await deps.activity.recentOutputs(AgentConfig.dedupHistorySize);
@@ -236,15 +302,18 @@ export async function runAgentPost(deps: AgentLoopDeps): Promise<boolean> {
   };
   const verdict = evaluateAction(proposed, state);
   if (verdict.verdict === 'reject') {
+    await sink.log('govern', `Blocked own post: ${verdict.reason}`, null, drafted.text);
     return false;
   }
   if (verdict.verdict === 'queue') {
     await deps.pending.add(toPending(proposed, `goal: ${goal}`, deps.clock.now()));
+    await sink.log('queue', 'Drafted a new post for your approval', null, drafted.text);
     return true;
   }
   await executeProposed(deps, proposed);
   await deps.activity.incrementToday(day, 'post');
   await deps.activity.recordOutput(drafted.text, deps.clock.now(), AgentConfig.dedupHistorySize);
+  await sink.log('post', 'Published a new post', null, drafted.text);
   return true;
 }
 

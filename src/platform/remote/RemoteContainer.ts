@@ -24,6 +24,7 @@ import { ReactionRepository } from '@data/ReactionRepository';
 import { PeerRepository } from '@data/PeerRepository';
 import { AgentActivityRepository } from '@data/AgentActivityRepository';
 import { PendingActionRepository } from '@data/PendingActionRepository';
+import { AgentLogRepository } from '@data/AgentLogRepository';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 import type { IpcBridge } from './IpcBridge';
 import { requireBridge } from './IpcBridge';
@@ -65,6 +66,7 @@ export async function bootstrapRemote(): Promise<PlatformContainer> {
   const reactions = new ReactionRepository(database);
   const agentActivity = new AgentActivityRepository(database);
   const pending = new PendingActionRepository(database);
+  const agentLog = new AgentLogRepository(database);
   const peers = new PeerRepository(database);
 
   return {
@@ -84,6 +86,7 @@ export async function bootstrapRemote(): Promise<PlatformContainer> {
     reactions,
     agentActivity,
     pending,
+    agentLog,
     peers,
     embedderConcrete: embedder,
     llmConcrete: llm,
