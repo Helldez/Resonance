@@ -35,14 +35,19 @@ export const AgentConfig = {
   /** How many recent agent outputs the dedup ledger keeps for comparison. */
   dedupHistorySize: 40,
 
-  /** Sampling for the routing calls (triage, decide) — low for determinism. */
+  /**
+   * Sampling for the routing calls (triage, decide) — low for determinism.
+   * Token budget is generous: even with `/no_think`, a thinking model may emit
+   * a short preamble, and the balanced-brace extractor stops at the JSON's
+   * closing brace anyway, so a higher ceiling costs nothing on success.
+   */
   routingTemperature: 0.1,
-  routingMaxTokens: 160,
+  routingMaxTokens: 320,
 
   /** Sampling for the user-facing text the agent writes. */
   textTemperature: 0.6,
-  postMaxTokens: 120,
-  commentMaxTokens: 90,
+  postMaxTokens: 256,
+  commentMaxTokens: 200,
 
   /** One structured-output retry on malformed JSON before giving up (→ do_nothing). */
   structuredRetries: 1,

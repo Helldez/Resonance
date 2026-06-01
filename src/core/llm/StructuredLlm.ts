@@ -31,15 +31,20 @@ export async function completeJson<T>(
 
   let lastRaw = '';
   for (let attempt = 0; attempt <= AgentConfig.structuredRetries; attempt++) {
+    // `/no_think` switches Qwen3 (and other thinking models) out of reasoning
+    // mode for this turn, so the tiny token budget is spent on the JSON itself
+    // rather than an unclosed <think> block — the latter made stripThinkTags
+    // return '' and every structured call return null. Harmless on models that
+    // don't recognise it.
+    const base = `${prompt}\n/no_think`;
     const full =
       attempt === 0
-        ? prompt
-        : `${prompt}\n\nYour previous answer was not a single valid JSON object:\n${lastRaw}\nReply with ONLY the JSON object, nothing else.`;
-    const raw = await deps.llm.complete(full, {
-      maxTokens,
-      temperature,
-      stop: ['\n\n'],
-    });
+        ? base
+        : `${base}\n\nYour previous answer was not a single valid JSON object:\n${lastRaw}\nReply with ONLY the JSON object, nothing else.`;
+    // No stop sequence: '\n\n' could fire inside a think block or between a
+    // brace and its contents, truncating the JSON. We rely on maxTokens + the
+    // balanced-brace extractor to bound the output instead.
+    const raw = await deps.llm.complete(full, { maxTokens, temperature });
     lastRaw = stripThinkTags(raw).trim();
     const obj = extractFirstJsonObject(lastRaw);
     if (obj !== null) {
@@ -48,6 +53,9 @@ export async function completeJson<T>(
         return validated;
       }
     }
+    console.warn(
+      `[agent] completeJson attempt=${attempt} rawLen=${raw.length} stripped="${lastRaw.slice(0, 120)}" -> ${obj === null ? 'no-json' : 'invalid-shape'}`,
+    );
   }
   return null;
 }

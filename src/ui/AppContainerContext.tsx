@@ -160,12 +160,26 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
     let tick = 0;
 
     const runOnce = async (): Promise<void> => {
-      if (cancelled || running || !c.llmConcrete.isLoaded) {
+      if (cancelled || running) {
         return;
       }
       const { profile, killSwitch } = useAgentProfileStore.getState();
       const norm = normalizeProfile(profile);
+      // Log the gate so logcat shows exactly why a tick is or isn't running.
+      console.log(
+        `[agent] gate llmLoaded=${c.llmConcrete.isLoaded} enabled=${norm.enabled} autonomy=${norm.autonomy} kill=${killSwitch} goals=${norm.goals.length} interests=${norm.interests.length}`,
+      );
       if (!norm.enabled || norm.autonomy === 'off') {
+        return;
+      }
+      if (!c.llmConcrete.isLoaded) {
+        // The agent needs the LLM. Trigger a background load once so an enabled
+        // agent becomes functional without the user having to visit Settings;
+        // skip this tick and act on the next one after the model is ready.
+        console.log('[agent] LLM not loaded yet — kicking off background load');
+        void c.llmConcrete.load().catch((e) => {
+          console.warn(`[agent] LLM load failed: ${e instanceof Error ? e.message : String(e)}`);
+        });
         return;
       }
       running = true;
@@ -176,10 +190,12 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
         console.log(
           `[rn] agent tick considered=${report.considered} published=${report.published} queued=${report.queued} rejected=${report.rejected}`,
         );
-        // When the inbox yields nothing to act on, occasionally seed a post
-        // toward a goal so conversations can start. The governor still caps it.
-        if (report.published === 0 && report.queued === 0 && tick % 8 === 1) {
-          await runAgentPost(deps);
+        // When the inbox yields nothing to act on, seed a post toward a goal so
+        // conversations can start. Try early (2nd tick) and periodically after.
+        // The governor still caps it; runAgentPost no-ops without a goal.
+        if (report.published === 0 && report.queued === 0 && tick % 4 === 1) {
+          const posted = await runAgentPost(deps);
+          console.log(`[agent] proactive post attempted=${posted}`);
         }
       } catch (e) {
         console.warn(`[rn] agent tick failed: ${e instanceof Error ? e.message : String(e)}`);

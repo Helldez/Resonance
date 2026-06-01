@@ -111,6 +111,7 @@ export async function runAgentTick(deps: AgentLoopDeps): Promise<TickReport> {
   const day = dayKey(deps.clock.now());
   const candidates = await deps.listCandidates(AgentConfig.maxCandidatesPerTick);
   const recent = await deps.activity.recentOutputs(AgentConfig.dedupHistorySize);
+  console.log(`[agent] candidates=${candidates.length} recentDedup=${recent.length} autonomy=${profile.autonomy}`);
 
   let published = 0;
   let queued = 0;
@@ -118,11 +119,17 @@ export async function runAgentTick(deps: AgentLoopDeps): Promise<TickReport> {
 
   for (const cand of candidates) {
     const triage = await assessRelevance({ llm: deps.llm }, profile, cand.text);
+    console.log(
+      `[agent] triage ${cand.address.slice(0, 10)} -> ${triage === null ? 'NULL(parse-fail)' : `relevant=${triage.relevant} score=${triage.score.toFixed(2)} thr=${AgentConfig.triageScoreThreshold}`}`,
+    );
     if (triage === null || !triage.relevant || triage.score < AgentConfig.triageScoreThreshold) {
       continue;
     }
     const threadContext = await deps.getThreadContext(cand.address);
     const decision = await decideAction({ llm: deps.llm }, profile, cand.text, threadContext);
+    console.log(
+      `[agent] decide ${cand.address.slice(0, 10)} -> ${decision === null ? 'NULL(parse-fail)' : `action=${decision.action}${decision.reaction ? ` react=${decision.reaction}` : ''}`}`,
+    );
     if (decision === null || decision.action === 'do_nothing') {
       continue;
     }
@@ -150,6 +157,9 @@ export async function runAgentTick(deps: AgentLoopDeps): Promise<TickReport> {
     };
 
     const verdict = evaluateAction(proposed, state);
+    console.log(
+      `[agent] verdict ${proposed.kind} -> ${verdict.verdict}${verdict.verdict === 'reject' ? ` reason=${verdict.reason}` : ''}`,
+    );
     if (verdict.verdict === 'reject') {
       rejected++;
       continue;
@@ -204,6 +214,9 @@ export async function runAgentPost(deps: AgentLoopDeps): Promise<boolean> {
       return text.length > 0 ? { text } : null;
     },
     { temperature: AgentConfig.textTemperature, maxTokens: AgentConfig.postMaxTokens },
+  );
+  console.log(
+    `[agent] post drafted=${drafted === null ? 'NULL(parse-fail)' : `"${drafted.text.slice(0, 60)}"`} goal="${goal.slice(0, 40)}"`,
   );
   if (drafted === null) {
     return false;

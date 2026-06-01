@@ -33,6 +33,15 @@ export class ExpoSqliteDatabase implements IDatabase {
 
   async exec(sql: string, params: ReadonlyArray<unknown> = []): Promise<void> {
     const db = this.must();
+    if (params.length === 0) {
+      // `runAsync` prepares and runs only the FIRST statement in the source,
+      // so multi-statement schema blocks (e.g. two CREATE TABLEs, or a table
+      // plus its indexes) would silently drop everything after the first.
+      // `execAsync` runs every statement in the string — the right tool for
+      // parameter-free DDL. Parameterised writes stay on `runAsync` below.
+      await db.execAsync(sql);
+      return;
+    }
     await db.runAsync(sql, params as SQLite.SQLiteBindValue[]);
   }
 
