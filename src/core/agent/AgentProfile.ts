@@ -19,6 +19,20 @@ export interface AgentLimits {
 }
 
 /**
+ * Cosine-similarity thresholds (all in [0,1]) that drive the agent's
+ * deterministic decisions. Edited in the "My agent" Advanced section, read by
+ * the agent loop — never by the model.
+ */
+export interface AgentThresholds {
+  /** A post at/above this similarity to the user gets a reaction ("like"). */
+  readonly reactMinSimilarity: number;
+  /** A post at/above this similarity earns a comment (the LLM drafts the text). */
+  readonly respondMinSimilarity: number;
+  /** A drafted reply at/above this similarity to the thread is an echo → suppressed. */
+  readonly echoMaxCosine: number;
+}
+
+/**
  * The user-authored persona. This is the source of truth, edited through a
  * native form (never a markdown file) and persisted via the settings store.
  * The system prompt is *generated* from these fields by `PromptBuilder`; the
@@ -32,6 +46,7 @@ export interface AgentProfile {
   readonly goals: ReadonlyArray<string>;
   readonly tone: string;
   readonly limits: AgentLimits;
+  readonly thresholds: AgentThresholds;
 }
 
 export const DEFAULT_AGENT_PROFILE: AgentProfile = {
@@ -47,6 +62,11 @@ export const DEFAULT_AGENT_PROFILE: AgentProfile = {
     maxReactionsPerDay: AgentConfig.defaults.limits.maxReactionsPerDay,
     maxTurnsPerThread: AgentConfig.defaults.limits.maxTurnsPerThread,
     never: AgentConfig.defaults.limits.never,
+  },
+  thresholds: {
+    reactMinSimilarity: AgentConfig.defaults.thresholds.reactMinSimilarity,
+    respondMinSimilarity: AgentConfig.defaults.thresholds.respondMinSimilarity,
+    echoMaxCosine: AgentConfig.defaults.thresholds.echoMaxCosine,
   },
 };
 
@@ -64,6 +84,20 @@ function clampInt(value: number, min: number, max: number): number {
   return v;
 }
 
+/** Like clampInt but preserves the fractional part (used for cosine thresholds). */
+function clampFloat(value: number, min: number, max: number, fallback: number): number {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  if (value < min) {
+    return min;
+  }
+  if (value > max) {
+    return max;
+  }
+  return value;
+}
+
 /**
  * Live-edit coercion. Tolerant: it preserves exactly what the user is typing —
  * empty `name`/`tone` stay empty (NOT replaced with the default), and
@@ -74,6 +108,8 @@ function clampInt(value: number, min: number, max: number): number {
 export function coerceProfile(input: Partial<AgentProfile> | null | undefined): AgentProfile {
   const base = input ?? {};
   const limits = base.limits ?? DEFAULT_AGENT_PROFILE.limits;
+  const thresholds = base.thresholds ?? DEFAULT_AGENT_PROFILE.thresholds;
+  const defaults = DEFAULT_AGENT_PROFILE.thresholds;
   return {
     enabled: base.enabled ?? DEFAULT_AGENT_PROFILE.enabled,
     name: base.name ?? DEFAULT_AGENT_PROFILE.name,
@@ -87,6 +123,11 @@ export function coerceProfile(input: Partial<AgentProfile> | null | undefined): 
       maxReactionsPerDay: clampInt(limits.maxReactionsPerDay, 0, AgentConfig.caps.maxReactionsPerDay),
       maxTurnsPerThread: clampInt(limits.maxTurnsPerThread, 1, AgentConfig.caps.maxTurnsPerThread),
       never: (limits.never ?? []).slice(0, 32),
+    },
+    thresholds: {
+      reactMinSimilarity: clampFloat(thresholds.reactMinSimilarity, 0, 1, defaults.reactMinSimilarity),
+      respondMinSimilarity: clampFloat(thresholds.respondMinSimilarity, 0, 1, defaults.respondMinSimilarity),
+      echoMaxCosine: clampFloat(thresholds.echoMaxCosine, 0, 1, defaults.echoMaxCosine),
     },
   };
 }

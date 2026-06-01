@@ -231,6 +231,36 @@ export default function AgentScreen() {
 
       <Divider style={{ marginVertical: 12 }} />
 
+      <Text variant="titleMedium">Advanced — matching thresholds</Text>
+      <HelperText type="info" style={{ marginLeft: 0 }}>
+        Cosine similarity (0–1). Higher react/comment = the agent acts less; keep
+        comment ≥ react. Lower the echo threshold to suppress repetitive replies
+        more aggressively.
+      </HelperText>
+      <FloatStepper
+        label="React above similarity"
+        value={profile.thresholds.reactMinSimilarity}
+        onChange={(n) =>
+          setProfile({ thresholds: { ...profile.thresholds, reactMinSimilarity: n } })
+        }
+      />
+      <FloatStepper
+        label="Comment above similarity"
+        value={profile.thresholds.respondMinSimilarity}
+        onChange={(n) =>
+          setProfile({ thresholds: { ...profile.thresholds, respondMinSimilarity: n } })
+        }
+      />
+      <FloatStepper
+        label="Suppress reply if echo ≥"
+        value={profile.thresholds.echoMaxCosine}
+        onChange={(n) =>
+          setProfile({ thresholds: { ...profile.thresholds, echoMaxCosine: n } })
+        }
+      />
+
+      <Divider style={{ marginVertical: 12 }} />
+
       <Text variant="titleMedium">Today</Text>
       <Text style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}>
         {`${today.posts} posts · ${today.comments} comments · ${today.reactions} reactions`}
@@ -274,6 +304,31 @@ function Stepper(props: {
         size={18}
         disabled={props.value >= props.max}
         onPress={() => props.onChange(Math.min(props.max, props.value + 1))}
+      />
+    </View>
+  );
+}
+
+/** Stepper for a cosine threshold: range [0,1], step 0.01, shown to 2 decimals. */
+function FloatStepper(props: { label: string; value: number; onChange: (n: number) => void }) {
+  const step = 0.01;
+  // Round to 2 decimals to avoid float drift accumulating across taps.
+  const round = (n: number): number => Math.round(n * 100) / 100;
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+      <Text style={{ flex: 1 }}>{props.label}</Text>
+      <IconButton
+        icon="minus"
+        size={18}
+        disabled={props.value <= 0}
+        onPress={() => props.onChange(round(Math.max(0, props.value - step)))}
+      />
+      <Text style={{ minWidth: 40, textAlign: 'center' }}>{props.value.toFixed(2)}</Text>
+      <IconButton
+        icon="plus"
+        size={18}
+        disabled={props.value >= 1}
+        onPress={() => props.onChange(round(Math.min(1, props.value + step)))}
       />
     </View>
   );

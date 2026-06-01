@@ -50,13 +50,22 @@ export function buildReplyPrompt(
     candidateText.trim(),
     '--- END ---',
   ];
-  if (threadContext !== null && threadContext.trim().length > 0) {
+  const inThread = threadContext !== null && threadContext.trim().length > 0;
+  if (inThread) {
     parts.push('', 'Recent conversation in this thread (oldest first):', threadContext.trim());
   }
   parts.push(
     '',
     'Write ONE short reply (1 sentence) that adds something specific or asks one',
     'sharp question. No greetings, no sign-off, no generic praise.',
+  );
+  if (inThread) {
+    parts.push(
+      'Add ONE genuinely NEW point, detail, or question. Do NOT restate, agree',
+      'with, or reword anything already said in the thread above.',
+    );
+  }
+  parts.push(
     'Reply with ONLY a JSON object of the form:',
     '{"text": "<=240 chars", "rationale": "<=120 chars"}',
   );

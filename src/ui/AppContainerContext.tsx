@@ -428,6 +428,13 @@ function buildAgentDeps(
       }
       return resp.map((r) => `${r.author === c.self ? 'you' : 'peer'}: ${r.text}`).join('\n');
     },
+    getRecentThreadTexts: async (target: RecordAddress, limit: number): Promise<string[]> => {
+      const rows = await c.database.query<{ text: string }>(
+        'SELECT text FROM responses WHERE in_reply_to = ? ORDER BY created_at DESC LIMIT ?',
+        [target, limit],
+      );
+      return rows.map((r) => r.text);
+    },
     countAgentTurnsInThread: async (target: RecordAddress): Promise<number> => {
       const rows = await c.database.query<{ n: number }>(
         'SELECT COUNT(*) AS n FROM responses WHERE in_reply_to = ? AND author = ?',

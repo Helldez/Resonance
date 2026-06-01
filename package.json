@@ -14,7 +14,7 @@
     "android": "expo run:android",
     "prebuild": "npx expo prebuild",
     "typecheck": "tsc --noEmit",
-    "test": "tsx scripts/test/inbox-admission.test.ts && tsx scripts/test/topics.test.ts",
+    "test": "tsx scripts/test/inbox-admission.test.ts && tsx scripts/test/topics.test.ts && tsx scripts/test/thread-echo.test.ts",
     "calibrate": "node scripts/calibration/evaluate-embeddings.mjs",
     "build:bare": "node bare/build.mjs",
     "build:bare:desktop": "node bare/build-desktop.mjs",

@@ -27,20 +27,15 @@ export const AgentConfig = {
   maxReplyCandidatesPerTick: 4,
 
   /**
-   * The agent's action is decided DETERMINISTICALLY from a candidate's stored
-   * cosine similarity (MAX vs the user's own posts, or the "About you"
-   * fallback) — never from an LLM relevance estimate:
-   *   - similarity ≥ `respondMinSimilarity` → comment (the LLM only drafts the
-   *     text; the decision to comment is fixed by the threshold);
-   *   - similarity ≥ `reactMinSimilarity` → react with a plain "like" (no LLM);
-   *   - below `reactMinSimilarity`, or no similarity signal → do nothing.
-   * Because cosine is a pure function of the embeddings, the same post always
-   * yields the same action. The only non-determinism left is the wording of a
-   * comment's text, which is inherently generative.
+   * Cross-turn thread-echo gate (the user-tunable cosine threshold lives in the
+   * profile — `AgentProfile.thresholds.echoMaxCosine`; this is only the internal
+   * lookback). Before publishing a drafted reply the agent embeds it and takes
+   * the MAX cosine against the post plus the last `echoLookback` thread
+   * responses (both authors). At/above the threshold the reply merely restates
+   * the conversation and is suppressed, breaking the agent-echoes-agent loop.
    */
-  engagement: {
-    respondMinSimilarity: 0.87,
-    reactMinSimilarity: 0.8,
+  novelty: {
+    echoLookback: 6,
   },
 
   /**
@@ -97,6 +92,21 @@ export const AgentConfig = {
        * instruction the model is trusted to follow.
        */
       never: ['hire me', 'follow me', 'buy now', 'subscribe'],
+    },
+    /**
+     * Similarity thresholds that drive the agent's deterministic decisions
+     * (all editable in the "My agent" Advanced section, all cosine in [0,1]):
+     *   - reactMinSimilarity   — a post this close to the user gets a "like";
+     *   - respondMinSimilarity — this close earns a comment (LLM drafts text);
+     *   - echoMaxCosine        — a drafted reply at/above this similarity to the
+     *                            thread is an echo and is suppressed.
+     * Defaults: react 0.80, comment 0.87, echo 0.97 (echo high → only
+     * near-identical restatements are dropped; lower it to bite harder).
+     */
+    thresholds: {
+      reactMinSimilarity: 0.8,
+      respondMinSimilarity: 0.87,
+      echoMaxCosine: 0.97,
     },
   },
 

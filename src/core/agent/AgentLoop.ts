@@ -10,14 +10,14 @@ import type { ILlmService } from '@core/ports/ILlmService';
 import type { IMailbox } from '@core/ports/IMailbox';
 import type { IPeerNetwork } from '@core/ports/IPeerNetwork';
 import { AgentConfig } from '@core/config/AgentConfig';
-import type { AgentProfile } from '@core/agent/AgentProfile';
+import type { AgentProfile, AgentThresholds } from '@core/agent/AgentProfile';
 import { draftReply } from '@core/agent/DecideAction';
 import {
   buildPostPrompt,
   type EngagementBand,
 } from '@core/agent/PromptBuilder';
 import { completeJson } from '@core/llm/StructuredLlm';
-import { dayKey, isDuplicate } from '@core/agent/AgentMemory';
+import { dayKey, isDuplicate, isThreadEcho } from '@core/agent/AgentMemory';
 import {
   evaluateAction,
   type GovernorState,
@@ -48,17 +48,20 @@ export interface AgentCandidate {
 /**
  * Map a candidate's similarity to how far the agent may engage. A post the
  * user is close to can earn a reply; a moderately related one only a reaction;
- * anything weaker (or unscored) is left alone. The thresholds live in
- * `AgentConfig.engagement` and share the inbox/map similarity vocabulary.
+ * anything weaker (or unscored) is left alone. The thresholds are user-tunable
+ * (`AgentProfile.thresholds`) and share the inbox/map similarity vocabulary.
  */
-function engagementBand(similarity: number | null): EngagementBand | 'skip' {
+function engagementBand(
+  similarity: number | null,
+  thresholds: AgentThresholds,
+): EngagementBand | 'skip' {
   if (similarity === null) {
     return 'skip';
   }
-  if (similarity >= AgentConfig.engagement.respondMinSimilarity) {
+  if (similarity >= thresholds.respondMinSimilarity) {
     return 'respond';
   }
-  if (similarity >= AgentConfig.engagement.reactMinSimilarity) {
+  if (similarity >= thresholds.reactMinSimilarity) {
     return 'react';
   }
   return 'skip';
@@ -145,6 +148,12 @@ export interface AgentLoopDeps {
   listReplyCandidates(limit: number): Promise<AgentCandidate[]>;
   /** Oldest-first text of the thread under `target`, or null. */
   getThreadContext(target: RecordAddress): Promise<string | null>;
+  /**
+   * Raw texts of the most recent `limit` responses under `target` (both
+   * authors, newest-first). Used by the semantic echo gate to compare a drafted
+   * reply against what has already been said in the thread.
+   */
+  getRecentThreadTexts(target: RecordAddress, limit: number): Promise<string[]>;
   /** Agent responses already published under `target`. */
   countAgentTurnsInThread(target: RecordAddress): Promise<number>;
   /** True if the last item under `target` is the agent's, with no human since. */
@@ -188,6 +197,7 @@ async function processCandidate(
 
   let proposed: ProposedAction;
   let rationale = '';
+  let echoHit = false;
   if (band === 'react') {
     // Deterministic acknowledgement — similarity put us in the react band, so
     // we like it. No LLM, no flavour judgement, fully reproducible.
@@ -209,6 +219,23 @@ async function processCandidate(
     }
     rationale = draft.rationale;
     proposed = { kind: 'respond', target: cand.address, text: draft.text };
+
+    // Semantic echo gate: would this reply just restate the thread? Embed the
+    // draft and the recent thread messages (post + prior responses, both
+    // authors) and take the MAX cosine. Catches the reworded agent-echoes-agent
+    // loop that the lexical dedup misses. Deterministic — cosine is pure.
+    const threadTexts = await deps.getRecentThreadTexts(
+      cand.address,
+      AgentConfig.novelty.echoLookback,
+    );
+    const [draftEmb, ...compEmbs] = await Promise.all(
+      [draft.text, cand.text, ...threadTexts].map((t) => deps.embedder.embed(t)),
+    );
+    echoHit = isThreadEcho(draftEmb, compEmbs, profile.thresholds.echoMaxCosine);
+    console.log(
+      `[agent] echo ${short} -> ${echoHit ? 'SUPPRESS' : 'ok'} (thr=${profile.thresholds.echoMaxCosine})`,
+    );
+
     await sink.log(
       'decide',
       `Drafted a reply${rationale ? ` · ${rationale}` : ''}`,
@@ -228,7 +255,7 @@ async function processCandidate(
       proposed.kind === 'respond' ? await deps.countAgentTurnsInThread(proposed.target) : 0,
     lastInThreadIsSelfNoHuman:
       proposed.kind === 'respond' ? await deps.lastInThreadIsSelfNoHuman(proposed.target) : false,
-    dedupHit: proposedText.length > 0 && isDuplicate(proposedText, recent),
+    dedupHit: proposedText.length > 0 && (isDuplicate(proposedText, recent) || echoHit),
     limits: profile.limits,
     killSwitch: deps.killSwitch,
   };
@@ -349,7 +376,7 @@ export async function runAgentTick(deps: AgentLoopDeps): Promise<TickReport> {
     // Similarity decides how far the agent may engage, before any LLM tokens
     // are spent. A weak (or unscored) match is terminally skipped — the same
     // anti-loop discipline as a triage miss.
-    const band = engagementBand(cand.similarity);
+    const band = engagementBand(cand.similarity, profile.thresholds);
     const simStr = cand.similarity === null ? 'null' : cand.similarity.toFixed(2);
     console.log(`[agent] band ${short} -> ${band} (sim=${simStr})`);
     if (band === 'skip') {

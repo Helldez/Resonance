@@ -1,4 +1,5 @@
 import { AgentConfig } from '@core/config/AgentConfig';
+import { cosineOnUnit } from '@core/matching/CosineSimilarity';
 
 /**
  * Pure helpers for the agent's bounded memory: a cheap textual dedup (so the
@@ -25,6 +26,32 @@ export function isDuplicate(text: string, recent: ReadonlyArray<string>): boolea
   for (const prev of recent) {
     if (overlapRatio(a, tokenSet(prev)) >= AgentConfig.dedupOverlapThreshold) {
       return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * True if a drafted reply echoes the thread — its MAX cosine against any recent
+ * thread message (the post plus prior responses, both authors) is at or above
+ * `threshold`. This is the semantic guard the lexical `isDuplicate` misses: it
+ * catches reworded restatements ("delicious choice" vs "love spaghetti") that
+ * share few words but mean the same thing, and it compares against the PEER's
+ * messages too, so it breaks the agent-echoes-agent loop. All vectors must be
+ * L2-normalised (cosine == dot product). An empty thread set is never an echo.
+ */
+export function isThreadEcho(
+  draftEmbedding: Float32Array,
+  threadEmbeddings: ReadonlyArray<Float32Array>,
+  threshold: number,
+): boolean {
+  for (const other of threadEmbeddings) {
+    try {
+      if (cosineOnUnit(draftEmbedding, other) >= threshold) {
+        return true;
+      }
+    } catch {
+      // dimension mismatch on a stray embedding — skip it, never throw
     }
   }
   return false;
