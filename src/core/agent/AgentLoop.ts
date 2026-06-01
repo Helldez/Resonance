@@ -11,10 +11,10 @@ import type { IMailbox } from '@core/ports/IMailbox';
 import type { IPeerNetwork } from '@core/ports/IPeerNetwork';
 import { AgentConfig } from '@core/config/AgentConfig';
 import type { AgentProfile } from '@core/agent/AgentProfile';
-import { assessRelevance } from '@core/agent/Triage';
-import { decideAction } from '@core/agent/DecideAction';
+import { draftReply } from '@core/agent/DecideAction';
 import {
   buildPostPrompt,
+  type EngagementBand,
 } from '@core/agent/PromptBuilder';
 import { completeJson } from '@core/llm/StructuredLlm';
 import { dayKey, isDuplicate } from '@core/agent/AgentMemory';
@@ -38,6 +38,30 @@ export type ActivityKind = 'post' | 'comment' | 'reaction';
 export interface AgentCandidate {
   readonly address: RecordAddress;
   readonly text: string;
+  /**
+   * Stored cosine similarity to the user (MAX vs own posts / "About you").
+   * Drives the engagement band — see `engagementBand`. Null when unscored.
+   */
+  readonly similarity: number | null;
+}
+
+/**
+ * Map a candidate's similarity to how far the agent may engage. A post the
+ * user is close to can earn a reply; a moderately related one only a reaction;
+ * anything weaker (or unscored) is left alone. The thresholds live in
+ * `AgentConfig.engagement` and share the inbox/map similarity vocabulary.
+ */
+function engagementBand(similarity: number | null): EngagementBand | 'skip' {
+  if (similarity === null) {
+    return 'skip';
+  }
+  if (similarity >= AgentConfig.engagement.respondMinSimilarity) {
+    return 'respond';
+  }
+  if (similarity >= AgentConfig.engagement.reactMinSimilarity) {
+    return 'react';
+  }
+  return 'skip';
 }
 
 /** Bounded item the governor routes to the approval queue in Suggest mode. */
@@ -111,6 +135,14 @@ export interface AgentLoopDeps {
   readonly logSink?: AgentLogSink;
   /** Inbox candidates not yet acted on, most relevant first. */
   listCandidates(limit: number): Promise<AgentCandidate[]>;
+  /**
+   * Threads with an unanswered peer comment that the agent should follow up:
+   * the user's own posts, or posts the agent already replied to, where the
+   * latest comment is not the agent's and the per-thread turn cap is not yet
+   * reached. The `similarity` field is unused for these (engagement is not an
+   * affinity question — someone is replying to us).
+   */
+  listReplyCandidates(limit: number): Promise<AgentCandidate[]>;
   /** Oldest-first text of the thread under `target`, or null. */
   getThreadContext(target: RecordAddress): Promise<string | null>;
   /** Agent responses already published under `target`. */
@@ -126,6 +158,123 @@ export interface TickReport {
   readonly published: number;
   readonly queued: number;
   readonly rejected: number;
+}
+
+/** Outcome of running one candidate through the decide→govern→act pipeline. */
+type CandidateOutcome = 'published' | 'queued' | 'rejected' | 'none';
+
+/**
+ * Produce + enforce + execute one action for a candidate. The decision
+ * (comment vs react) is ALREADY fixed by the caller's `band`, which is derived
+ * purely from similarity — this function never reconsiders whether to act, only
+ * produces the artifact: the LLM drafts the reply for the `respond` band, while
+ * the `react` band is a deterministic "like" with no LLM call at all.
+ *
+ * `isReply` governs the anti-loop bookkeeping: a fresh post that can't be
+ * drafted or is terminally rejected is marked skipped, but a reply thread is
+ * left open so a later peer comment can re-surface it.
+ */
+async function processCandidate(
+  deps: AgentLoopDeps,
+  sink: AgentLogSink,
+  day: string,
+  recent: string[],
+  cand: AgentCandidate,
+  band: EngagementBand,
+  isReply: boolean,
+): Promise<CandidateOutcome> {
+  const { profile } = deps;
+  const short = cand.address.slice(0, 10);
+
+  let proposed: ProposedAction;
+  let rationale = '';
+  if (band === 'react') {
+    // Deterministic acknowledgement — similarity put us in the react band, so
+    // we like it. No LLM, no flavour judgement, fully reproducible.
+    proposed = { kind: 'react', target: cand.address, reaction: 'like' };
+    console.log(`[agent] react ${short} (deterministic like)`);
+  } else {
+    const threadContext = await deps.getThreadContext(cand.address);
+    const draft = await draftReply({ llm: deps.llm }, profile, cand.text, threadContext);
+    console.log(
+      `[agent] draft ${short} -> ${draft === null ? 'NULL(parse-fail)' : `"${draft.text.slice(0, 48)}"`}`,
+    );
+    if (draft === null) {
+      // Content failure, not a relevance call: skip a fresh post, keep a reply open.
+      if (!isReply) {
+        await deps.activity.markSkipped(cand.address, deps.clock.now());
+      }
+      await sink.log('decide', 'Could not draft a reply (model output unusable)', cand.address, null, cand.text);
+      return 'none';
+    }
+    rationale = draft.rationale;
+    proposed = { kind: 'respond', target: cand.address, text: draft.text };
+    await sink.log(
+      'decide',
+      `Drafted a reply${rationale ? ` · ${rationale}` : ''}`,
+      cand.address,
+      draft.text,
+      cand.text,
+    );
+  }
+
+  const proposedText = proposed.kind === 'respond' ? proposed.text : '';
+  const state: GovernorState = {
+    autonomy: profile.autonomy,
+    postsToday: await deps.activity.countToday(day, 'post'),
+    commentsToday: await deps.activity.countToday(day, 'comment'),
+    reactionsToday: await deps.activity.countToday(day, 'reaction'),
+    turnsInThread:
+      proposed.kind === 'respond' ? await deps.countAgentTurnsInThread(proposed.target) : 0,
+    lastInThreadIsSelfNoHuman:
+      proposed.kind === 'respond' ? await deps.lastInThreadIsSelfNoHuman(proposed.target) : false,
+    dedupHit: proposedText.length > 0 && isDuplicate(proposedText, recent),
+    limits: profile.limits,
+    killSwitch: deps.killSwitch,
+  };
+
+  const verdict = evaluateAction(proposed, state);
+  console.log(
+    `[agent] verdict ${proposed.kind} -> ${verdict.verdict}${verdict.verdict === 'reject' ? ` reason=${verdict.reason}` : ''}`,
+  );
+  const actionText = proposed.kind === 'respond' ? proposed.text : null;
+  if (verdict.verdict === 'reject') {
+    // Terminal rejections (never-list, dedup, per-thread cap) would recur — mark
+    // a fresh post skipped. Reply threads are left open (the turn cap bounds
+    // them at the query level) so a new peer comment can still re-surface them.
+    if (verdict.terminal && !isReply) {
+      await deps.activity.markSkipped(cand.address, deps.clock.now());
+    }
+    await sink.log('govern', `Blocked: ${verdict.reason}`, cand.address, actionText, cand.text);
+    return 'rejected';
+  }
+  if (verdict.verdict === 'queue') {
+    if (!(await deps.pending.hasForTarget(cand.address))) {
+      await deps.pending.add(toPending(proposed, rationale, deps.clock.now()));
+      await sink.log(
+        'queue',
+        `Drafted a ${proposed.kind === 'react' ? `reaction "${proposed.reaction}"` : 'reply'} for your approval`,
+        cand.address,
+        actionText,
+        cand.text,
+      );
+      return 'queued';
+    }
+    return 'none';
+  }
+
+  // verdict allow → publish + remember.
+  await executeProposed(deps, proposed);
+  if (proposed.kind === 'respond') {
+    await deps.activity.incrementToday(day, 'comment');
+    await deps.activity.recordOutput(proposed.text, deps.clock.now(), AgentConfig.dedupHistorySize);
+    recent.unshift(proposed.text);
+    await sink.log('publish', isReply ? 'Replied to a comment' : 'Published a reply', cand.address, proposed.text, cand.text);
+  } else if (proposed.kind === 'react') {
+    await deps.activity.incrementToday(day, 'reaction');
+    await sink.log('publish', `Reacted "${proposed.reaction}"`, cand.address, null, cand.text);
+  }
+  return 'published';
 }
 
 /**
@@ -171,129 +320,59 @@ export async function runAgentTick(deps: AgentLoopDeps): Promise<TickReport> {
   let queued = 0;
   let rejected = 0;
 
+  const tally = (outcome: CandidateOutcome): void => {
+    if (outcome === 'published') {
+      published++;
+    } else if (outcome === 'queued') {
+      queued++;
+    } else if (outcome === 'rejected') {
+      rejected++;
+    }
+  };
+
+  // First, reply to comments the user has received — under their own posts, or
+  // in threads the agent already joined. These are conversations aimed at us,
+  // so they are not gated by affinity: they run in the respond band and skip
+  // triage. The query bounds them by the per-thread turn cap.
+  const replies = await deps.listReplyCandidates(AgentConfig.maxReplyCandidatesPerTick);
+  if (replies.length > 0) {
+    console.log(`[agent] replyCandidates=${replies.length}`);
+  }
+  for (const cand of replies) {
+    tally(await processCandidate(deps, sink, day, recent, cand, 'respond', true));
+  }
+
+  // Then fresh posts from peers, where the affinity band decides how far to go.
   for (const cand of candidates) {
     const short = cand.address.slice(0, 10);
-    const triage = await assessRelevance({ llm: deps.llm }, profile, cand.text);
-    console.log(
-      `[agent] triage ${short} -> ${triage === null ? 'NULL(parse-fail)' : `relevant=${triage.relevant} score=${triage.score.toFixed(2)} thr=${AgentConfig.triageScoreThreshold}`}`,
-    );
-    if (triage === null) {
-      await sink.log('triage', 'Could not read the post (model output unparseable)', cand.address, null, cand.text);
-      continue;
-    }
-    const pct = (triage.score * 100).toFixed(0);
-    const need = (AgentConfig.triageScoreThreshold * 100).toFixed(0);
-    if (!triage.relevant || triage.score < AgentConfig.triageScoreThreshold) {
-      // Terminal: not worth acting on. Mark it so we never re-triage this post
-      // (the anti-loop rule — a decision not to act is not reconsidered).
+
+    // Similarity decides how far the agent may engage, before any LLM tokens
+    // are spent. A weak (or unscored) match is terminally skipped — the same
+    // anti-loop discipline as a triage miss.
+    const band = engagementBand(cand.similarity);
+    const simStr = cand.similarity === null ? 'null' : cand.similarity.toFixed(2);
+    console.log(`[agent] band ${short} -> ${band} (sim=${simStr})`);
+    if (band === 'skip') {
       await deps.activity.markSkipped(cand.address, deps.clock.now());
       await sink.log(
         'triage',
-        `Skipping — relevance ${pct}% below ${need}%${triage.reason ? ` · ${triage.reason}` : ''}`,
+        `Skipping — affinity ${simStr} below the reaction floor`,
         cand.address,
         null,
         cand.text,
       );
       continue;
     }
-    await sink.log(
-      'triage',
-      `Relevant ${pct}% (≥ ${need}%)${triage.reason ? ` · ${triage.reason}` : ''}`,
-      cand.address,
-      null,
-      cand.text,
-    );
-    const threadContext = await deps.getThreadContext(cand.address);
-    const decision = await decideAction({ llm: deps.llm }, profile, cand.text, threadContext);
-    console.log(
-      `[agent] decide ${short} -> ${decision === null ? 'NULL(parse-fail)' : `action=${decision.action}${decision.reaction ? ` react=${decision.reaction}` : ''}`}`,
-    );
-    if (decision === null) {
-      await sink.log('decide', 'Could not decide (model output unparseable)', cand.address, null, cand.text);
-      continue;
-    }
-    if (decision.action === 'do_nothing') {
-      // Terminal: the agent looked and chose not to act — never reconsider.
-      await deps.activity.markSkipped(cand.address, deps.clock.now());
-      await sink.log('decide', `Chose not to act${decision.rationale ? ` · ${decision.rationale}` : ''}`, cand.address, null, cand.text);
-      continue;
-    }
-    await sink.log(
-      'decide',
-      `Wants to ${decision.action === 'react' ? `react "${decision.reaction}"` : 'reply'}${decision.rationale ? ` · ${decision.rationale}` : ''}`,
-      cand.address,
-      decision.action === 'respond' ? decision.text : null,
-      cand.text,
-    );
 
-    const proposed: ProposedAction =
-      decision.action === 'react' && decision.reaction !== null
-        ? { kind: 'react', target: cand.address, reaction: decision.reaction }
-        : decision.action === 'respond'
-          ? { kind: 'respond', target: cand.address, text: decision.text }
-          : { kind: 'none' };
-
-    const proposedText = proposed.kind === 'respond' ? proposed.text : '';
-    const state: GovernorState = {
-      autonomy: profile.autonomy,
-      postsToday: await deps.activity.countToday(day, 'post'),
-      commentsToday: await deps.activity.countToday(day, 'comment'),
-      reactionsToday: await deps.activity.countToday(day, 'reaction'),
-      turnsInThread:
-        proposed.kind === 'respond' ? await deps.countAgentTurnsInThread(proposed.target) : 0,
-      lastInThreadIsSelfNoHuman:
-        proposed.kind === 'respond' ? await deps.lastInThreadIsSelfNoHuman(proposed.target) : false,
-      dedupHit: proposedText.length > 0 && isDuplicate(proposedText, recent),
-      limits: profile.limits,
-      killSwitch: deps.killSwitch,
-    };
-
-    const verdict = evaluateAction(proposed, state);
-    console.log(
-      `[agent] verdict ${proposed.kind} -> ${verdict.verdict}${verdict.verdict === 'reject' ? ` reason=${verdict.reason}` : ''}`,
-    );
-    const actionText = proposed.kind === 'respond' ? proposed.text : null;
-    if (verdict.verdict === 'reject') {
-      // Terminal rejections (never-list, dedup, per-thread cap) mean the same
-      // candidate would be rejected forever — mark it skipped so it is not
-      // re-thought. Transient ones (daily caps) are left for a future day.
-      if (verdict.terminal) {
-        await deps.activity.markSkipped(cand.address, deps.clock.now());
-      }
-      await sink.log('govern', `Blocked: ${verdict.reason}`, cand.address, actionText, cand.text);
-      rejected++;
-      continue;
-    }
-    if (verdict.verdict === 'queue') {
-      if (proposed.kind !== 'none' && !(await deps.pending.hasForTarget(cand.address))) {
-        await deps.pending.add(toPending(proposed, decision.rationale, deps.clock.now()));
-        await sink.log(
-          'queue',
-          `Drafted a ${proposed.kind === 'react' ? `reaction "${proposed.reaction}"` : 'reply'} for your approval`,
-          cand.address,
-          actionText,
-          cand.text,
-        );
-        queued++;
-      }
-      continue;
-    }
-
-    // verdict allow → publish + remember.
-    await executeProposed(deps, proposed);
-    if (proposed.kind === 'respond') {
-      await deps.activity.incrementToday(day, 'comment');
-      await deps.activity.recordOutput(proposed.text, deps.clock.now(), AgentConfig.dedupHistorySize);
-      recent.unshift(proposed.text);
-      await sink.log('publish', 'Published a reply', cand.address, proposed.text, cand.text);
-    } else if (proposed.kind === 'react') {
-      await deps.activity.incrementToday(day, 'reaction');
-      await sink.log('publish', `Reacted "${proposed.reaction}"`, cand.address, null, cand.text);
-    }
-    published++;
+    tally(await processCandidate(deps, sink, day, recent, cand, band, false));
   }
 
-  return { considered: candidates.length, published, queued, rejected };
+  return {
+    considered: candidates.length + replies.length,
+    published,
+    queued,
+    rejected,
+  };
 }
 
 /**
@@ -312,6 +391,15 @@ export async function runAgentPost(deps: AgentLoopDeps): Promise<boolean> {
     return false;
   }
   const day = dayKey(deps.clock.now());
+  // On autopilot, don't spend a draft LLM call the governor would only reject:
+  // bail early once the daily post cap is reached. (Suggest still drafts into
+  // the approval queue — a human gates those, so the cap is not pre-applied.)
+  if (profile.autonomy === 'autopilot') {
+    const postsToday = await deps.activity.countToday(day, 'post');
+    if (postsToday >= profile.limits.maxPostsPerDay) {
+      return false;
+    }
+  }
   const goal = profile.goals[0];
   const drafted = await completeJson<{ text: string }>(
     { llm: deps.llm },

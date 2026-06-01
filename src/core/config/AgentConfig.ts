@@ -19,11 +19,29 @@ export const AgentConfig = {
   maxCandidatesPerTick: 6,
 
   /**
-   * Minimum triage score (0..1) for a candidate to advance from triage to the
-   * decision step. Below this the agent does nothing — the cheap gate that
-   * keeps the small model from over-acting.
+   * Hard cap on how many reply threads (comments received under the user's
+   * posts, or in threads the agent joined) a single tick will follow up on.
+   * Kept small: each one costs a decision LLM call, and replies are processed
+   * before fresh posts so a busy thread cannot starve them.
    */
-  triageScoreThreshold: 0.55,
+  maxReplyCandidatesPerTick: 4,
+
+  /**
+   * The agent's action is decided DETERMINISTICALLY from a candidate's stored
+   * cosine similarity (MAX vs the user's own posts, or the "About you"
+   * fallback) — never from an LLM relevance estimate:
+   *   - similarity ≥ `respondMinSimilarity` → comment (the LLM only drafts the
+   *     text; the decision to comment is fixed by the threshold);
+   *   - similarity ≥ `reactMinSimilarity` → react with a plain "like" (no LLM);
+   *   - below `reactMinSimilarity`, or no similarity signal → do nothing.
+   * Because cosine is a pure function of the embeddings, the same post always
+   * yields the same action. The only non-determinism left is the wording of a
+   * comment's text, which is inherently generative.
+   */
+  engagement: {
+    respondMinSimilarity: 0.87,
+    reactMinSimilarity: 0.8,
+  },
 
   /**
    * Word-overlap ratio (0..1) above which a freshly proposed text counts as a

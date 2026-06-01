@@ -13,6 +13,16 @@ export type LlmProgressCallback = (p: ModelProgressUpdate) => void;
 export class QvacLlmService implements ILlmService {
   private modelId: string | null = null;
   private loadingPromise: Promise<void> | null = null;
+  /**
+   * Serialises every completion. QVAC's registry allows only one completion
+   * in flight per model and rejects the rest ("completion was rejected by
+   * registry concurrency policy"). Several callers share this one model — the
+   * agent tick, the map's topic-naming, the response-draft pipeline — and can
+   * fire concurrently, so we chain calls through this tail instead of letting
+   * them collide. Failures are swallowed from the chain so one rejected call
+   * does not poison the queue for the next.
+   */
+  private queueTail: Promise<unknown> = Promise.resolve();
 
   get isLoaded(): boolean {
     return this.modelId !== null;
@@ -46,14 +56,39 @@ export class QvacLlmService implements ILlmService {
   }
 
   async complete(prompt: string, options: LlmGenerateOptions): Promise<string> {
-    let acc = '';
-    await this.completeStream(prompt, options, (chunk) => {
-      acc += chunk;
+    return this.enqueue(async () => {
+      let acc = '';
+      await this.streamRaw(prompt, options, (chunk) => {
+        acc += chunk;
+      });
+      return acc;
     });
-    return acc;
   }
 
   async completeStream(
+    prompt: string,
+    options: LlmGenerateOptions,
+    onChunk: (chunk: string) => void,
+  ): Promise<void> {
+    await this.enqueue(() => this.streamRaw(prompt, options, onChunk));
+  }
+
+  /**
+   * Append `task` to the serial completion queue and return its result. The
+   * tail is advanced to a settled (never-rejecting) promise so a failing task
+   * does not break the chain for subsequent callers.
+   */
+  private enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.queueTail.then(task, task);
+    this.queueTail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  /** The actual single-flight SDK completion — only ever called via `enqueue`. */
+  private async streamRaw(
     prompt: string,
     options: LlmGenerateOptions,
     onChunk: (chunk: string) => void,

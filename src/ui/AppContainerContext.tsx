@@ -63,10 +63,16 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
 
         setStage('network');
         const receiverContext = useSettingsStore.getState().receiverContext;
-        const interestText = receiverContext.trim().length === 0
-          ? MatchingConfig.fallbackInterestText
-          : receiverContext;
-        const aboutYouEmbedding = await c.embedder.embed(interestText);
+        // Cold start with no profile: leave the interest embedding null rather
+        // than scoring against a generic fallback. EmbeddingGemma is anisotropic
+        // (unrelated texts still cosine ~0.3-0.5), so a fallback vector would
+        // admit nearly every post with a meaningless score. Null makes
+        // scoreRemotePost return null → the bounded inbox rejects until the user
+        // either writes their first post or sets "About you".
+        const aboutYouEmbedding =
+          receiverContext.trim().length === 0
+            ? null
+            : await c.embedder.embed(receiverContext);
         aboutYouEmbeddingRef.current = aboutYouEmbedding;
 
         // Load own posts' embeddings (with their addresses) so the
@@ -126,13 +132,17 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     void (async () => {
       try {
-        const interestText = receiverContext.trim().length === 0
-          ? MatchingConfig.fallbackInterestText
-          : receiverContext;
-        const embedding = await c.embedder.embed(interestText);
+        // Mirror the boot path: an empty "About you" means no interest signal,
+        // so the embedding stays null and cold-start posts are not admitted.
+        const embedding =
+          receiverContext.trim().length === 0
+            ? null
+            : await c.embedder.embed(receiverContext);
         if (!cancelled) {
           aboutYouEmbeddingRef.current = embedding;
-          console.log('[rn] about-you embedding refreshed');
+          console.log(
+            `[rn] about-you embedding ${embedding === null ? 'cleared (no profile)' : 'refreshed'}`,
+          );
         }
       } catch (e) {
         console.warn(
@@ -222,10 +232,13 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
             'Woke up — nothing new in the inbox to consider',
           );
         }
-        // When the inbox yields nothing to act on, seed a post toward a goal so
-        // conversations can start. Try early (2nd tick) and periodically after.
-        // The governor still caps it; runAgentPost no-ops without a goal.
-        if (report.published === 0 && report.queued === 0 && tick % 4 === 1) {
+        // Seed a post toward a goal on a steady cadence — decoupled from the
+        // reactive output. Previously this only fired when the tick neither
+        // published nor queued anything, so reactions/replies pre-empted it and
+        // the agent almost never posted. Now it runs every 4th tick regardless;
+        // the daily cap (maxPostsPerDay) and the session budget bound it, and
+        // runAgentPost no-ops without a goal or once the cap is hit.
+        if (tick % 4 === 1) {
           const posted = await runAgentPost(deps);
           if (posted) {
             sessionActions += 1;
@@ -351,8 +364,12 @@ function buildAgentDeps(
         ),
     },
     listCandidates: async (limit: number): Promise<AgentCandidate[]> => {
-      const rows = await c.database.query<{ address: string; text: string }>(
-        `SELECT address, text FROM posts
+      const rows = await c.database.query<{
+        address: string;
+        text: string;
+        similarity: number | null;
+      }>(
+        `SELECT address, text, similarity FROM posts
          WHERE author != ?
            AND NOT EXISTS (SELECT 1 FROM responses r WHERE r.in_reply_to = posts.address AND r.author = ?)
            AND NOT EXISTS (SELECT 1 FROM reactions x WHERE x.in_reply_to = posts.address AND x.author = ?)
@@ -362,7 +379,44 @@ function buildAgentDeps(
          LIMIT ?`,
         [c.self, c.self, c.self, limit],
       );
-      return rows.map((r) => ({ address: r.address as RecordAddress, text: r.text }));
+      return rows.map((r) => ({
+        address: r.address as RecordAddress,
+        text: r.text,
+        similarity: r.similarity,
+      }));
+    },
+    listReplyCandidates: async (limit: number): Promise<AgentCandidate[]> => {
+      // Posts the user is part of (their own, or ones the agent replied to)
+      // that carry an unanswered peer comment — the latest response is not the
+      // agent's — and where the agent is still under the per-thread turn cap.
+      const rows = await c.database.query<{ address: string; text: string }>(
+        `SELECT p.address AS address, p.text AS text
+         FROM posts p
+         WHERE (
+                 p.author = ?
+                 OR EXISTS (SELECT 1 FROM responses rs WHERE rs.in_reply_to = p.address AND rs.author = ?)
+               )
+           AND EXISTS (SELECT 1 FROM responses rp WHERE rp.in_reply_to = p.address AND rp.author != ?)
+           AND (
+                 SELECT r3.author FROM responses r3
+                 WHERE r3.in_reply_to = p.address
+                 ORDER BY r3.created_at DESC LIMIT 1
+               ) != ?
+           AND (
+                 SELECT COUNT(*) FROM responses rt WHERE rt.in_reply_to = p.address AND rt.author = ?
+               ) < ?
+         ORDER BY (
+           SELECT MAX(rm.created_at) FROM responses rm WHERE rm.in_reply_to = p.address
+         ) DESC
+         LIMIT ?`,
+        [c.self, c.self, c.self, c.self, c.self, profile.limits.maxTurnsPerThread, limit],
+      );
+      // similarity is irrelevant for replies — these run in the respond band.
+      return rows.map((r) => ({
+        address: r.address as RecordAddress,
+        text: r.text,
+        similarity: null,
+      }));
     },
     getThreadContext: async (target: RecordAddress): Promise<string | null> => {
       const resp = await c.database.query<{ author: string; text: string }>(

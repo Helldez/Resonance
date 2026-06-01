@@ -35,8 +35,8 @@ export default function ComposeScreen() {
         },
         { text },
       );
+      const ownAddress = addressOf(record.author, record.feedIndex);
       if (record.body.kind === 'post') {
-        const ownAddress = addressOf(record.author, record.feedIndex);
         await container.posts.upsert(
           ownAddress,
           record.author,
@@ -48,20 +48,30 @@ export default function ComposeScreen() {
         // Push into the in-memory cache so future incoming posts are scored
         // against THIS post too, without waiting for an app restart.
         appendOwnEmbedding(ownAddress, record.body.embedding);
-        // Re-score the existing inbox against the now-larger set of own posts
-        // so already-received remote posts can be grouped under this new post
-        // (and cold-start scores get rewritten on a single comparable metric).
-        await rescoreInboxAgainstOwnPosts(container);
-        // Replay the full replicated history so posts that were dropped at
-        // admission (e.g. during cold start, or because they didn't match a
-        // previous topic) are re-evaluated against this new post and can now
-        // be pulled into the inbox if they're related.
-        await container.network.rescan();
       }
-      router.replace({
-        pathname: '/map',
-        params: { anchor: addressOf(record.author, record.feedIndex) },
-      });
+      // Navigate immediately. The two passes below are O(inbox) and O(replicated
+      // history) respectively and used to block the compose screen for seconds
+      // as the corpus grew — they now run in the background. The Inbox re-polls
+      // SQLite on a timer, so their results surface without a navigation event.
+      router.replace({ pathname: '/map', params: { anchor: ownAddress } });
+      if (record.body.kind === 'post') {
+        void (async (): Promise<void> => {
+          try {
+            // Re-score the existing inbox against the now-larger set of own
+            // posts so already-received remote posts can be grouped under this
+            // new post (and cold-start scores get rewritten on one metric).
+            await rescoreInboxAgainstOwnPosts(container);
+            // Replay the full replicated history so posts dropped at admission
+            // (e.g. before "About you" was set) are re-evaluated against this
+            // new post and pulled in if they now match.
+            await container.network.rescan();
+          } catch (e) {
+            console.warn(
+              `[rn] post-publish rescore/rescan failed: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+        })();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

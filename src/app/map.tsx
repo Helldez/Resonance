@@ -133,7 +133,7 @@ function PerPostMapScreen() {
         const result = await getMapView(
           { posts: container.posts, self: container.self },
           anchorAddress,
-          { includeSelf: !explicit },
+          { includeSelf: !explicit, minSimilarity: threshold },
         );
         if (cancelled) {
           return;
@@ -152,7 +152,7 @@ function PerPostMapScreen() {
     return () => {
       cancelled = true;
     };
-  }, [anchorParam, container]);
+  }, [anchorParam, container, threshold]);
 
   // Conversion factor in pixels per viewBox unit. The SVG uses
   // `preserveAspectRatio="xMidYMid meet"` with a 2.1×2.1 viewBox (see the

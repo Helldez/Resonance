@@ -303,28 +303,32 @@ export class PostRepository {
     self: PeerId,
     limit: number,
     expectedDim: number,
-    opts: { includeSelf?: boolean; excludeAddress?: RecordAddress } = {},
+    opts: {
+      includeSelf?: boolean;
+      excludeAddress?: RecordAddress;
+      minSimilarity?: number;
+    } = {},
   ): Promise<MapPostRow[]> {
     // The per-post map plots peers only (`author != self`). The global "my
     // posts" map (`includeSelf`) plots everyone, omitting just the anchor so
     // it is not duplicated.
-    const { sql, params } = opts.includeSelf
-      ? {
-          sql: `SELECT address, author, text, embedding, created_at, similarity
+    //
+    // When `minSimilarity` is set the map honours the same view filter as the
+    // Inbox: drop posts below the threshold, but always keep own posts (stored
+    // with a null similarity) so the user's personal history never disappears
+    // from the "my posts" map.
+    const hasMin = typeof opts.minSimilarity === 'number';
+    const simPredicate = hasMin ? ' AND (similarity IS NULL OR similarity >= ?)' : '';
+    const lead = opts.includeSelf ? (opts.excludeAddress ?? '') : self;
+    const leadColumn = opts.includeSelf ? 'address' : 'author';
+    const params: ReadonlyArray<unknown> = hasMin
+      ? [lead, opts.minSimilarity, limit]
+      : [lead, limit];
+    const sql = `SELECT address, author, text, embedding, created_at, similarity
                 FROM posts
-                WHERE address != ?
+                WHERE ${leadColumn} != ?${simPredicate}
                 ORDER BY created_at DESC
-                LIMIT ?`,
-          params: [opts.excludeAddress ?? '', limit] as ReadonlyArray<unknown>,
-        }
-      : {
-          sql: `SELECT address, author, text, embedding, created_at, similarity
-                FROM posts
-                WHERE author != ?
-                ORDER BY created_at DESC
-                LIMIT ?`,
-          params: [self, limit] as ReadonlyArray<unknown>,
-        };
+                LIMIT ?`;
     const rows = await this.db.query<{
       address: string;
       author: string;

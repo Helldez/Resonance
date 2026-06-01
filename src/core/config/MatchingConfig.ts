@@ -56,15 +56,6 @@ export const MatchingConfig = {
   maxResponsesPerPeerPerPost: 1,
 
   /**
-   * Used as the user's interest text when "About you" is empty. In the
-   * single-room model it only drives the cold-start similarity scorer (the
-   * fallback in `ScoreIncomingPost`) until the user has posted anything —
-   * it no longer affects routing.
-   */
-  fallbackInterestText:
-    'general interest in technology, life, and meaningful conversations',
-
-  /**
    * Filtering model: each incoming remote post is scored as the
    * MAX cosine similarity against the current user's own posts. With
    * zero own posts (cold start) we fall back to similarity against the

@@ -1,63 +1,42 @@
-import type { ReactionType } from '@core/domain/types';
-import { REACTION_TYPES } from '@core/domain/types';
 import type { AgentProfile } from '@core/agent/AgentProfile';
-import { buildDecisionPrompt } from '@core/agent/PromptBuilder';
+import { AgentConfig } from '@core/config/AgentConfig';
+import { buildReplyPrompt } from '@core/agent/PromptBuilder';
 import { completeJson, type StructuredLlmDeps } from '@core/llm/StructuredLlm';
 
-export type DecisionAction = 'respond' | 'react' | 'do_nothing';
-
-export interface Decision {
-  readonly action: DecisionAction;
+export interface ReplyDraft {
   readonly text: string;
-  readonly reaction: ReactionType | null;
   readonly rationale: string;
 }
 
-/** Pick exactly one action for a candidate that passed triage. */
-export async function decideAction(
+/**
+ * Draft a reply for a candidate the agent has already decided to comment on
+ * (the decision is made from similarity, not here — see `AgentConfig.
+ * engagement`). Returns null only when the model fails to produce usable text,
+ * which the caller treats as "skip this one", not as a relevance judgement.
+ */
+export async function draftReply(
   deps: StructuredLlmDeps,
   profile: AgentProfile,
   candidateText: string,
   threadContext: string | null,
-): Promise<Decision | null> {
-  return completeJson<Decision>(
+): Promise<ReplyDraft | null> {
+  return completeJson<ReplyDraft>(
     deps,
-    buildDecisionPrompt(profile, candidateText, threadContext),
-    validateDecision,
+    buildReplyPrompt(profile, candidateText, threadContext),
+    validateReply,
+    { temperature: AgentConfig.textTemperature, maxTokens: AgentConfig.commentMaxTokens },
   );
 }
 
-function validateDecision(value: unknown): Decision | null {
+function validateReply(value: unknown): ReplyDraft | null {
   if (typeof value !== 'object' || value === null) {
     return null;
   }
   const v = value as Record<string, unknown>;
-  const action = v.action;
-  if (action !== 'respond' && action !== 'react' && action !== 'do_nothing') {
-    return null;
-  }
   const text = typeof v.text === 'string' ? v.text.trim().slice(0, 240) : '';
+  if (text.length === 0) {
+    return null;
+  }
   const rationale = typeof v.rationale === 'string' ? v.rationale.slice(0, 140) : '';
-  const reaction = parseReaction(v.reaction);
-
-  // Reject incoherent proposals so the caller falls back to doing nothing.
-  if (action === 'respond' && text.length === 0) {
-    return null;
-  }
-  if (action === 'react' && reaction === null) {
-    return null;
-  }
-  return { action, text, reaction, rationale };
-}
-
-function parseReaction(value: unknown): ReactionType | null {
-  if (typeof value !== 'string') {
-    return null;
-  }
-  for (const t of REACTION_TYPES) {
-    if (t === value) {
-      return t;
-    }
-  }
-  return null;
+  return { text, rationale };
 }

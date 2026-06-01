@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Platform,
   View,
   ScrollView,
   Pressable,
@@ -18,6 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, G } from 'react-native-svg';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useRequireContainer } from '@ui/AppContainerContext';
+import { useSettingsStore } from '@domain/SettingsStore';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 import { TopicConfig } from '@core/config/TopicConfig';
 import { ThemeConfig } from '@core/config/ThemeConfig';
@@ -77,6 +79,7 @@ export function TopicAtlasView() {
   const router = useRouter();
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const threshold = useSettingsStore((s) => s.similarityThreshold);
   const { width, height } = useWindowDimensions();
 
   const [atlas, setAtlas] = useState<TopicAtlasResult | null>(null);
@@ -105,7 +108,7 @@ export function TopicAtlasView() {
           container.self,
           TopicConfig.maxPosts,
           dim,
-          { includeSelf: true },
+          { includeSelf: true, minSimilarity: threshold },
         );
         if (cancelled) return;
         const posts = rows.map((r) => ({
@@ -154,20 +157,114 @@ export function TopicAtlasView() {
     return () => {
       cancelled = true;
     };
-  }, [container]);
+  }, [container, threshold]);
 
-  const [svgLayout, setSvgLayout] = useState<{ width: number; height: number } | null>(null);
+  const [svgLayout, setSvgLayout] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
   const onSvgLayout = (e: LayoutChangeEvent): void => {
-    const { width: w, height: h } = e.nativeEvent.layout;
+    const { x, y, width: w, height: h } = e.nativeEvent.layout;
     setSvgLayout((prev) =>
-      prev !== null && prev.width === w && prev.height === h ? prev : { width: w, height: h },
+      prev !== null && prev.x === x && prev.y === y && prev.width === w && prev.height === h
+        ? prev
+        : { x, y, width: w, height: h },
     );
   };
   const containerW = svgLayout?.width ?? width;
   const containerH = svgLayout?.height ?? Math.max(1, height - 200);
   const pxPerUnit = Math.min(containerW, containerH) / VIEWBOX_SPAN;
+  // Tap coordinates: on native, gesture-handler reports e.x/e.y relative to an
+  // outer ancestor, so add the inner View's layout offset to align the SVG
+  // centre with its visual midpoint; on web they are already target-relative.
+  const useOuterOffset = Platform.OS !== 'web';
+  const offsetX = useOuterOffset ? svgLayout?.x ?? 0 : 0;
+  const offsetY = useOuterOffset ? svgLayout?.y ?? 0 : 0;
+  const svgCenterX = offsetX + containerW / 2;
+  const svgCenterY = offsetY + containerH / 2;
+
+  // Refs so the stable Tap gesture reads the latest projection without being
+  // re-created on every pan/pinch frame (recreating it drops in-flight taps).
+  const atlasRef = useRef<TopicAtlasResult | null>(atlas);
+  useEffect(() => {
+    atlasRef.current = atlas;
+  }, [atlas]);
+  const pxPerUnitRef = useRef(pxPerUnit);
+  useEffect(() => {
+    pxPerUnitRef.current = pxPerUnit;
+  }, [pxPerUnit]);
+  const svgCenterXRef = useRef(svgCenterX);
+  useEffect(() => {
+    svgCenterXRef.current = svgCenterX;
+  }, [svgCenterX]);
+  const svgCenterYRef = useRef(svgCenterY);
+  useEffect(() => {
+    svgCenterYRef.current = svgCenterY;
+  }, [svgCenterY]);
 
   const gesture = useMemo(() => {
+    // Manual hit-test, mirroring the per-post map. SVG <Circle onPress> alone
+    // is unreliable on Android inside a GestureDetector — the pan recogniser
+    // swallows the touch before onPress fires, so dots looked untappable.
+    const tap = Gesture.Tap()
+      .maxDuration(500)
+      .maxDistance(14)
+      .numberOfTaps(1)
+      .shouldCancelWhenOutside(false)
+      .onEnd((e, success) => {
+        if (!success) {
+          return;
+        }
+        const a = atlasRef.current;
+        if (a === null) {
+          return;
+        }
+        const ppu = pxPerUnitRef.current;
+        const s = scaleRef.current;
+        const localX = ((e.x - svgCenterXRef.current) / ppu - txRef.current) / s;
+        const localY = ((e.y - svgCenterYRef.current) / ppu - tyRef.current) / s;
+        const hr = 16 / ppu / s;
+        const hrSq = hr * hr;
+
+        let bestP: TopicAtlasResult['points'][number] | null = null;
+        let bestSq = Infinity;
+        for (const p of a.points) {
+          const dx = p.x - localX;
+          const dy = p.y - localY;
+          const sq = dx * dx + dy * dy;
+          if (sq <= hrSq && sq < bestSq) {
+            bestSq = sq;
+            bestP = p;
+          }
+        }
+        if (bestP !== null) {
+          const p = bestP;
+          setSelectedTopic(null);
+          setSelected({
+            address: p.address,
+            author: p.author,
+            text: p.text,
+            isOwn: p.isOwn,
+            topicLabel: a.topics[p.topicId]?.label ?? '',
+            x: p.x,
+            y: p.y,
+          });
+          return;
+        }
+        // No dot under the finger — fall back to the enclosing topic bubble.
+        for (const t of a.topics) {
+          const dx = t.cx - localX;
+          const dy = t.cy - localY;
+          if (dx * dx + dy * dy <= t.r * t.r) {
+            setSelected(null);
+            setSelectedTopic(t);
+            return;
+          }
+        }
+      });
+
     const pan = Gesture.Pan()
       .minDistance(6)
       .onStart(() => {
@@ -198,7 +295,7 @@ export function TopicAtlasView() {
       .onEnd(() => {
         scaleStartRef.current = null;
       });
-    return Gesture.Simultaneous(pinch, pan);
+    return Gesture.Simultaneous(pinch, Gesture.Race(tap, pan));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pxPerUnit]);
 
@@ -364,8 +461,7 @@ export function TopicAtlasView() {
                 <View style={legendSwatchStyle(topicColor(t.id, atlas.k))} />
                 <Text
                   variant="labelSmall"
-                  numberOfLines={1}
-                  style={{ color: theme.colors.onSurface, maxWidth: 130 }}
+                  style={{ color: theme.colors.onSurface }}
                 >
                   {t.label}
                 </Text>

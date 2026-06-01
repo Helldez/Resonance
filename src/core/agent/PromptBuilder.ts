@@ -26,23 +26,19 @@ export function buildPersonaPrefix(profile: AgentProfile): string {
   ].join('\n');
 }
 
-/** Triage: is this candidate worth acting on at all? Cheap binary gate. */
-export function buildTriagePrompt(profile: AgentProfile, candidateText: string): string {
-  return [
-    buildPersonaPrefix(profile),
-    '',
-    '--- CANDIDATE POST ---',
-    candidateText.trim(),
-    '--- END ---',
-    '',
-    'Decide whether engaging with this post would advance the user\'s goals.',
-    'Reply with ONLY a JSON object of the form:',
-    '{"relevant": true|false, "score": 0.0-1.0, "reason": "<=120 chars"}',
-  ].join('\n');
-}
+/**
+ * Engagement band, derived deterministically from the candidate's similarity
+ * (see `AgentConfig.engagement`): `respond` → the agent comments, `react` → it
+ * acknowledges with a like. The band is the decision; the LLM never overrides it.
+ */
+export type EngagementBand = 'respond' | 'react';
 
-/** Decision: pick exactly one action for a candidate that passed triage. */
-export function buildDecisionPrompt(
+/**
+ * Reply drafting. The decision to reply was already made deterministically from
+ * the candidate's similarity (see `AgentConfig.engagement`); the LLM's only job
+ * here is to write the text. There is no "should I?" — only "what would I say?".
+ */
+export function buildReplyPrompt(
   profile: AgentProfile,
   candidateText: string,
   threadContext: string | null,
@@ -50,7 +46,7 @@ export function buildDecisionPrompt(
   const parts = [
     buildPersonaPrefix(profile),
     '',
-    '--- ITEM YOU ARE CONSIDERING ---',
+    '--- ITEM YOU ARE REPLYING TO ---',
     candidateText.trim(),
     '--- END ---',
   ];
@@ -59,17 +55,10 @@ export function buildDecisionPrompt(
   }
   parts.push(
     '',
-    'Pick the LIGHTEST action that fits. Most posts deserve a reaction, not a reply.',
-    'Choose exactly ONE action:',
-    '- "react" (DEFAULT): you broadly agree, find it interesting, or want to acknowledge it,',
-    '  but have nothing specific to add. Set "reaction" to like, insightful, agree, or curious.',
-    '- "respond": ONLY when you have a concrete, specific contribution or one sharp question',
-    '  that genuinely moves the conversation. Not for praise or agreement. Set "text" (1 sentence).',
-    '- "do_nothing": the post is not worth engaging.',
-    'Do NOT respond just to be polite — prefer "react" over a generic reply.',
-    'When you choose "react" do not set "text"; when you choose "respond" do not set "reaction".',
+    'Write ONE short reply (1 sentence) that adds something specific or asks one',
+    'sharp question. No greetings, no sign-off, no generic praise.',
     'Reply with ONLY a JSON object of the form:',
-    '{"action": "react"|"respond"|"do_nothing", "reaction": "like|insightful|agree|curious", "text": "<=240 chars", "rationale": "<=120 chars"}',
+    '{"text": "<=240 chars", "rationale": "<=120 chars"}',
   );
   return parts.join('\n');
 }

@@ -32,6 +32,11 @@ export interface ListForMapOptions {
   readonly includeSelf?: boolean;
   /** Address to omit (the anchor, added separately to avoid a duplicate). */
   readonly excludeAddress?: RecordAddress;
+  /**
+   * Inbox-style view filter: drop posts whose stored similarity is below this
+   * value (own posts, stored null, always pass). Omitted means plot everything.
+   */
+  readonly minSimilarity?: number;
 }
 
 export interface MapRepository {
@@ -50,6 +55,11 @@ export interface MapRepository {
 export interface GetMapViewOptions {
   /** Plot the user's own posts too (the global "my posts" map). */
   readonly includeSelf?: boolean;
+  /**
+   * Inbox-style view filter forwarded to the repository, so the map shows the
+   * same set of posts the user's similarity threshold admits to the inbox.
+   */
+  readonly minSimilarity?: number;
 }
 
 /**
@@ -76,7 +86,11 @@ export async function getMapView(
     deps.self,
     MatchingConfig.mapMaxCandidates,
     dim,
-    { includeSelf: opts.includeSelf === true, excludeAddress: anchorAddress },
+    {
+      includeSelf: opts.includeSelf === true,
+      excludeAddress: anchorAddress,
+      minSimilarity: opts.minSimilarity,
+    },
   );
 
   const projection = projectToPlane(
