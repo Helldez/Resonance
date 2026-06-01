@@ -17,6 +17,7 @@ import { useRequireContainer } from '@ui/AppContainerContext';
 import { useSettingsStore } from '@domain/SettingsStore';
 import { getMapView } from '@core/posts/GetMapCandidates';
 import type { MapView } from '@core/posts/GetMapCandidates';
+import { radiusForSimilarity } from '@core/matching/Project2D';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 import { RoomConfig } from '@core/config/RoomConfig';
 import { ThemeConfig } from '@core/config/ThemeConfig';
@@ -154,9 +155,12 @@ function PerPostMapScreen() {
   }, [anchorParam, container]);
 
   // Conversion factor in pixels per viewBox unit. The SVG uses
-  // `preserveAspectRatio="xMidYMid meet"` with a 2.4×2.4 viewBox inside
-  // the measured `svgLayout`; the smaller of width/height drives the
-  // scale, the larger gets padded by SVG's intrinsic centering.
+  // `preserveAspectRatio="xMidYMid meet"` with a 2.1×2.1 viewBox (see the
+  // `viewBox="-1.05 -1.05 2.1 2.1"` below) inside the measured `svgLayout`;
+  // the smaller of width/height drives the scale, the larger gets padded by
+  // SVG's intrinsic centering. This divisor MUST match the viewBox span, or
+  // the tap hit-test drifts proportionally to distance from centre — the bug
+  // where points near the rim were untappable on mobile (divisor was 2.4).
   //
   // Gesture event coordinates differ by platform:
   //   - Android (`react-native-gesture-handler` native): e.x/e.y are
@@ -172,7 +176,7 @@ function PerPostMapScreen() {
   const useOuterOffset = Platform.OS !== 'web';
   const offsetX = useOuterOffset ? svgLayout?.x ?? 0 : 0;
   const offsetY = useOuterOffset ? svgLayout?.y ?? 0 : 0;
-  const sideUnits = Math.min(containerW, containerH) / 2.4;
+  const sideUnits = Math.min(containerW, containerH) / MAP_VIEWBOX_SPAN;
   const svgCenterX = offsetX + containerW / 2;
   const svgCenterY = offsetY + containerH / 2;
 
@@ -375,7 +379,11 @@ function PerPostMapScreen() {
     sim: number;
   }> = radialMode
     ? MatchingConfig.mapReferenceRings.similarities.map((sim) => ({
-        r: (1 - sim) / 2,
+        // Use the SAME anisotropy-corrected transform as the plotted points
+        // (Project2D.radiusForSimilarity), so a dot landing on the "0.70" ring
+        // really is at cosine 0.70. A raw (1-sim)/2 here would misalign rings
+        // and dots once the floor rescale is applied.
+        r: radiusForSimilarity(sim, MatchingConfig.mapRadialAnisotropyFloor),
         label: `sim ${sim.toFixed(2)}`,
         active: Math.abs(sim - threshold) < 1e-6,
         sim,
@@ -907,6 +915,12 @@ function fillCentered(background: string) {
     padding: 24,
   };
 }
+
+/**
+ * Span of the SVG viewBox (`-1.05 -1.05 2.1 2.1`). The pixel→viewBox tap math
+ * divides the measured side by exactly this, so the two never drift.
+ */
+const MAP_VIEWBOX_SPAN = 2.1;
 
 /** Grid tick positions for the cartesian (PCA-2) view, in viewBox units. */
 const GRID_TICKS = [-1, -0.75, -0.5, -0.25, 0.25, 0.5, 0.75, 1] as const;

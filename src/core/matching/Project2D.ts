@@ -32,11 +32,26 @@ export type ProjectionMethod = 'pca-2' | 'radial-sim';
  * would under a manifold method. Upgrade path: swap the body of this
  * function with a UMAP call once available in the worklet.
  */
+/**
+ * Map a raw cosine similarity to a radial distance in [0, 1] for the
+ * radial-sim view, correcting for embedding anisotropy. Without the floor,
+ * gemma-768's high baseline cosine (~0.3-0.5 even for unrelated text) collapses
+ * every point toward the centre. We rescale `[floor, 1] → [0, 1]` so sim=1 is
+ * the centre (r=0) and sim≤floor is the rim (r=1). Shared by the projector and
+ * the map's reference rings so dots and ring labels line up.
+ */
+export function radiusForSimilarity(sim: number, floor: number): number {
+  const denom = 1 - floor;
+  const norm = denom > 0 ? (sim - floor) / denom : sim;
+  return clamp01(1 - clamp01(norm));
+}
+
 export function projectToPlane(
   anchor: ProjectionInput,
   peers: ReadonlyArray<ProjectionInput>,
   method: ProjectionMethod,
   powerIterations: number,
+  anisotropyFloor = 0,
 ): ProjectionResult {
   if (method !== 'pca-2' && method !== 'radial-sim') {
     throw new Error(`projectToPlane: unsupported method "${method}"`);
@@ -92,7 +107,9 @@ export function projectToPlane(
   for (let k = 1; k < n; k++) {
     const item = all[k];
     const sim = cosineOnUnit(anchor.embedding, item.embedding);
-    const r = clamp01((1 - sim) / 2);
+    // Anisotropy-corrected radius (see radiusForSimilarity). When floor=0 this
+    // reduces to the legacy `1 - sim` mapping.
+    const r = radiusForSimilarity(sim, anisotropyFloor);
     const dx = xRaw[k] - anchorX;
     const dy = yRaw[k] - anchorY;
     const norm = Math.sqrt(dx * dx + dy * dy);

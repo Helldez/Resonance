@@ -135,6 +135,21 @@ export const MatchingConfig = {
   },
 
   /**
+   * Anisotropy floor for the radial map. EmbeddingGemma's vectors are
+   * anisotropic: even unrelated texts share a high baseline cosine (~0.3-0.5),
+   * never near 0. Mapping radius as a raw `(1 - sim)/2` therefore crams every
+   * point into the centre and wastes the outer rings. We instead rescale
+   * cosine from `[floor, 1]` onto `[0, 1]` before computing the radius, so the
+   * full disc is used and the rings spread out. The same transform is applied
+   * to the reference-ring radii so labels stay aligned with the dots.
+   *
+   * `floor` is the empirical cosine below which two gemma-768 texts are
+   * effectively unrelated; calibrate with `npm run calibrate`. Points at or
+   * below the floor sit on the rim.
+   */
+  mapRadialAnisotropyFloor: 0.3,
+
+  /**
    * Prompts used by the response draft pipeline. Kept here, not at call
    * site, so they can be A/B-tested without touching use-case code.
    */

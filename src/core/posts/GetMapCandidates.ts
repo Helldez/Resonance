@@ -84,6 +84,7 @@ export async function getMapView(
     peers.map((p) => ({ address: p.address, embedding: p.embedding })),
     MatchingConfig.mapProjectionMethod,
     MatchingConfig.mapPcaPowerIterations,
+    MatchingConfig.mapRadialAnisotropyFloor,
   );
 
   const anchorOut = {
