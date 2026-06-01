@@ -149,7 +149,10 @@ npm run desktop:peer
   `src/core/inference/LlmService.ts`
 - Matching: `src/core/matching/` (cosine similarity, L2 normalisation, PCA-2
   map projection) + `src/core/inbox/` (bounded top-K admission)
-- Use cases: `src/core/{posts,responses,identity}/`
+- Use cases: `src/core/{posts,responses,reactions,identity}/`
+- Local-AI agent: `src/core/agent/` (loop, governor, triage, decide, profile,
+  prompts) + `src/core/llm/StructuredLlm.ts` — runtime flow documented in
+  [`docs/AGENTS_FLOW.md`](docs/AGENTS_FLOW.md)
 - Network sync: `src/core/net/SyncEngine.ts`
 - Storage: `src/data/*Repository.ts` over `src/platform/mobile/ExpoSqliteDatabase.ts`
 - Worklet: `qvac/worker.entry.mjs`
