@@ -55,6 +55,15 @@ export const AgentConfig = {
   /** Run the reflection/digest summarisation once every N ticks. */
   reflectionEveryNTicks: 20,
 
+  /**
+   * Autopilot circuit breaker. The agent pauses itself after this many
+   * published actions in one app session, so an unattended autopilot can't run
+   * forever (or two agents ping-pong indefinitely). Re-arm by toggling autonomy
+   * off→autopilot, or restarting the app. Suggest mode is unaffected (a human
+   * approves each draft anyway).
+   */
+  sessionActionBudget: 12,
+
   /** Defaults applied to a fresh AgentProfile (the form seeds from these). */
   defaults: {
     name: 'My agent',

@@ -87,6 +87,7 @@ export interface AgentLogSink {
     summary: string,
     target?: string | null,
     text?: string | null,
+    refText?: string | null,
   ): Promise<void> | void;
 }
 
@@ -155,36 +156,48 @@ export async function runAgentTick(deps: AgentLoopDeps): Promise<TickReport> {
       `[agent] triage ${short} -> ${triage === null ? 'NULL(parse-fail)' : `relevant=${triage.relevant} score=${triage.score.toFixed(2)} thr=${AgentConfig.triageScoreThreshold}`}`,
     );
     if (triage === null) {
-      await sink.log('triage', 'Could not read the post (model output unparseable)', cand.address, cand.text);
+      await sink.log('triage', 'Could not read the post (model output unparseable)', cand.address, null, cand.text);
+      continue;
+    }
+    const pct = (triage.score * 100).toFixed(0);
+    const need = (AgentConfig.triageScoreThreshold * 100).toFixed(0);
+    if (!triage.relevant || triage.score < AgentConfig.triageScoreThreshold) {
+      // Explicitly record WHY it will not act on this post.
+      await sink.log(
+        'triage',
+        `Skipping — relevance ${pct}% below ${need}%${triage.reason ? ` · ${triage.reason}` : ''}`,
+        cand.address,
+        null,
+        cand.text,
+      );
       continue;
     }
     await sink.log(
       'triage',
-      `Relevance ${(triage.score * 100).toFixed(0)}% (need ${(AgentConfig.triageScoreThreshold * 100).toFixed(0)}%)${triage.reason ? ` — ${triage.reason}` : ''}`,
+      `Relevant ${pct}% (≥ ${need}%)${triage.reason ? ` · ${triage.reason}` : ''}`,
       cand.address,
+      null,
       cand.text,
     );
-    if (!triage.relevant || triage.score < AgentConfig.triageScoreThreshold) {
-      continue;
-    }
     const threadContext = await deps.getThreadContext(cand.address);
     const decision = await decideAction({ llm: deps.llm }, profile, cand.text, threadContext);
     console.log(
       `[agent] decide ${short} -> ${decision === null ? 'NULL(parse-fail)' : `action=${decision.action}${decision.reaction ? ` react=${decision.reaction}` : ''}`}`,
     );
     if (decision === null) {
-      await sink.log('decide', 'Could not decide (model output unparseable)', cand.address);
+      await sink.log('decide', 'Could not decide (model output unparseable)', cand.address, null, cand.text);
       continue;
     }
     if (decision.action === 'do_nothing') {
-      await sink.log('decide', `Chose to do nothing${decision.rationale ? ` — ${decision.rationale}` : ''}`, cand.address);
+      await sink.log('decide', `Chose not to act${decision.rationale ? ` · ${decision.rationale}` : ''}`, cand.address, null, cand.text);
       continue;
     }
     await sink.log(
       'decide',
-      `Wants to ${decision.action === 'react' ? `react "${decision.reaction}"` : 'reply'}${decision.rationale ? ` — ${decision.rationale}` : ''}`,
+      `Wants to ${decision.action === 'react' ? `react "${decision.reaction}"` : 'reply'}${decision.rationale ? ` · ${decision.rationale}` : ''}`,
       cand.address,
       decision.action === 'respond' ? decision.text : null,
+      cand.text,
     );
 
     const proposed: ProposedAction =
@@ -215,7 +228,7 @@ export async function runAgentTick(deps: AgentLoopDeps): Promise<TickReport> {
     );
     const actionText = proposed.kind === 'respond' ? proposed.text : null;
     if (verdict.verdict === 'reject') {
-      await sink.log('govern', `Blocked: ${verdict.reason}`, cand.address, actionText);
+      await sink.log('govern', `Blocked: ${verdict.reason}`, cand.address, actionText, cand.text);
       rejected++;
       continue;
     }
@@ -227,6 +240,7 @@ export async function runAgentTick(deps: AgentLoopDeps): Promise<TickReport> {
           `Drafted a ${proposed.kind === 'react' ? `reaction "${proposed.reaction}"` : 'reply'} for your approval`,
           cand.address,
           actionText,
+          cand.text,
         );
         queued++;
       }
@@ -239,10 +253,10 @@ export async function runAgentTick(deps: AgentLoopDeps): Promise<TickReport> {
       await deps.activity.incrementToday(day, 'comment');
       await deps.activity.recordOutput(proposed.text, deps.clock.now(), AgentConfig.dedupHistorySize);
       recent.unshift(proposed.text);
-      await sink.log('publish', 'Published a reply', cand.address, proposed.text);
+      await sink.log('publish', 'Published a reply', cand.address, proposed.text, cand.text);
     } else if (proposed.kind === 'react') {
       await deps.activity.incrementToday(day, 'reaction');
-      await sink.log('publish', `Reacted "${proposed.reaction}"`, cand.address);
+      await sink.log('publish', `Reacted "${proposed.reaction}"`, cand.address, null, cand.text);
     }
     published++;
   }

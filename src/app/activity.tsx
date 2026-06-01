@@ -121,19 +121,43 @@ export default function ActivityScreen() {
                   )}
                 </View>
                 <Text style={{ color: theme.colors.onSurface, marginTop: 1 }}>{item.summary}</Text>
+                {item.refText !== null && item.refText.length > 0 && (
+                  <View
+                    style={{
+                      marginTop: 4,
+                      padding: 6,
+                      borderRadius: 8,
+                      backgroundColor: theme.colors.surfaceVariant,
+                    }}
+                  >
+                    <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                      In reply to
+                    </Text>
+                    <Text
+                      variant="bodySmall"
+                      style={{ color: theme.colors.onSurfaceVariant }}
+                      numberOfLines={3}
+                    >
+                      {item.refText}
+                    </Text>
+                  </View>
+                )}
                 {item.text !== null && item.text.length > 0 && (
                   <View
                     style={{
                       marginTop: 4,
                       paddingLeft: 8,
                       borderLeftWidth: 2,
-                      borderLeftColor: theme.colors.outline,
+                      borderLeftColor: meta.color,
                     }}
                   >
+                    <Text variant="labelSmall" style={{ color: meta.color }}>
+                      Agent wrote
+                    </Text>
                     <Text
                       variant="bodySmall"
-                      style={{ color: theme.colors.onSurfaceVariant, fontStyle: 'italic' }}
-                      numberOfLines={4}
+                      style={{ color: theme.colors.onSurface }}
+                      numberOfLines={5}
                     >
                       {item.text}
                     </Text>

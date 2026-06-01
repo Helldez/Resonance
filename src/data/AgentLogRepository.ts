@@ -23,8 +23,10 @@ export interface AgentLogEntry {
   readonly target: string | null;
   /** Short headline, e.g. "respond → queue" or "triage 0.70 ≥ 0.55". */
   readonly summary: string;
-  /** The actual text the agent wrote/considered, if any. */
+  /** The text the agent itself wrote (its reply/post), if any. */
   readonly text: string | null;
+  /** The post/comment the agent is reacting to (the reference), if any. */
+  readonly refText: string | null;
 }
 
 const KEEP = 500;
@@ -45,10 +47,17 @@ export class AgentLogRepository {
         phase TEXT NOT NULL,
         target TEXT,
         summary TEXT NOT NULL,
-        text TEXT
+        text TEXT,
+        ref_text TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_agent_log_created ON agent_log(created_at);
     `);
+    // Migration: ref_text (the post/comment being replied to) was added after
+    // the initial agent_log schema; append it in place on existing tables.
+    const cols = await this.db.query<{ name: string }>('PRAGMA table_info(agent_log)');
+    if (!cols.some((c) => c.name === 'ref_text')) {
+      await this.db.exec('ALTER TABLE agent_log ADD COLUMN ref_text TEXT');
+    }
   }
 
   async append(
@@ -57,10 +66,11 @@ export class AgentLogRepository {
     summary: string,
     target: string | null = null,
     text: string | null = null,
+    refText: string | null = null,
   ): Promise<void> {
     await this.db.exec(
-      'INSERT INTO agent_log (created_at, phase, target, summary, text) VALUES (?, ?, ?, ?, ?)',
-      [createdAt, phase, target, summary, text],
+      'INSERT INTO agent_log (created_at, phase, target, summary, text, ref_text) VALUES (?, ?, ?, ?, ?, ?)',
+      [createdAt, phase, target, summary, text, refText],
     );
     await this.db.exec(
       `DELETE FROM agent_log WHERE id NOT IN (
@@ -78,8 +88,9 @@ export class AgentLogRepository {
       target: string | null;
       summary: string;
       text: string | null;
+      ref_text: string | null;
     }>(
-      'SELECT id, created_at, phase, target, summary, text FROM agent_log ORDER BY id DESC LIMIT ?',
+      'SELECT id, created_at, phase, target, summary, text, ref_text FROM agent_log ORDER BY id DESC LIMIT ?',
       [limit],
     );
     return rows.map((r) => ({
@@ -89,6 +100,7 @@ export class AgentLogRepository {
       target: r.target,
       summary: r.summary,
       text: r.text,
+      refText: r.ref_text,
     }));
   }
 

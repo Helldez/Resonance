@@ -158,6 +158,11 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     let running = false;
     let tick = 0;
+    // Autopilot circuit breaker: actions published this session, and whether we
+    // already announced the pause (so we log it once, not every tick).
+    let sessionActions = 0;
+    let pauseAnnounced = false;
+    let lastAutonomy = '';
 
     const runOnce = async (): Promise<void> => {
       if (cancelled || running) {
@@ -165,6 +170,12 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
       }
       const { profile, killSwitch } = useAgentProfileStore.getState();
       const norm = normalizeProfile(profile);
+      // Toggling autonomy (e.g. off→autopilot) re-arms the session budget.
+      if (norm.autonomy !== lastAutonomy) {
+        lastAutonomy = norm.autonomy;
+        sessionActions = 0;
+        pauseAnnounced = false;
+      }
       // Log the gate so logcat shows exactly why a tick is or isn't running.
       console.log(
         `[agent] gate llmLoaded=${c.llmConcrete.isLoaded} enabled=${norm.enabled} autonomy=${norm.autonomy} kill=${killSwitch} goals=${norm.goals.length} interests=${norm.interests.length}`,
@@ -182,13 +193,27 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
         });
         return;
       }
+      // Autopilot circuit breaker: once the session budget is spent, stop
+      // publishing on autopilot (Suggest still queues — a human gates those).
+      if (norm.autonomy === 'autopilot' && sessionActions >= AgentConfig.sessionActionBudget) {
+        if (!pauseAnnounced) {
+          pauseAnnounced = true;
+          await c.agentLog.append(
+            c.clock.now(),
+            'tick',
+            `Autopilot paused — reached ${AgentConfig.sessionActionBudget} actions this session. Toggle autonomy off→autopilot in My agent to resume.`,
+          );
+        }
+        return;
+      }
       running = true;
       try {
         const deps = buildAgentDeps(c, norm, killSwitch);
         const report = await runAgentTick(deps);
         tick++;
+        sessionActions += report.published;
         console.log(
-          `[rn] agent tick considered=${report.considered} published=${report.published} queued=${report.queued} rejected=${report.rejected}`,
+          `[rn] agent tick considered=${report.considered} published=${report.published} queued=${report.queued} rejected=${report.rejected} sessionActions=${sessionActions}`,
         );
         if (report.considered === 0) {
           await c.agentLog.append(
@@ -202,6 +227,9 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
         // The governor still caps it; runAgentPost no-ops without a goal.
         if (report.published === 0 && report.queued === 0 && tick % 4 === 1) {
           const posted = await runAgentPost(deps);
+          if (posted) {
+            sessionActions += 1;
+          }
           console.log(`[agent] proactive post attempted=${posted}`);
         }
       } catch (e) {
@@ -312,8 +340,15 @@ function buildAgentDeps(
     activity: c.agentActivity,
     pending: c.pending,
     logSink: {
-      log: (phase, summary, target, text) =>
-        c.agentLog.append(c.clock.now(), phase, summary, target ?? null, text ?? null),
+      log: (phase, summary, target, text, refText) =>
+        c.agentLog.append(
+          c.clock.now(),
+          phase,
+          summary,
+          target ?? null,
+          text ?? null,
+          refText ?? null,
+        ),
     },
     listCandidates: async (limit: number): Promise<AgentCandidate[]> => {
       const rows = await c.database.query<{ address: string; text: string }>(
@@ -322,7 +357,7 @@ function buildAgentDeps(
            AND NOT EXISTS (SELECT 1 FROM responses r WHERE r.in_reply_to = posts.address AND r.author = ?)
            AND NOT EXISTS (SELECT 1 FROM reactions x WHERE x.in_reply_to = posts.address AND x.author = ?)
            AND NOT EXISTS (SELECT 1 FROM agent_pending p WHERE p.target = posts.address)
-         ORDER BY (similarity IS NULL), similarity DESC, created_at DESC
+         ORDER BY created_at DESC
          LIMIT ?`,
         [c.self, c.self, c.self, limit],
       );
