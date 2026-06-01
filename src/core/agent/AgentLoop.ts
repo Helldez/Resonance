@@ -57,6 +57,8 @@ export interface ActivityCounters {
   incrementToday(day: string, kind: ActivityKind): Promise<void>;
   recordOutput(text: string, createdAt: number, keep: number): Promise<void>;
   recentOutputs(limit: number): Promise<string[]>;
+  /** Mark a candidate as terminally handled so it is never re-evaluated. */
+  markSkipped(target: string, createdAt: number): Promise<void>;
 }
 
 /** Subset of PendingActionRepository the loop needs. */
@@ -140,6 +142,26 @@ export async function runAgentTick(deps: AgentLoopDeps): Promise<TickReport> {
   }
 
   const day = dayKey(deps.clock.now());
+
+  // Pre-check the daily caps BEFORE spending any LLM tokens. In autopilot, if
+  // every action class is exhausted there is nothing the agent could publish,
+  // so thinking again this tick would just re-reject — the "ri-pensiero" loop.
+  // (Suggest still drafts into the queue, so it is exempt.)
+  if (profile.autonomy === 'autopilot') {
+    const [p, c, r] = await Promise.all([
+      deps.activity.countToday(day, 'post'),
+      deps.activity.countToday(day, 'comment'),
+      deps.activity.countToday(day, 'reaction'),
+    ]);
+    const canComment = c < profile.limits.maxCommentsPerDay;
+    const canReact = r < profile.limits.maxReactionsPerDay;
+    const canPost = p < profile.limits.maxPostsPerDay;
+    if (!canComment && !canReact && !canPost) {
+      await sink.log('govern', 'All daily caps reached — resting until tomorrow (not re-thinking)');
+      return empty;
+    }
+  }
+
   const candidates = await deps.listCandidates(AgentConfig.maxCandidatesPerTick);
   const recent = await deps.activity.recentOutputs(AgentConfig.dedupHistorySize);
   console.log(`[agent] candidates=${candidates.length} recentDedup=${recent.length} autonomy=${profile.autonomy}`);
@@ -162,7 +184,9 @@ export async function runAgentTick(deps: AgentLoopDeps): Promise<TickReport> {
     const pct = (triage.score * 100).toFixed(0);
     const need = (AgentConfig.triageScoreThreshold * 100).toFixed(0);
     if (!triage.relevant || triage.score < AgentConfig.triageScoreThreshold) {
-      // Explicitly record WHY it will not act on this post.
+      // Terminal: not worth acting on. Mark it so we never re-triage this post
+      // (the anti-loop rule — a decision not to act is not reconsidered).
+      await deps.activity.markSkipped(cand.address, deps.clock.now());
       await sink.log(
         'triage',
         `Skipping — relevance ${pct}% below ${need}%${triage.reason ? ` · ${triage.reason}` : ''}`,
@@ -189,6 +213,8 @@ export async function runAgentTick(deps: AgentLoopDeps): Promise<TickReport> {
       continue;
     }
     if (decision.action === 'do_nothing') {
+      // Terminal: the agent looked and chose not to act — never reconsider.
+      await deps.activity.markSkipped(cand.address, deps.clock.now());
       await sink.log('decide', `Chose not to act${decision.rationale ? ` · ${decision.rationale}` : ''}`, cand.address, null, cand.text);
       continue;
     }
@@ -228,6 +254,12 @@ export async function runAgentTick(deps: AgentLoopDeps): Promise<TickReport> {
     );
     const actionText = proposed.kind === 'respond' ? proposed.text : null;
     if (verdict.verdict === 'reject') {
+      // Terminal rejections (never-list, dedup, per-thread cap) mean the same
+      // candidate would be rejected forever — mark it skipped so it is not
+      // re-thought. Transient ones (daily caps) are left for a future day.
+      if (verdict.terminal) {
+        await deps.activity.markSkipped(cand.address, deps.clock.now());
+      }
       await sink.log('govern', `Blocked: ${verdict.reason}`, cand.address, actionText, cand.text);
       rejected++;
       continue;

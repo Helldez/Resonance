@@ -59,13 +59,17 @@ export function buildDecisionPrompt(
   }
   parts.push(
     '',
+    'Pick the LIGHTEST action that fits. Most posts deserve a reaction, not a reply.',
     'Choose exactly ONE action:',
-    '- "respond": add a short, specific comment or reply (1 sentence). Set "text".',
-    '- "react": acknowledge with a reaction. Set "reaction" to one of like|insightful|agree|curious.',
-    '- "do_nothing": if you have nothing genuinely useful to add.',
-    'Prefer one sharp question or a concrete contribution over generic praise.',
+    '- "react" (DEFAULT): you broadly agree, find it interesting, or want to acknowledge it,',
+    '  but have nothing specific to add. Set "reaction" to like, insightful, agree, or curious.',
+    '- "respond": ONLY when you have a concrete, specific contribution or one sharp question',
+    '  that genuinely moves the conversation. Not for praise or agreement. Set "text" (1 sentence).',
+    '- "do_nothing": the post is not worth engaging.',
+    'Do NOT respond just to be polite — prefer "react" over a generic reply.',
+    'When you choose "react" do not set "text"; when you choose "respond" do not set "reaction".',
     'Reply with ONLY a JSON object of the form:',
-    '{"action": "respond"|"react"|"do_nothing", "text": "<=240 chars", "reaction": "like|insightful|agree|curious", "rationale": "<=120 chars"}',
+    '{"action": "react"|"respond"|"do_nothing", "reaction": "like|insightful|agree|curious", "text": "<=240 chars", "rationale": "<=120 chars"}',
   );
   return parts.join('\n');
 }

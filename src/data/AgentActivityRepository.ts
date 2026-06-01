@@ -25,7 +25,25 @@ export class AgentActivityRepository {
         created_at INTEGER PRIMARY KEY,
         text TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS agent_skipped (
+        target TEXT PRIMARY KEY,
+        created_at INTEGER NOT NULL
+      );
     `);
+  }
+
+  /**
+   * Mark a candidate as terminally skipped (judged not-relevant or
+   * do_nothing) so it is NOT re-evaluated by the LLM on every future tick — the
+   * fix for the "keeps re-thinking the same post" loop. A new human reply in
+   * the thread can clear it later if we want to reconsider; for now a skip is
+   * sticky for the session's lifetime of that post.
+   */
+  async markSkipped(target: string, createdAt: number): Promise<void> {
+    await this.db.exec(
+      'INSERT OR IGNORE INTO agent_skipped (target, created_at) VALUES (?, ?)',
+      [target, createdAt],
+    );
   }
 
   async countToday(day: string, kind: ActivityKind): Promise<number> {

@@ -35,13 +35,20 @@ export interface GovernorState {
 export type GovernorDecision =
   | { readonly verdict: 'allow' }
   | { readonly verdict: 'queue' }
-  | { readonly verdict: 'reject'; readonly reason: string };
+  /**
+   * `terminal` distinguishes a permanent rejection for THIS candidate
+   * (never-list, dedup, per-thread cap, no-two-in-a-row — re-thinking would
+   * always reject again, so the caller marks the candidate skipped) from a
+   * transient one (daily caps reset at midnight — keep the candidate for a
+   * later day).
+   */
+  | { readonly verdict: 'reject'; readonly reason: string; readonly terminal: boolean };
 
 const ALLOW: GovernorDecision = { verdict: 'allow' };
 const QUEUE: GovernorDecision = { verdict: 'queue' };
 
-function reject(reason: string): GovernorDecision {
-  return { verdict: 'reject', reason };
+function reject(reason: string, terminal: boolean): GovernorDecision {
+  return { verdict: 'reject', reason, terminal };
 }
 
 /**
@@ -55,24 +62,26 @@ function reject(reason: string): GovernorDecision {
  *   4. autopilot → daily caps, per-thread turn cap, no-two-in-a-row → allow
  */
 export function evaluateAction(action: ProposedAction, state: GovernorState): GovernorDecision {
+  // Control-state rejections are transient (not about this candidate's content).
   if (state.killSwitch) {
-    return reject('kill switch');
+    return reject('kill switch', false);
   }
   if (action.kind === 'none') {
-    return reject('no action');
+    return reject('no action', true);
   }
   if (state.autonomy === 'off') {
-    return reject('autonomy off');
+    return reject('autonomy off', false);
   }
 
-  // 2. Quality guards apply regardless of autonomy.
+  // 2. Quality guards apply regardless of autonomy. These are TERMINAL for this
+  //    candidate: the same text would be rejected on every future tick.
   if (action.kind === 'post' || action.kind === 'respond') {
     const hit = firstNeverHit(action.text, state.limits.never);
     if (hit !== null) {
-      return reject(`never-list: "${hit}"`);
+      return reject(`never-list: "${hit}"`, true);
     }
     if (state.dedupHit) {
-      return reject('duplicate of a recent output');
+      return reject('duplicate of a recent output', true);
     }
   }
 
@@ -81,28 +90,30 @@ export function evaluateAction(action: ProposedAction, state: GovernorState): Go
     return QUEUE;
   }
 
-  // 4. Autopilot: enforce the hard caps.
+  // 4. Autopilot: enforce the hard caps. Daily caps are TRANSIENT (reset at
+  //    midnight) — keep the candidate for another day. Per-thread caps and the
+  //    no-two-in-a-row rule are TERMINAL for this candidate.
   if (action.kind === 'post') {
     if (state.postsToday >= state.limits.maxPostsPerDay) {
-      return reject('daily post cap reached');
+      return reject('daily post cap reached', false);
     }
     return ALLOW;
   }
   if (action.kind === 'react') {
     if (state.reactionsToday >= state.limits.maxReactionsPerDay) {
-      return reject('daily reaction cap reached');
+      return reject('daily reaction cap reached', false);
     }
     return ALLOW;
   }
   // respond
   if (state.commentsToday >= state.limits.maxCommentsPerDay) {
-    return reject('daily comment cap reached');
+    return reject('daily comment cap reached', false);
   }
   if (state.turnsInThread >= state.limits.maxTurnsPerThread) {
-    return reject('per-thread turn cap reached');
+    return reject('per-thread turn cap reached', true);
   }
   if (state.lastInThreadIsSelfNoHuman) {
-    return reject('would reply to self with no new human input');
+    return reject('would reply to self with no new human input', true);
   }
   return ALLOW;
 }

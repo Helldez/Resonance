@@ -357,6 +357,7 @@ function buildAgentDeps(
            AND NOT EXISTS (SELECT 1 FROM responses r WHERE r.in_reply_to = posts.address AND r.author = ?)
            AND NOT EXISTS (SELECT 1 FROM reactions x WHERE x.in_reply_to = posts.address AND x.author = ?)
            AND NOT EXISTS (SELECT 1 FROM agent_pending p WHERE p.target = posts.address)
+           AND NOT EXISTS (SELECT 1 FROM agent_skipped s WHERE s.target = posts.address)
          ORDER BY created_at DESC
          LIMIT ?`,
         [c.self, c.self, c.self, limit],
