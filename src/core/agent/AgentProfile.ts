@@ -65,26 +65,49 @@ function clampInt(value: number, min: number, max: number): number {
 }
 
 /**
- * Coerce an arbitrary (possibly persisted-from-older-version) object into a
- * valid `AgentProfile`, clamping every number to `AgentConfig.caps` and
- * trimming list lengths. Pure — safe to call on load and on every form edit.
+ * Live-edit coercion. Tolerant: it preserves exactly what the user is typing —
+ * empty `name`/`tone` stay empty (NOT replaced with the default), and
+ * `interests`/`goals` are kept verbatim (no trim/drop) so a half-typed entry
+ * isn't deleted mid-keystroke. Only clamps numeric limits to safe bounds and
+ * caps list lengths. Used by the store on every form edit.
  */
-export function normalizeProfile(input: Partial<AgentProfile> | null | undefined): AgentProfile {
+export function coerceProfile(input: Partial<AgentProfile> | null | undefined): AgentProfile {
   const base = input ?? {};
   const limits = base.limits ?? DEFAULT_AGENT_PROFILE.limits;
   return {
     enabled: base.enabled ?? DEFAULT_AGENT_PROFILE.enabled,
-    name: (base.name ?? DEFAULT_AGENT_PROFILE.name).trim() || DEFAULT_AGENT_PROFILE.name,
+    name: base.name ?? DEFAULT_AGENT_PROFILE.name,
     autonomy: normalizeAutonomy(base.autonomy),
-    interests: (base.interests ?? []).map((s) => s.trim()).filter((s) => s.length > 0).slice(0, AgentConfig.caps.maxInterests),
-    goals: (base.goals ?? []).map((s) => s.trim()).filter((s) => s.length > 0).slice(0, AgentConfig.caps.maxGoals),
-    tone: (base.tone ?? DEFAULT_AGENT_PROFILE.tone).trim() || DEFAULT_AGENT_PROFILE.tone,
+    interests: (base.interests ?? []).slice(0, AgentConfig.caps.maxInterests),
+    goals: (base.goals ?? []).slice(0, AgentConfig.caps.maxGoals),
+    tone: base.tone ?? DEFAULT_AGENT_PROFILE.tone,
     limits: {
       maxPostsPerDay: clampInt(limits.maxPostsPerDay, 0, AgentConfig.caps.maxPostsPerDay),
       maxCommentsPerDay: clampInt(limits.maxCommentsPerDay, 0, AgentConfig.caps.maxCommentsPerDay),
       maxReactionsPerDay: clampInt(limits.maxReactionsPerDay, 0, AgentConfig.caps.maxReactionsPerDay),
       maxTurnsPerThread: clampInt(limits.maxTurnsPerThread, 1, AgentConfig.caps.maxTurnsPerThread),
-      never: (limits.never ?? []).map((s) => s.trim().toLowerCase()).filter((s) => s.length > 0),
+      never: (limits.never ?? []).slice(0, 32),
+    },
+  };
+}
+
+/**
+ * Strong normalisation applied when the profile is *consumed* (load + before
+ * the agent loop reads it): fills blank name/tone with defaults, trims, drops
+ * empty interests/goals, lowercases the never-list. NOT called during typing —
+ * that would yank text back to the default mid-edit. See `coerceProfile`.
+ */
+export function normalizeProfile(input: Partial<AgentProfile> | null | undefined): AgentProfile {
+  const c = coerceProfile(input);
+  return {
+    ...c,
+    name: c.name.trim() || DEFAULT_AGENT_PROFILE.name,
+    tone: c.tone.trim() || DEFAULT_AGENT_PROFILE.tone,
+    interests: c.interests.map((s) => s.trim()).filter((s) => s.length > 0),
+    goals: c.goals.map((s) => s.trim()).filter((s) => s.length > 0),
+    limits: {
+      ...c.limits,
+      never: c.limits.never.map((s) => s.trim().toLowerCase()).filter((s) => s.length > 0),
     },
   };
 }

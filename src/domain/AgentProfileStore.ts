@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import {
   DEFAULT_AGENT_PROFILE,
+  coerceProfile,
   normalizeProfile,
   type AgentProfile,
 } from '@core/agent/AgentProfile';
@@ -27,8 +28,12 @@ export const useAgentProfileStore = create<AgentProfileStore>()(
     (set, get) => ({
       profile: DEFAULT_AGENT_PROFILE,
       killSwitch: false,
+      // Live edits use the tolerant coercion so a field the user is clearing
+      // (e.g. the name) is not snapped back to the default mid-keystroke. The
+      // strong normalisation runs at load (merge) and again where the agent
+      // loop reads the profile.
       setProfile: (patch) =>
-        set({ profile: normalizeProfile({ ...get().profile, ...patch }) }),
+        set({ profile: coerceProfile({ ...get().profile, ...patch }) }),
       setKillSwitch: (killSwitch) => set({ killSwitch }),
     }),
     {
