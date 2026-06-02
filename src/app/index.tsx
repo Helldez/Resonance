@@ -340,17 +340,6 @@ export default function FeedScreen() {
                 </Text>
               </Surface>
             )}
-            {isOwn && (
-              <IconButton
-                icon="graph"
-                size={18}
-                accessibilityLabel="View this post on the semantic map"
-                style={{ margin: 0 }}
-                onPress={() =>
-                  router.push({ pathname: '/map', params: { anchor: item.address } })
-                }
-              />
-            )}
             <IconButton
               icon="delete-outline"
               size={18}

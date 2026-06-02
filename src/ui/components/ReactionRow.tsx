@@ -6,9 +6,6 @@ export type ReactionCounts = Record<ReactionType, number>;
 
 export const EMPTY_REACTION_COUNTS: ReactionCounts = {
   like: 0,
-  insightful: 0,
-  agree: 0,
-  curious: 0,
 };
 
 /**
@@ -19,9 +16,6 @@ export const EMPTY_REACTION_COUNTS: ReactionCounts = {
  */
 const REACTION_ICON: Record<ReactionType, string> = {
   like: 'thumb-up-outline',
-  insightful: 'lightbulb-on-outline',
-  agree: 'check-circle-outline',
-  curious: 'help-circle-outline',
 };
 
 export function ReactionRow(props: {

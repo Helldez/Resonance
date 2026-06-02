@@ -6,15 +6,15 @@ export type RecordAddress = string & { readonly __brand: 'RecordAddress' };
 
 export type RecordKind = 'post' | 'response' | 'reaction';
 
-/** The fixed vocabulary of reactions a peer (human or agent) can emit. */
-export type ReactionType = 'like' | 'insightful' | 'agree' | 'curious';
+/**
+ * The reaction vocabulary. Collapsed to a single "like": the agent only ever
+ * liked, and the four-type picker added no real value. The field stays in the
+ * signed `ReactionBody`, so the wire format is unchanged (a 'like' serialises
+ * the same) — no topicPrefix bump needed.
+ */
+export type ReactionType = 'like';
 
-export const REACTION_TYPES: ReadonlyArray<ReactionType> = [
-  'like',
-  'insightful',
-  'agree',
-  'curious',
-];
+export const REACTION_TYPES: ReadonlyArray<ReactionType> = ['like'];
 
 export interface PostBody {
   readonly kind: 'post';

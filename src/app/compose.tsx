@@ -49,11 +49,11 @@ export default function ComposeScreen() {
         // against THIS post too, without waiting for an app restart.
         appendOwnEmbedding(ownAddress, record.body.embedding);
       }
-      // Navigate immediately. The two passes below are O(inbox) and O(replicated
-      // history) respectively and used to block the compose screen for seconds
+      // Navigate immediately to the feed. The two passes below are O(inbox) and
+      // O(replicated history) and used to block the compose screen for seconds
       // as the corpus grew — they now run in the background. The Inbox re-polls
       // SQLite on a timer, so their results surface without a navigation event.
-      router.replace({ pathname: '/map', params: { anchor: ownAddress } });
+      router.replace('/');
       if (record.body.kind === 'post') {
         void (async (): Promise<void> => {
           try {

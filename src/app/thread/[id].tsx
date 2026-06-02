@@ -11,7 +11,7 @@ import {
   IconButton,
   useTheme,
 } from 'react-native-paper';
-import { useLocalSearchParams, useFocusEffect, useRouter } from 'expo-router';
+import { useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireContainer } from '@ui/AppContainerContext';
 import { useSettingsStore } from '@domain/SettingsStore';
@@ -46,7 +46,6 @@ interface ThreadResponse {
 export default function ThreadScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const container = useRequireContainer();
-  const router = useRouter();
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const receiverContext = useSettingsStore((s) => s.receiverContext);
@@ -287,18 +286,6 @@ export default function ThreadScreen() {
             <Text style={{ marginTop: 8, opacity: 0.6, fontSize: 12 }}>
               {shortPeer(post.author)} · {new Date(post.createdAt).toLocaleString()}
             </Text>
-            {post.author === container.self && (
-              <Button
-                mode="text"
-                icon="graph"
-                style={{ marginTop: 4, alignSelf: 'flex-start' }}
-                onPress={() =>
-                  router.push({ pathname: '/map', params: { anchor: post.address } })
-                }
-              >
-                View on map
-              </Button>
-            )}
             <ReactionRow
               counts={reactions.get(post.address)?.counts ?? EMPTY_REACTION_COUNTS}
               mine={reactions.get(post.address)?.mine ?? null}
