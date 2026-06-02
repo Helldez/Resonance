@@ -1,4 +1,4 @@
-import { cancel, completion, deleteCache, unloadModel } from '@qvac/sdk';
+import { cancel, completion, unloadModel } from '@qvac/sdk';
 import type { ModelProgressUpdate } from '@qvac/sdk';
 import type { ILlmService, LlmGenerateOptions } from '@core/ports/ILlmService';
 import { ModelProfiles } from '@core/config/ModelProfiles';
@@ -120,7 +120,6 @@ export class QvacLlmService implements ILlmService {
         stop: options.stop,
       },
       responseFormat,
-      kvCache: options.kvCache,
     } as never) as { tokenStream: AsyncIterable<string> };
 
     for await (const token of result.tokenStream) {
@@ -131,18 +130,6 @@ export class QvacLlmService implements ILlmService {
     }
   }
 
-  /** Best-effort KV-cache cleanup for a persona session. Never throws. */
-  async clearCache(kvCacheKey: string): Promise<void> {
-    try {
-      await deleteCache(
-        (this.modelId === null
-          ? { kvCacheKey }
-          : { kvCacheKey, modelId: this.modelId }) as never,
-      );
-    } catch {
-      // cache cleanup must never crash the agent loop
-    }
-  }
 
   cancelGeneration(): void {
     if (this.modelId === null) {

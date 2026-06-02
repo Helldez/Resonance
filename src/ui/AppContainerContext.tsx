@@ -13,7 +13,6 @@ import type { RecordAddress, SignedRecord } from '@core/domain/types';
 import type { ModelProgressUpdate } from '@qvac/sdk';
 import { AgentConfig } from '@core/config/AgentConfig';
 import { normalizeProfile, type AgentProfile } from '@core/agent/AgentProfile';
-import { personaCacheKey } from '@core/agent/PersonaCache';
 import {
   runAgentTick,
   runAgentPost,
@@ -174,10 +173,6 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
     let sessionActions = 0;
     let pauseAnnounced = false;
     let lastAutonomy = '';
-    // Persona KV-cache key from the previous tick. When it changes (the user
-    // edited name/interests/goals/tone), the old cached session is stale — drop
-    // it so it does not linger on disk. Tuning limits/thresholds keeps the key.
-    let lastPersonaKey = '';
 
     const runOnce = async (): Promise<void> => {
       if (cancelled || running) {
@@ -191,12 +186,6 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
         sessionActions = 0;
         pauseAnnounced = false;
       }
-      // Drop the previous persona's KV-cache session when the persona changes.
-      const personaKey = personaCacheKey(norm);
-      if (lastPersonaKey !== '' && lastPersonaKey !== personaKey) {
-        void c.llm.clearCache?.(lastPersonaKey);
-      }
-      lastPersonaKey = personaKey;
       // Log the gate so logcat shows exactly why a tick is or isn't running.
       console.log(
         `[agent] gate llmLoaded=${c.llmConcrete.isLoaded} enabled=${norm.enabled} autonomy=${norm.autonomy} kill=${killSwitch} goals=${norm.goals.length} interests=${norm.interests.length}`,

@@ -1,7 +1,6 @@
 import type { AgentProfile } from '@core/agent/AgentProfile';
 import { CommentAction, type CommentPayload } from '@core/agent/AgentActions';
 import { buildReplyPrompt, buildPersonaPrefix } from '@core/agent/PromptBuilder';
-import { personaCacheKey } from '@core/agent/PersonaCache';
 import { completeJson, type StructuredLlmDeps } from '@core/llm/StructuredLlm';
 
 export type ReplyDraft = CommentPayload;
@@ -29,7 +28,6 @@ export async function draftReply(
       maxTokens: CommentAction.maxTokens,
       responseSchema: CommentAction.schema,
       system: buildPersonaPrefix(profile),
-      kvCache: personaCacheKey(profile),
     },
   );
 }

@@ -13,7 +13,6 @@ import { AgentConfig } from '@core/config/AgentConfig';
 import type { AgentProfile, AgentThresholds } from '@core/agent/AgentProfile';
 import { draftReply } from '@core/agent/DecideAction';
 import { PostAction, type PostPayload } from '@core/agent/AgentActions';
-import { personaCacheKey } from '@core/agent/PersonaCache';
 import {
   buildPostPrompt,
   buildPersonaPrefix,
@@ -440,7 +439,6 @@ export async function runAgentPost(deps: AgentLoopDeps): Promise<boolean> {
       maxTokens: PostAction.maxTokens,
       responseSchema: PostAction.schema,
       system: buildPersonaPrefix(profile),
-      kvCache: personaCacheKey(profile),
     },
   );
   console.log(

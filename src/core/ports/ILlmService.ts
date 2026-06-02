@@ -34,11 +34,6 @@ export interface LlmGenerateOptions {
   system?: string;
   /** Constrain the output to this JSON schema (grammar-enforced by the model). */
   responseSchema?: JsonSchema;
-  /**
-   * KV-cache key. A stable string lets the model reuse the persona prefix's KV
-   * across calls; `true` auto-keys from history; `false`/undefined disables it.
-   */
-  kvCache?: string | boolean;
 }
 
 export interface ILlmService {
@@ -57,10 +52,4 @@ export interface ILlmService {
     options: LlmGenerateOptions,
     onChunk: (chunk: string) => void,
   ): Promise<void>;
-
-  /**
-   * Best-effort removal of a persisted KV-cache session by key. Optional: not
-   * every adapter caches. Callers invoke it as `llm.clearCache?.(key)`.
-   */
-  clearCache?(kvCacheKey: string): Promise<void>;
 }

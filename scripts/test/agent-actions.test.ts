@@ -5,8 +5,6 @@
  */
 import assert from 'node:assert/strict';
 import { CommentAction, PostAction } from '@core/agent/AgentActions';
-import { personaCacheKey } from '@core/agent/PersonaCache';
-import { DEFAULT_AGENT_PROFILE } from '@core/agent/AgentProfile';
 
 let passed = 0;
 function check(name: string, fn: () => void): void {
@@ -52,27 +50,6 @@ check('empty post → null', () => {
 check('schema required text + maxLength 280', () => {
   assert.deepEqual(PostAction.schema.required, ['text']);
   assert.equal(PostAction.schema.properties.text.maxLength, 280);
-});
-
-console.log('personaCacheKey');
-
-check('deterministic for the same persona', () => {
-  assert.equal(personaCacheKey(DEFAULT_AGENT_PROFILE), personaCacheKey(DEFAULT_AGENT_PROFILE));
-});
-check('changes when a persona field (interests) changes', () => {
-  const a = personaCacheKey(DEFAULT_AGENT_PROFILE);
-  const b = personaCacheKey({ ...DEFAULT_AGENT_PROFILE, interests: ['ai'] });
-  assert.notEqual(a, b);
-});
-check('stable when a non-persona field (thresholds/limits/autonomy) changes', () => {
-  const a = personaCacheKey(DEFAULT_AGENT_PROFILE);
-  const b = personaCacheKey({
-    ...DEFAULT_AGENT_PROFILE,
-    autonomy: 'autopilot',
-    thresholds: { ...DEFAULT_AGENT_PROFILE.thresholds, echoMaxCosine: 0.5 },
-    limits: { ...DEFAULT_AGENT_PROFILE.limits, maxPostsPerDay: 99 },
-  });
-  assert.equal(a, b);
 });
 
 console.log(`\n${passed} assertions passed.`);

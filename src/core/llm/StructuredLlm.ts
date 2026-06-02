@@ -27,12 +27,10 @@ export async function completeJson<T>(
   options?: {
     readonly temperature?: number;
     readonly maxTokens?: number;
-    /** Persona system message (stable → KV-cache hit). */
+    /** Persona system message. */
     readonly system?: string;
     /** Grammar-constrain the output to this schema (valid JSON first-try). */
     readonly responseSchema?: JsonSchema;
-    /** KV-cache key for persona-prefix reuse. */
-    readonly kvCache?: string | boolean;
   },
 ): Promise<T | null> {
   const temperature = options?.temperature ?? AgentConfig.routingTemperature;
@@ -58,7 +56,6 @@ export async function completeJson<T>(
       temperature,
       system: options?.system,
       responseSchema: options?.responseSchema,
-      kvCache: options?.kvCache,
     });
     lastRaw = stripThinkTags(raw).trim();
     // With `responseSchema` the grammar guarantees a bare JSON object, so try a
