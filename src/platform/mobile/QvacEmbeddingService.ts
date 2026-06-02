@@ -22,6 +22,17 @@ export class QvacEmbeddingService implements IEmbeddingService {
 
   private modelId: string | null = null;
   private loadingPromise: Promise<void> | null = null;
+  /**
+   * Serialises every `embed()`. The `embed-llamacpp` plugin allows one job per
+   * model and throws "Cannot set new job: a job is already set or being
+   * processed" if a second `embed()` is issued before the previous settles (its
+   * README is explicit that callers must await the prior call). Several callers
+   * share this one model — the agent's echo gate embeds a batch per reply, plus
+   * publish and the "About you" re-embed — so we chain them through this tail
+   * instead of letting them collide. Failures are swallowed from the chain so
+   * one rejected call does not poison the queue for the next.
+   */
+  private queueTail: Promise<unknown> = Promise.resolve();
 
   get isLoaded(): boolean {
     return this.modelId !== null;
@@ -64,10 +75,27 @@ export class QvacEmbeddingService implements IEmbeddingService {
       ModelProfiles.embedding.promptTemplate,
       trimmed,
     );
-    const result = (await embed({ modelId, text: prompt } as never)) as {
-      embedding: number[];
-    };
-    return postProcess(result.embedding, this.outputDim);
+    // Serialise the actual SDK call: the model rejects a second in-flight job.
+    return this.enqueue(async () => {
+      const result = (await embed({ modelId, text: prompt } as never)) as {
+        embedding: number[];
+      };
+      return postProcess(result.embedding, this.outputDim);
+    });
+  }
+
+  /**
+   * Append `task` to the serial embed queue and return its result. The tail is
+   * advanced to a settled (never-rejecting) promise so a failing task does not
+   * break the chain for subsequent callers.
+   */
+  private enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.queueTail.then(task, task);
+    this.queueTail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   private async ensureLoaded(): Promise<string> {
