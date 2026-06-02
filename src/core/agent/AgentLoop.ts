@@ -12,8 +12,11 @@ import type { IPeerNetwork } from '@core/ports/IPeerNetwork';
 import { AgentConfig } from '@core/config/AgentConfig';
 import type { AgentProfile, AgentThresholds } from '@core/agent/AgentProfile';
 import { draftReply } from '@core/agent/DecideAction';
+import { PostAction, type PostPayload } from '@core/agent/AgentActions';
+import { personaCacheKey } from '@core/agent/PersonaCache';
 import {
   buildPostPrompt,
+  buildPersonaPrefix,
   type EngagementBand,
 } from '@core/agent/PromptBuilder';
 import { completeJson } from '@core/llm/StructuredLlm';
@@ -428,18 +431,17 @@ export async function runAgentPost(deps: AgentLoopDeps): Promise<boolean> {
     }
   }
   const goal = profile.goals[0];
-  const drafted = await completeJson<{ text: string }>(
+  const drafted = await completeJson<PostPayload>(
     { llm: deps.llm },
     buildPostPrompt(profile, goal),
-    (v) => {
-      if (typeof v !== 'object' || v === null) {
-        return null;
-      }
-      const t = (v as Record<string, unknown>).text;
-      const text = typeof t === 'string' ? t.trim().slice(0, 280) : '';
-      return text.length > 0 ? { text } : null;
+    PostAction.validate,
+    {
+      temperature: PostAction.temperature,
+      maxTokens: PostAction.maxTokens,
+      responseSchema: PostAction.schema,
+      system: buildPersonaPrefix(profile),
+      kvCache: personaCacheKey(profile),
     },
-    { temperature: AgentConfig.textTemperature, maxTokens: AgentConfig.postMaxTokens },
   );
   console.log(
     `[agent] post drafted=${drafted === null ? 'NULL(parse-fail)' : `"${drafted.text.slice(0, 60)}"`} goal="${goal.slice(0, 40)}"`,

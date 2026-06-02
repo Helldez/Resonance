@@ -1,4 +1,4 @@
-import type { ILlmService } from '@core/ports/ILlmService';
+import type { ILlmService, JsonSchema } from '@core/ports/ILlmService';
 import { stripThinkTags } from '@core/llm/StripThink';
 import { AgentConfig } from '@core/config/AgentConfig';
 
@@ -24,7 +24,16 @@ export async function completeJson<T>(
   deps: StructuredLlmDeps,
   prompt: string,
   validate: (value: unknown) => T | null,
-  options?: { readonly temperature?: number; readonly maxTokens?: number },
+  options?: {
+    readonly temperature?: number;
+    readonly maxTokens?: number;
+    /** Persona system message (stable → KV-cache hit). */
+    readonly system?: string;
+    /** Grammar-constrain the output to this schema (valid JSON first-try). */
+    readonly responseSchema?: JsonSchema;
+    /** KV-cache key for persona-prefix reuse. */
+    readonly kvCache?: string | boolean;
+  },
 ): Promise<T | null> {
   const temperature = options?.temperature ?? AgentConfig.routingTemperature;
   const maxTokens = options?.maxTokens ?? AgentConfig.routingMaxTokens;
@@ -44,9 +53,23 @@ export async function completeJson<T>(
     // No stop sequence: '\n\n' could fire inside a think block or between a
     // brace and its contents, truncating the JSON. We rely on maxTokens + the
     // balanced-brace extractor to bound the output instead.
-    const raw = await deps.llm.complete(full, { maxTokens, temperature });
+    const raw = await deps.llm.complete(full, {
+      maxTokens,
+      temperature,
+      system: options?.system,
+      responseSchema: options?.responseSchema,
+      kvCache: options?.kvCache,
+    });
     lastRaw = stripThinkTags(raw).trim();
-    const obj = extractFirstJsonObject(lastRaw);
+    // With `responseSchema` the grammar guarantees a bare JSON object, so try a
+    // direct parse first; fall back to the balanced-brace walk for the
+    // unconstrained path (or a model that leaks a preamble despite the schema).
+    let obj: unknown = null;
+    try {
+      obj = JSON.parse(lastRaw);
+    } catch {
+      obj = extractFirstJsonObject(lastRaw);
+    }
     if (obj !== null) {
       const validated = validate(obj);
       if (validated !== null) {

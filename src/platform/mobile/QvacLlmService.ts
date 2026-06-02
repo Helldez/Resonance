@@ -1,4 +1,4 @@
-import { cancel, completion, unloadModel } from '@qvac/sdk';
+import { cancel, completion, deleteCache, unloadModel } from '@qvac/sdk';
 import type { ModelProgressUpdate } from '@qvac/sdk';
 import type { ILlmService, LlmGenerateOptions } from '@core/ports/ILlmService';
 import { ModelProfiles } from '@core/config/ModelProfiles';
@@ -94,15 +94,33 @@ export class QvacLlmService implements ILlmService {
     onChunk: (chunk: string) => void,
   ): Promise<void> {
     const modelId = await this.ensureLoaded();
+    // A stable `system` turn keeps the persona prefix in the KV-cache configHash
+    // so it is reused across calls sharing the same `kvCache` key.
+    const history = options.system
+      ? [
+          { role: 'system', content: options.system },
+          { role: 'user', content: prompt },
+        ]
+      : [{ role: 'user', content: prompt }];
+    // The JSON schema is compiled to GBNF by llama.cpp and enforced while
+    // decoding, so the model emits a valid object first-try.
+    const responseFormat = options.responseSchema
+      ? {
+          type: 'json_schema',
+          json_schema: { name: 'agent_payload', schema: options.responseSchema },
+        }
+      : undefined;
     const result = completion({
       modelId,
-      history: [{ role: 'user', content: prompt }],
+      history,
       stream: true,
       params: {
         temp: options.temperature,
         predict: options.maxTokens,
         stop: options.stop,
       },
+      responseFormat,
+      kvCache: options.kvCache,
     } as never) as { tokenStream: AsyncIterable<string> };
 
     for await (const token of result.tokenStream) {
@@ -110,6 +128,19 @@ export class QvacLlmService implements ILlmService {
         break;
       }
       onChunk(token);
+    }
+  }
+
+  /** Best-effort KV-cache cleanup for a persona session. Never throws. */
+  async clearCache(kvCacheKey: string): Promise<void> {
+    try {
+      await deleteCache(
+        (this.modelId === null
+          ? { kvCacheKey }
+          : { kvCacheKey, modelId: this.modelId }) as never,
+      );
+    } catch {
+      // cache cleanup must never crash the agent loop
     }
   }
 

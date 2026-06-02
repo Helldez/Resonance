@@ -1,18 +1,18 @@
 import type { AgentProfile } from '@core/agent/AgentProfile';
-import { AgentConfig } from '@core/config/AgentConfig';
-import { buildReplyPrompt } from '@core/agent/PromptBuilder';
+import { CommentAction, type CommentPayload } from '@core/agent/AgentActions';
+import { buildReplyPrompt, buildPersonaPrefix } from '@core/agent/PromptBuilder';
+import { personaCacheKey } from '@core/agent/PersonaCache';
 import { completeJson, type StructuredLlmDeps } from '@core/llm/StructuredLlm';
 
-export interface ReplyDraft {
-  readonly text: string;
-  readonly rationale: string;
-}
+export type ReplyDraft = CommentPayload;
 
 /**
  * Draft a reply for a candidate the agent has already decided to comment on
  * (the decision is made from similarity, not here — see `AgentConfig.
- * engagement`). Returns null only when the model fails to produce usable text,
- * which the caller treats as "skip this one", not as a relevance judgement.
+ * engagement`). The persona goes in as the cached `system` message; the output
+ * is grammar-constrained to the comment schema. Returns null only when the
+ * model fails to produce usable text — the caller treats that as "skip this
+ * one", not as a relevance judgement.
  */
 export async function draftReply(
   deps: StructuredLlmDeps,
@@ -23,20 +23,13 @@ export async function draftReply(
   return completeJson<ReplyDraft>(
     deps,
     buildReplyPrompt(profile, candidateText, threadContext),
-    validateReply,
-    { temperature: AgentConfig.textTemperature, maxTokens: AgentConfig.commentMaxTokens },
+    CommentAction.validate,
+    {
+      temperature: CommentAction.temperature,
+      maxTokens: CommentAction.maxTokens,
+      responseSchema: CommentAction.schema,
+      system: buildPersonaPrefix(profile),
+      kvCache: personaCacheKey(profile),
+    },
   );
-}
-
-function validateReply(value: unknown): ReplyDraft | null {
-  if (typeof value !== 'object' || value === null) {
-    return null;
-  }
-  const v = value as Record<string, unknown>;
-  const text = typeof v.text === 'string' ? v.text.trim().slice(0, 240) : '';
-  if (text.length === 0) {
-    return null;
-  }
-  const rationale = typeof v.rationale === 'string' ? v.rationale.slice(0, 140) : '';
-  return { text, rationale };
 }

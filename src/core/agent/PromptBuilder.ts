@@ -21,8 +21,9 @@ export function buildPersonaPrefix(profile: AgentProfile): string {
     'The user\'s goals:',
     goals,
     `Write in this tone: ${profile.tone}.`,
-    'Only ever react to content actually present in the room. Never invent facts,',
-    'people, links, or events. Keep everything short. When in doubt, do nothing.',
+    'Prefer concrete contributions — a specific detail, fact, example, or clear',
+    'opinion — over questions. Only ever react to content actually present in the',
+    'room. Never invent facts, people, links, or events. Keep everything short.',
   ].join('\n');
 }
 
@@ -39,13 +40,11 @@ export type EngagementBand = 'respond' | 'react';
  * here is to write the text. There is no "should I?" — only "what would I say?".
  */
 export function buildReplyPrompt(
-  profile: AgentProfile,
+  _profile: AgentProfile,
   candidateText: string,
   threadContext: string | null,
 ): string {
   const parts = [
-    buildPersonaPrefix(profile),
-    '',
     '--- ITEM YOU ARE REPLYING TO ---',
     candidateText.trim(),
     '--- END ---',
@@ -56,30 +55,26 @@ export function buildReplyPrompt(
   }
   parts.push(
     '',
-    'Write ONE short reply (1 sentence) that adds something specific or asks one',
-    'sharp question. No greetings, no sign-off, no generic praise.',
+    'Write ONE short reply. Contribute something concrete — a specific detail,',
+    'fact, example, or clear opinion. A question is optional; ask one only if it',
+    'genuinely moves the conversation forward. No greetings, no sign-off, no praise.',
   );
   if (inThread) {
     parts.push(
-      'Add ONE genuinely NEW point, detail, or question. Do NOT restate, agree',
-      'with, or reword anything already said in the thread above.',
+      'Add ONE genuinely NEW point. Do NOT restate, agree with, or reword anything',
+      'already said in the thread above.',
     );
   }
-  parts.push(
-    'Reply with ONLY a JSON object of the form:',
-    '{"text": "<=240 chars", "rationale": "<=120 chars"}',
-  );
+  parts.push('Set "text" to the reply and "rationale" to a one-line why.');
   return parts.join('\n');
 }
 
 /** New-post authoring: write one short post advancing a specific goal. */
-export function buildPostPrompt(profile: AgentProfile, goal: string): string {
+export function buildPostPrompt(_profile: AgentProfile, goal: string): string {
   return [
-    buildPersonaPrefix(profile),
-    '',
     `Write ONE short post (1-3 sentences) that advances this goal: "${goal}".`,
-    'It must stand on its own, invite a relevant stranger to respond, and contain no hashtags or emoji.',
-    'Reply with ONLY a JSON object of the form:',
-    '{"text": "<=280 chars"}',
+    'Make a concrete statement or share a specific idea that stands on its own.',
+    'You may invite a response, but the post must not be only a question.',
+    'No hashtags, no emoji. Set "text" to the post.',
   ].join('\n');
 }
