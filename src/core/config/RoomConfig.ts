@@ -60,6 +60,24 @@ export const RoomConfig = {
    * dropped at receive time rather than stored and filtered later.
    */
   inboxMinSimilarity: 0.3,
+
+  /**
+   * Hard cap on the character length of a post's text. Enforced on BOTH the
+   * authoring side (`CreatePost`) and the receiving side (record ingestion):
+   * an incoming record whose text exceeds this is dropped before storage.
+   * Untrusted peers control `text` freely, so without this a single hostile
+   * record could carry a multi-megabyte payload and exhaust memory/disk — a
+   * cheap denial-of-service. The value is generous for genuine prose but
+   * closes the unbounded-input hole.
+   */
+  maxPostChars: 4000,
+
+  /**
+   * Hard cap on the character length of a response's text. Same DoS rationale
+   * as `maxPostChars`; responses are conversational replies, so the bound is
+   * tighter.
+   */
+  maxResponseChars: 2000,
 } as const;
 
 export type RoomConfigShape = typeof RoomConfig;

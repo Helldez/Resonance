@@ -89,9 +89,24 @@ export const AgentConfig = {
       /**
        * Seeded never-list. The agent will not author text whose lowercased
        * form contains any of these phrases — a deterministic guard, not an
-       * instruction the model is trusted to follow.
+       * instruction the model is trusted to follow. Beyond the self-promotion
+       * phrases, the second group are high-precision markers of spam or of the
+       * model parroting an injected instruction (indirect prompt injection):
+       * if the agent's own output contains them it is almost certainly being
+       * steered, so the governor rejects it. Kept high-precision to avoid
+       * false positives on legitimate discussion.
        */
-      never: ['hire me', 'follow me', 'buy now', 'subscribe'],
+      never: [
+        'hire me',
+        'follow me',
+        'buy now',
+        'subscribe',
+        'click here',
+        'dm me',
+        'ignore previous',
+        'ignore all previous',
+        'as an ai',
+      ],
     },
     /**
      * Similarity thresholds that drive the agent's deterministic decisions

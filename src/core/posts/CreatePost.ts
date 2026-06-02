@@ -9,6 +9,7 @@ import type { IIdentity } from '@core/ports/IIdentity';
 import type { IMailbox } from '@core/ports/IMailbox';
 import type { IPeerNetwork } from '@core/ports/IPeerNetwork';
 import { canonicalDigest, signRecord } from '@core/utils/CanonicalRecord';
+import { RoomConfig } from '@core/config/RoomConfig';
 
 export interface CreatePostDeps {
   readonly embedder: IEmbeddingService;
@@ -40,6 +41,9 @@ export async function createPost(
   const trimmed = input.text.trim();
   if (trimmed.length === 0) {
     throw new Error('createPost: empty text');
+  }
+  if (trimmed.length > RoomConfig.maxPostChars) {
+    throw new Error(`createPost: text exceeds ${RoomConfig.maxPostChars} chars`);
   }
 
   const embedding = await deps.embedder.embed(trimmed);

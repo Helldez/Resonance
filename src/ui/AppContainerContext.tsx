@@ -8,6 +8,7 @@ import { RoomConfig } from '@core/config/RoomConfig';
 import { decideAdmission } from '@core/inbox/InboxAdmission';
 import { addressOf } from '@core/utils/AddressOf';
 import { canonicalDigest } from '@core/utils/CanonicalRecord';
+import { validateRecordBody } from '@core/validation/ValidateRecordBody';
 import { cosineOnUnit } from '@core/matching/CosineSimilarity';
 import type { RecordAddress, SignedRecord } from '@core/domain/types';
 import type { ModelProgressUpdate } from '@qvac/sdk';
@@ -477,6 +478,20 @@ async function persistRecord(
   interestProfile: Float32Array | null,
 ): Promise<void> {
   const shortAuthor = String(record.author).slice(0, 12);
+
+  // Untrusted input is bounded BEFORE the expensive digest/signature work:
+  // a hostile peer controls every field, so an oversized text or a
+  // wrong-dimension embedding is dropped up front rather than stored.
+  const limits = validateRecordBody(record.body, {
+    maxPostChars: RoomConfig.maxPostChars,
+    maxResponseChars: RoomConfig.maxResponseChars,
+    embeddingDim: MatchingConfig.embeddingDim,
+  });
+  if (!limits.ok) {
+    console.warn(`[rn] persistRecord REJECTED author=${shortAuthor} reason=${limits.reason}`);
+    return;
+  }
+
   const expectedDigest = await canonicalDigest(record.body);
   if (!bytesEqual(expectedDigest, record.digest)) {
     console.warn(
