@@ -63,3 +63,34 @@ export interface ScoredPost {
   readonly author: PeerId;
   readonly similarity: number;
 }
+
+/**
+ * A lightweight summary of a record, gossiped ahead of its full body in the
+ * announce-then-pull model. Every peer receives every announcement (cheap, like
+ * the outbox keys did before) and ranks posts locally on `embedding` WITHOUT
+ * downloading them. Only the records that win a bounded-inbox slot are then
+ * pulled in full and signature-verified — see `IngestAnnouncement` /
+ * `IngestPulledPost`.
+ *
+ * The announcement is NOT trusted on its own: `embedding` is used only to make
+ * a tentative admission decision. Authenticity is established after the pull,
+ * when the full body's canonical digest is recomputed and the author's Ed25519
+ * signature is verified; the post is then re-scored on its VERIFIED embedding,
+ * so a lying announcement cannot get a mismatched post stored (closes S2).
+ */
+export interface Announcement {
+  readonly author: PeerId;
+  readonly feedIndex: number;
+  readonly kind: RecordKind;
+  readonly createdAt: number;
+  /**
+   * Full-precision L2-normalised embedding for posts; `null` for responses and
+   * reactions (which carry no embedding and are always pulled, being tiny and
+   * thread-relevant). Full float32 is carried deliberately: it keeps the global
+   * ranking bit-identical to scoring the post itself. Quantisation (int8) is a
+   * future bandwidth optimisation, not used here.
+   */
+  readonly embedding: Float32Array | null;
+  /** Canonical-JSON SHA-256 of the announced record's body. */
+  readonly digest: Uint8Array;
+}
