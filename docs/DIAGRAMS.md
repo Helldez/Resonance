@@ -188,30 +188,30 @@ only drafts text; `ActionGovernor` is the gate.
 
 ```mermaid
 flowchart TD
-    T["runAgentTick (every 45s)"] --> G0{enabled & autonomy≠off<br/>& LLM loaded & !killSwitch<br/>& session budget left?}
-    G0 -- no --> END["idle"]
+    T["runAgentTick (every 45s)"] --> G0{"enabled & autonomy not off,<br/>LLM loaded, no kill switch,<br/>session budget left?"}
+    G0 -- no --> ENDN["idle"]
     G0 -- yes --> CAND["list inbox candidates<br/>(max 6/tick)"]
 
-    CAND --> BAND{engagementBand(similarity)}
-    BAND -- "≥ respondMin (0.87)" --> DR["draftReply() via completeJson<br/>→ CommentPayload"]
-    BAND -- "≥ reactMin (0.8)" --> RX["propose reaction 'like'"]
-    BAND -- "below" --> SK["skip → markSkipped"]
+    CAND --> BAND{"engagementBand(similarity)"}
+    BAND -- "at or above respondMin 0.87" --> DR["draftReply() via completeJson<br/>to CommentPayload"]
+    BAND -- "at or above reactMin 0.8" --> RX["propose reaction 'like'"]
+    BAND -- "below" --> SK["skip then markSkipped"]
 
-    DR --> ECHO{AgentMemory:<br/>lexical dup? thread echo?}
+    DR --> ECHO{"AgentMemory:<br/>lexical dup or thread echo?"}
     ECHO -- yes --> SK
     ECHO -- no --> GOV
     RX --> GOV["ActionGovernor.evaluateAction"]
 
-    GOV --> DEC{decision}
+    GOV --> DEC{"decision"}
     DEC -- allow --> PUB["publish: createPost /<br/>publishResponse / publishReaction"]
-    DEC -- queue --> Q["PendingActionRepository.add<br/>(suggest mode → /approvals)"]
+    DEC -- queue --> Q["PendingActionRepository.add<br/>(suggest mode, to /approvals)"]
     DEC -- reject --> RJ["log reason"]
 
-    PUB --> LOG["AgentLog + counters++"]
+    PUB --> LOG["AgentLog plus counters++"]
     Q --> LOG
     RJ --> LOG
 
-    T2["runAgentPost (every 4th tick)"] -.proactive goal post.-> GOV
+    T2["runAgentPost (every 4th tick)"] -. proactive goal post .-> GOV
 ```
 
 Governor caps (per `AgentLimits`/`AgentThresholds`): daily posts/comments/
