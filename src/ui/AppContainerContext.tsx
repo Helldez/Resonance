@@ -453,6 +453,14 @@ function buildAgentDeps(
       const address = addressOf(record.author, record.feedIndex);
       if (record.body.kind === 'post') {
         await c.posts.upsert(address, record.author, record.feedIndex, record.body, null);
+        // Mirror the manual-publish path (compose.tsx): add the agent's own post
+        // to the live matching basis so incoming peers group under it instead of
+        // landing in "Based on your interests", and re-group already-received
+        // posts — without waiting for an app restart to reload from the DB.
+        appendOwnEmbedding(address, record.body.embedding);
+        void rescoreInboxAgainstOwnPosts(c).catch(() => {
+          /* best-effort: never crash the agent loop on a rescore failure */
+        });
       } else if (record.body.kind === 'reaction') {
         await c.reactions.applyFromRecord(address, record.author, record.feedIndex, record.body);
       } else {
