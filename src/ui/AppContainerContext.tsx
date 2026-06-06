@@ -116,6 +116,13 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
           );
         });
 
+        // Drain the backlog: a peer can connect during boot and the worker
+        // emits each announcement only once, when first learned — so any that
+        // arrived before the handlers above were attached would be lost. rescan
+        // re-emits the full set of announcements the worker already knows, and
+        // handleAnnouncement is idempotent, so this safely catches them up.
+        await c.network.rescan();
+
         setStage('ready');
         setContainer(c);
       } catch (e) {
