@@ -79,7 +79,10 @@ export function buildReplyPrompt(
       'already said in the thread above.',
     );
   }
-  parts.push('Set "text" to the reply and "rationale" to a one-line why.');
+  parts.push(
+    'Set "text" to the reply itself (a real sentence — never a placeholder like',
+    'the literal word "text") and "rationale" to a one-line why.',
+  );
   return parts.join('\n');
 }
 
@@ -89,6 +92,7 @@ export function buildPostPrompt(_profile: AgentProfile, goal: string): string {
     `Write ONE short post (1-3 sentences) that advances this goal: "${goal}".`,
     'Make a concrete statement or share a specific idea that stands on its own.',
     'You may invite a response, but the post must not be only a question.',
-    'No hashtags, no emoji. Set "text" to the post.',
+    'No hashtags, no emoji. Set "text" to the post itself (real content,',
+    'never a placeholder like the literal word "text").',
   ].join('\n');
 }

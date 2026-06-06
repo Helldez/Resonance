@@ -31,6 +31,26 @@ const COMMENT_MAX = 240;
 const RATIONALE_MAX = 120;
 const POST_MAX = 280;
 
+/**
+ * Reject degenerate drafts before they reach the governor. Small models
+ * sometimes echo the schema placeholder (the literal "text") or emit a
+ * too-short fragment instead of content; both read as a parse failure so the
+ * structured-LLM layer retries once and the caller skips. Bounds live in
+ * `AgentConfig.draftQuality`; checks are plain length/equality — no regex.
+ */
+function isUsableDraft(text: string): boolean {
+  if (text.length < AgentConfig.draftQuality.minDraftChars) {
+    return false;
+  }
+  const lower = text.toLowerCase();
+  for (const placeholder of AgentConfig.draftQuality.placeholderEchoes) {
+    if (lower === placeholder) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export const CommentAction: LlmAction<CommentPayload> = {
   schema: {
     type: 'object',
@@ -49,7 +69,7 @@ export const CommentAction: LlmAction<CommentPayload> = {
     }
     const v = value as Record<string, unknown>;
     const text = typeof v.text === 'string' ? v.text.trim().slice(0, COMMENT_MAX) : '';
-    if (text.length === 0) {
+    if (!isUsableDraft(text)) {
       return null;
     }
     const rationale = typeof v.rationale === 'string' ? v.rationale.slice(0, RATIONALE_MAX) : '';
@@ -72,6 +92,6 @@ export const PostAction: LlmAction<PostPayload> = {
     }
     const v = value as Record<string, unknown>;
     const text = typeof v.text === 'string' ? v.text.trim().slice(0, POST_MAX) : '';
-    return text.length > 0 ? { text } : null;
+    return isUsableDraft(text) ? { text } : null;
   },
 };

@@ -197,6 +197,30 @@ async function processCandidate(
   const { profile } = deps;
   const short = cand.address.slice(0, 10);
 
+  // Don't spend an LLM draft (or any proposal) on an action class whose daily
+  // cap is already exhausted — in autopilot the governor would only reject it
+  // afterwards, wasting the generation. The candidate is NOT marked skipped:
+  // caps reset at midnight, so it stays eligible for a future tick. Suggest
+  // mode is exempt (it queues for a human, mirroring the governor's own
+  // cap semantics).
+  if (profile.autonomy === 'autopilot') {
+    if (band === 'respond') {
+      const commentsToday = await deps.activity.countToday(day, 'comment');
+      if (commentsToday >= profile.limits.maxCommentsPerDay) {
+        console.log(`[agent] defer ${short}: comment cap reached, no draft spent`);
+        await sink.log('govern', 'Daily comment cap reached — deferred without drafting', cand.address, null, cand.text);
+        return 'none';
+      }
+    } else {
+      const reactionsToday = await deps.activity.countToday(day, 'reaction');
+      if (reactionsToday >= profile.limits.maxReactionsPerDay) {
+        console.log(`[agent] defer ${short}: reaction cap reached`);
+        await sink.log('govern', 'Daily reaction cap reached — deferred', cand.address, null, cand.text);
+        return 'none';
+      }
+    }
+  }
+
   let proposed: ProposedAction;
   let rationale = '';
   let echoHit = false;

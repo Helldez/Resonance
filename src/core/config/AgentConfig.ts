@@ -49,6 +49,21 @@ export const AgentConfig = {
   dedupHistorySize: 40,
 
   /**
+   * Minimum quality bar a drafted text must clear before it is even proposed.
+   * Small models sometimes echo the response-schema placeholder instead of
+   * writing content (observed live: the literal draft "text", which then
+   * tripped the dedup gate every tick). A draft is degenerate when it is
+   * shorter than `minDraftChars` or, lowercased, exactly matches one of
+   * `placeholderEchoes` — both checked in `AgentActions.validate` (plain
+   * length/equality, no regex). Degenerate drafts are treated as a parse
+   * failure: retried once, then skipped.
+   */
+  draftQuality: {
+    minDraftChars: 20,
+    placeholderEchoes: ['text', 'reply', 'rationale', 'string', 'your reply here'],
+  },
+
+  /**
    * Sampling for the routing calls (triage, decide) — low for determinism.
    * Token budget is generous: even with `/no_think`, a thinking model may emit
    * a short preamble, and the balanced-brace extractor stops at the JSON's
