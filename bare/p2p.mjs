@@ -1,33 +1,39 @@
 /**
- * Resonance P2P Bare worker — single-room ("Keet model", conf 9).
+ * Resonance P2P Bare worker — single-room, announce-then-pull (v5).
  *
  * Responsibilities (all running inside the Bare worklet on-device):
  *   1. Open a Corestore at the app-data directory.
- *   2. Create a single writable "outbox" Hypercore — this peer's append-
- *      only feed of signed posts and responses.
- *   3. Run Hyperswarm with a connection cap, and join ONE shared 32-byte
- *      room topic (derived from the room id) as both client and server.
- *   4. On every peer connection, multiplex a "resonance-directory/v2"
- *      protocol over the Noise stream (Protomux). Peers exchange and gossip
- *      the *set of known outbox keys*: a newly-learned key is replicated and
- *      forwarded to every other connection, so every post reaches every peer
- *      transitively (~log₃₂(N) hops). Corestore replicates the cores.
- *   5. Stream every new remote record up to the RN side via framed JSON
- *      IPC ('record' event). The RN side verifies Ed25519 signatures and
- *      decides what to do with each record.
+ *   2. Create a single writable "outbox" Hypercore — this peer's append-only
+ *      feed of signed posts, responses and reactions.
+ *   3. Run Hyperswarm with a connection cap, and join ONE shared 32-byte room
+ *      topic (derived from the room id) as both client and server.
+ *   4. On every connection, multiplex a "resonance-announce/v1" protocol over
+ *      the Noise stream (Protomux). Peers exchange and gossip lightweight
+ *      ANNOUNCEMENTS (author + outbox key + embedding + digest) — NOT full
+ *      records, and NOT whole cores. A newly-learned announcement is emitted up
+ *      to RN and forwarded to every other connection, so it reaches every peer
+ *      transitively (~log₃₂(N) hops).
+ *   5. When RN admits an announcement it calls `pull`; only then do we open the
+ *      author's outbox core in sparse mode and download EXACTLY that one block,
+ *      then stream the full record up to RN to be verified and stored.
+ *
+ * This inverts the v4 model (replicate every core, drain every block): ranking
+ * happens on cheap summaries, and bodies are fetched only for what is kept.
  *
  * Wire protocol with the RN side: see ./rpc-frame.mjs.
  *
  * Commands accepted from RN:
- *   - 'init'      { storagePath, maxConnections } -> { outboxKey, noiseKey }
+ *   - 'init'      { storagePath, maxConnections, pullTimeoutMs } -> { outboxKey, noiseKey }
  *   - 'append'    { record }                      -> { feedIndex }
+ *   - 'pull'      { author, feedIndex }            -> { ok: boolean }
  *   - 'joinRoom'  { roomId, topicSeed }           -> { ok: true }
  *   - 'rescan'    {}                              -> { ok: true, count }
  *   - 'shutdown'  {}                              -> { ok: true }
  *
  * Events emitted to RN:
- *   - 'record'   { record }
- *   - 'presence' { peerId, present }
+ *   - 'announcement' { announcement }   (high-volume: every announcement seen)
+ *   - 'record'       { record }         (only records we pulled, or our own)
+ *   - 'presence'     { peerId, present }
  */
 
 import Corestore from 'corestore'
@@ -39,18 +45,21 @@ import crypto from 'bare-crypto'
 import fs from 'bare-fs'
 
 import { FramedRpc } from './rpc-frame.mjs'
-import { createDirectoryState } from './room-directory.mjs'
+import { createAnnounceState } from './announce-directory.mjs'
 
 const { IPC } = BareKit
 
 const DEFAULT_MAX_CONNECTIONS = 32
+const DEFAULT_PULL_TIMEOUT_MS = 8000
 
 let store = null
 let outbox = null
 let swarm = null
-let directory = null
+let announceDir = null
 let roomDiscovery = null
-const knownRemoteCores = new Map() // hex(outboxKey) -> core
+let pullTimeoutMs = DEFAULT_PULL_TIMEOUT_MS
+const openedCores = new Map() // hex(outboxKey) -> core (opened on demand for pulls)
+const joinedDiscovery = new Set() // hex(discoveryKey) we have a swarm lookup for
 let rpc
 
 function bytesToHex(buf) {
@@ -81,59 +90,22 @@ function recordFromBlock(block, peerId) {
   }
 }
 
-async function watchCore(core) {
-  await core.ready()
-  const peerId = bytesToHex(core.key)
-  knownRemoteCores.set(peerId, core)
-  console.log(`[p2p] watchCore start peer=${peerId.slice(0, 12)} length=${core.length}`)
-
-  try {
-    await core.update({ wait: false })
-  } catch (err) {
-    console.warn('[p2p] core.update failed', err)
-  }
-
-  let cursor = 0
-  const drain = async (reason) => {
-    const length = core.length
-    if (length <= cursor) return
-    console.log(`[p2p] drain peer=${peerId.slice(0, 12)} reason=${reason} cursor=${cursor} length=${length}`)
-    while (cursor < length) {
-      try {
-        const block = await core.get(cursor, { wait: true, timeout: 30000 })
-        const record = recordFromBlock(block, peerId)
-        if (record !== null) {
-          rpc.emit('record', { record })
-        }
-      } catch (err) {
-        console.warn(`[p2p] read error peer=${peerId.slice(0, 12)} index=${cursor}`, err)
-      }
-      cursor++
-    }
-  }
-
-  await drain('initial')
-  core.on('append', () => {
-    void drain('append')
-  })
-}
-
 /**
- * Begin replicating a peer outbox identified by its 32-byte key. Cores
- * opened here are auto-injected by Corestore into every active replication
- * stream, so blocks flow without re-dialing. Idempotent per key.
+ * Build the announcement for one of our own freshly-appended records. Carries
+ * the outbox CORE key (so peers can open the core to pull) alongside the author
+ * Ed25519 id and feedIndex (the address), the digest, and — for posts — the
+ * embedding peers rank on.
  */
-async function trackRemoteCoreByKey(keyBytes) {
-  const peerId = bytesToHex(keyBytes)
-  if (knownRemoteCores.has(peerId)) {
-    return
-  }
-  const remote = store.get({ key: keyBytes })
-  try {
-    await watchCore(remote)
-    rpc.emit('presence', { peerId, present: true })
-  } catch (err) {
-    console.warn('[p2p] failed to track remote core', peerId.slice(0, 12), err)
+function announcementFromRecord(record, feedIndex) {
+  const isPost = record.body && record.body.kind === 'post'
+  return {
+    outboxKey: bytesToHex(outbox.key),
+    author: record.author,
+    feedIndex,
+    kind: record.body.kind,
+    createdAt: record.body.createdAt,
+    embedding: isPost ? record.body.embedding : null,
+    digest: record.digest,
   }
 }
 
@@ -142,15 +114,18 @@ function onConnection(conn, info) {
   console.log('[p2p] peer connected, remote noise key:', remoteNoiseKey.slice(0, 12))
   const mux = Protomux.from(conn)
 
-  // The directory channel gossips a *list* of 32-byte outbox keys. On open
-  // each side sends the full set it knows; afterwards only freshly-learned
-  // keys are forwarded (the receiver's `learn` guard prevents loops).
-  const dir = mux.createChannel({
-    protocol: 'resonance-directory/v2',
+  // The announce channel gossips a *list* of announcements. On open each side
+  // sends the full set it knows; afterwards only freshly-learned ones are
+  // forwarded (the receiver's `learn` dedup prevents loops). Announcements are
+  // JSON strings — variable-size (embedding) and trivial to evolve.
+  const channel = mux.createChannel({
+    protocol: 'resonance-announce/v1',
     onopen: () => {
-      const snapshot = directory.snapshot()
-      dirMsg.send(snapshot.map(hexToBytes))
-      console.log(`[p2p] directory open, sent ${snapshot.length} keys`)
+      const snapshot = announceDir.snapshot()
+      if (snapshot.length > 0) {
+        annMsg.send(snapshot.map((a) => JSON.stringify(a)))
+      }
+      console.log(`[p2p] announce open, sent ${snapshot.length} announcements`)
     },
     onclose: () => {
       unregister()
@@ -161,31 +136,39 @@ function onConnection(conn, info) {
   })
 
   const entry = {
-    sendKeys: (hexKeys) => {
-      dirMsg.send(hexKeys.map(hexToBytes))
+    sendAnns: (anns) => {
+      annMsg.send(anns.map((a) => JSON.stringify(a)))
     },
   }
-  const unregister = directory.register(entry)
+  const unregister = announceDir.register(entry)
 
-  const dirMsg = dir.addMessage({
-    encoding: c.array(c.fixed32),
-    onmessage: async (keys) => {
-      const hexKeys = keys.map(bytesToHex)
-      const fresh = directory.learn(hexKeys)
-      for (const h of fresh) {
-        await trackRemoteCoreByKey(hexToBytes(h))
+  const annMsg = channel.addMessage({
+    encoding: c.array(c.string),
+    onmessage: (items) => {
+      const parsed = []
+      for (const s of items) {
+        try {
+          parsed.push(JSON.parse(s))
+        } catch (err) {
+          // ignore a malformed announcement rather than dropping the batch
+        }
       }
-      directory.forward(entry, fresh)
+      const fresh = announceDir.learn(parsed)
+      for (const a of fresh) {
+        rpc.emit('announcement', { announcement: a })
+      }
+      announceDir.forward(entry, fresh)
       if (fresh.length > 0) {
-        console.log(`[p2p] learned ${fresh.length} new keys (known=${directory.snapshot().length})`)
+        console.log(`[p2p] learned ${fresh.length} announcements (known=${announceDir.size})`)
       }
     },
   })
 
-  dir.open()
+  channel.open()
 
   // Corestore replication shares the same Noise stream via its own Protomux
-  // channels, so it coexists cleanly with the directory channel.
+  // channels. Cores we open for pulls are auto-injected into every active
+  // replication stream, so a requested block flows from whichever peer holds it.
   store.replicate(conn)
 }
 
@@ -212,7 +195,7 @@ async function persistSwarmKeyPair(storagePath, kp) {
   await fs.promises.writeFile(path, json, 'utf8')
 }
 
-async function initialize({ storagePath, maxConnections }) {
+async function initialize({ storagePath, maxConnections, pullTimeoutMs: pt }) {
   if (store !== null) {
     return {
       outboxKey: bytesToHex(outbox.key),
@@ -224,7 +207,10 @@ async function initialize({ storagePath, maxConnections }) {
   await outbox.ready()
   console.log(`[p2p] initialized; outbox key=${bytesToHex(outbox.key).slice(0, 12)} length=${outbox.length}`)
 
-  directory = createDirectoryState(bytesToHex(outbox.key))
+  announceDir = createAnnounceState()
+  if (typeof pt === 'number' && pt > 0) {
+    pullTimeoutMs = pt
+  }
 
   const maxPeers =
     typeof maxConnections === 'number' && maxConnections > 0
@@ -265,48 +251,79 @@ async function append({ record }) {
   const json = JSON.stringify(finalRecord)
   const result = await outbox.append(b4a.from(json, 'utf8'))
   console.log(`[p2p] own outbox append feedIndex=${feedIndex} newLength=${result.length} kind=${finalRecord.body && finalRecord.body.kind}`)
+
+  // Announce it: learn our own (so new peers get it in the snapshot) and push
+  // it to every current connection. Bodies stay in the outbox until pulled.
+  const ann = announcementFromRecord(finalRecord, feedIndex)
+  announceDir.learn([ann])
+  announceDir.forward(null, [ann])
   return { feedIndex }
 }
 
 /**
- * Re-emit every block already replicated into the local cores, from index 0.
+ * Open (or reuse) a peer outbox core and download EXACTLY one block — the
+ * keystone of the announce-then-pull model (see scripts/spike/sparse-pull).
  *
- * The drain loop in `watchCore` advances a one-way cursor: each remote block
- * is delivered to the RN side exactly once, when first seen. The RN side may
- * DROP a post at inbox admission (e.g. during cold start, when there are no
- * own posts to score against yet), and that decision is permanent — the block
- * stays in the local core but is never revisited.
- *
- * `rescan` replays the full local history so the RN side can re-evaluate it
- * against a freshly-published post. The blocks were already downloaded during
- * the initial drain, so reads are local (`wait: false`) — no network stall.
- * Re-delivery is safe: the RN handler is idempotent (upsert keyed by address).
+ * Block availability: the announcer is often many hops away, so the directly
+ * connected peer may not hold the block. We join the core's discovery topic so
+ * peers holding it dial in, and use `findingPeers()` to keep `get(...,{wait})`
+ * from resolving "not found" before that lookup drains.
+ */
+async function pull({ author, feedIndex }) {
+  const ann = announceDir.snapshot().find(
+    (a) => a.author === author && a.feedIndex === feedIndex,
+  )
+  if (ann === undefined) {
+    console.warn(`[p2p] pull: no announcement for ${String(author).slice(0, 12)}:${feedIndex}`)
+    return { ok: false }
+  }
+  const outboxKeyHex = ann.outboxKey
+  const keyBytes = hexToBytes(outboxKeyHex)
+
+  let core = openedCores.get(outboxKeyHex)
+  if (core === undefined) {
+    core = store.get({ key: keyBytes })
+    await core.ready()
+    openedCores.set(outboxKeyHex, core)
+  }
+
+  // Find peers that hold this core (the announcer may be non-adjacent).
+  const discoveryHex = bytesToHex(core.discoveryKey)
+  if (!joinedDiscovery.has(discoveryHex)) {
+    joinedDiscovery.add(discoveryHex)
+    swarm.join(core.discoveryKey, { server: false, client: true })
+  }
+  const done = core.findingPeers()
+  swarm.flush().then(done, done)
+
+  try {
+    core.download({ start: feedIndex, end: feedIndex + 1 })
+    const block = await core.get(feedIndex, { wait: true, timeout: pullTimeoutMs })
+    const record = recordFromBlock(block, outboxKeyHex)
+    if (record !== null) {
+      rpc.emit('record', { record })
+      console.log(`[p2p] pulled ${String(author).slice(0, 12)}:${feedIndex} kind=${record.body && record.body.kind}`)
+      return { ok: true }
+    }
+    return { ok: false }
+  } catch (err) {
+    console.warn(`[p2p] pull failed ${String(author).slice(0, 12)}:${feedIndex}`, err)
+    return { ok: false }
+  }
+}
+
+/**
+ * Re-emit every known announcement to RN. Lets a freshly-started RN side (whose
+ * Tier-1 may be behind the worker's in-memory set) re-evaluate the room against
+ * its current own-post profile. Cheap: announcements only, no body downloads.
  */
 async function rescanAll() {
-  let count = 0
-  for (const [peerId, core] of knownRemoteCores) {
-    try {
-      await core.update({ wait: false })
-    } catch (err) {
-      // best-effort; fall through to whatever length we have locally
-    }
-    const length = core.length
-    for (let i = 0; i < length; i++) {
-      try {
-        const block = await core.get(i, { wait: false })
-        if (!block) continue
-        const record = recordFromBlock(block, peerId)
-        if (record !== null) {
-          rpc.emit('record', { record })
-          count++
-        }
-      } catch (err) {
-        // skip a block that is not locally available / unreadable
-      }
-    }
+  const all = announceDir.snapshot()
+  for (const a of all) {
+    rpc.emit('announcement', { announcement: a })
   }
-  console.log(`[p2p] rescan re-emitted ${count} records from ${knownRemoteCores.size} cores`)
-  return { ok: true, count }
+  console.log(`[p2p] rescan re-emitted ${all.length} announcements`)
+  return { ok: true, count: all.length }
 }
 
 async function joinRoom({ roomId, topicSeed }) {
@@ -333,7 +350,9 @@ async function shutdown() {
     outbox = null
   }
   roomDiscovery = null
-  directory = null
+  announceDir = null
+  openedCores.clear()
+  joinedDiscovery.clear()
   return { ok: true }
 }
 
@@ -343,6 +362,8 @@ rpc = new FramedRpc(IPC, async (method, params) => {
       return initialize(params)
     case 'append':
       return append(params)
+    case 'pull':
+      return pull(params)
     case 'joinRoom':
       return joinRoom(params)
     case 'rescan':
@@ -354,4 +375,4 @@ rpc = new FramedRpc(IPC, async (method, params) => {
   }
 })
 
-console.log('[p2p] Resonance P2P worker booted (single-room)')
+console.log('[p2p] Resonance P2P worker booted (single-room, announce-then-pull)')

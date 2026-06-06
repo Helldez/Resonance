@@ -1,12 +1,34 @@
 import { BareSubprocess } from './BareSubprocess';
 import { FramedRpcClient } from './FramedRpcClient';
 import { RoomConfig } from '@core/config/RoomConfig';
-import type { PeerId, RecordAddress, ReactionType, SignedRecord } from '@core/domain/types';
+import type {
+  Announcement,
+  PeerId,
+  RecordAddress,
+  RecordKind,
+  ReactionType,
+  SignedRecord,
+} from '@core/domain/types';
 import { bytesToHex, hexToBytes } from '@core/utils/HexEncoding';
 
 interface InitResult {
   readonly outboxKey: string;
   readonly noiseKey: string;
+}
+
+/** Wire form of an announcement (embedding as number[], digest as hex). */
+interface WireAnnouncement {
+  readonly outboxKey: string;
+  readonly author: string;
+  readonly feedIndex: number;
+  readonly kind: RecordKind;
+  readonly createdAt: number;
+  readonly embedding: number[] | null;
+  readonly digest: string;
+}
+
+interface AnnouncementEvent {
+  readonly announcement: WireAnnouncement;
 }
 
 interface AppendResult {
@@ -80,6 +102,7 @@ export class DesktopP2pWorker {
   private outboxKey: string | null = null;
   private noiseKey: string | null = null;
   private recordHandlers: Array<(r: SignedRecord) => void> = [];
+  private announcementHandlers: Array<(a: Announcement) => void> = [];
   private presenceHandlers: Array<(peerId: PeerId, present: boolean) => void> = [];
 
   constructor(private readonly options: DesktopP2pWorkerOptions) {}
@@ -109,6 +132,15 @@ export class DesktopP2pWorker {
         h(record);
       }
     });
+    rpc.on<AnnouncementEvent>('announcement', (evt) => {
+      if (evt === undefined) {
+        return;
+      }
+      const announcement = wireToAnnouncement(evt.announcement);
+      for (const h of this.announcementHandlers) {
+        h(announcement);
+      }
+    });
     rpc.on<PresenceEvent>('presence', (evt) => {
       if (evt === undefined) {
         return;
@@ -122,6 +154,7 @@ export class DesktopP2pWorker {
     const initResult = await rpc.request<InitResult>('init', {
       storagePath: this.options.storagePath,
       maxConnections: RoomConfig.maxConnections,
+      pullTimeoutMs: RoomConfig.pullTimeoutMs,
     });
 
     this.subprocess = sub;
@@ -167,10 +200,22 @@ export class DesktopP2pWorker {
     await rpc.request<OkResult>('rescan', {});
   }
 
+  async requestPull(author: PeerId, feedIndex: number): Promise<void> {
+    const rpc = this.requireRpc();
+    await rpc.request<{ ok: boolean }>('pull', { author, feedIndex });
+  }
+
   onRecord(handler: (record: SignedRecord) => void): () => void {
     this.recordHandlers.push(handler);
     return () => {
       this.recordHandlers = this.recordHandlers.filter((h) => h !== handler);
+    };
+  }
+
+  onAnnouncement(handler: (a: Announcement) => void): () => void {
+    this.announcementHandlers.push(handler);
+    return () => {
+      this.announcementHandlers = this.announcementHandlers.filter((h) => h !== handler);
     };
   }
 
@@ -187,6 +232,17 @@ export class DesktopP2pWorker {
     }
     return this.rpc;
   }
+}
+
+function wireToAnnouncement(wire: WireAnnouncement): Announcement {
+  return {
+    author: wire.author as PeerId,
+    feedIndex: wire.feedIndex,
+    kind: wire.kind,
+    createdAt: wire.createdAt,
+    embedding: wire.embedding === null ? null : new Float32Array(wire.embedding),
+    digest: hexToBytes(wire.digest),
+  };
 }
 
 function signedRecordToWire(record: SignedRecord): WireRecord {

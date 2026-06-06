@@ -27,6 +27,7 @@ import { SystemClock } from './SystemClock';
 import { bootstrapIdentity } from '@core/identity/IdentityManager';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 import { PostRepository } from '@data/PostRepository';
+import { AnnouncementRepository } from '@data/AnnouncementRepository';
 import { ResponseRepository } from '@data/ResponseRepository';
 import { ReactionRepository } from '@data/ReactionRepository';
 import { PeerRepository } from '@data/PeerRepository';
@@ -36,6 +37,7 @@ import { AgentLogRepository } from '@data/AgentLogRepository';
 
 export interface MobileContainer extends AppContainer {
   readonly posts: PostRepository;
+  readonly announcements: AnnouncementRepository;
   readonly responses: ResponseRepository;
   readonly reactions: ReactionRepository;
   readonly peers: PeerRepository;
@@ -78,6 +80,8 @@ export async function bootstrapMobile(): Promise<MobileContainer> {
       `dropped ${droppedPosts} posts: stored embedding dim incompatible with current model (expected ${MatchingConfig.embeddingDim}-dim)`,
     );
   }
+  const announcements = new AnnouncementRepository(database);
+  await announcements.createSchema();
   const responses = new ResponseRepository(database);
   await responses.createSchema();
   const reactions = new ReactionRepository(database);
@@ -116,6 +120,7 @@ export async function bootstrapMobile(): Promise<MobileContainer> {
     network,
     mailbox,
     posts,
+    announcements,
     responses,
     reactions,
     agentActivity,

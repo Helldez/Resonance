@@ -6,11 +6,12 @@ import { useSettingsStore } from '@domain/SettingsStore';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 import { RoomConfig } from '@core/config/RoomConfig';
 import { decideAdmission } from '@core/inbox/InboxAdmission';
+import { ingestAnnouncement } from '@core/inbox/IngestAnnouncement';
 import { addressOf } from '@core/utils/AddressOf';
 import { canonicalDigest } from '@core/utils/CanonicalRecord';
 import { validateRecordBody } from '@core/validation/ValidateRecordBody';
 import { cosineOnUnit } from '@core/matching/CosineSimilarity';
-import type { RecordAddress, SignedRecord } from '@core/domain/types';
+import type { Announcement, RecordAddress, SignedRecord } from '@core/domain/types';
 import type { ModelProgressUpdate } from '@qvac/sdk';
 import { AgentConfig } from '@core/config/AgentConfig';
 import { normalizeProfile, type AgentProfile } from '@core/agent/AgentProfile';
@@ -43,6 +44,7 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     let disposeRecordHandler: (() => void) | null = null;
+    let disposeAnnouncementHandler: (() => void) | null = null;
 
     const run = async (): Promise<void> => {
       try {
@@ -92,9 +94,19 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
         await c.network.joinRoom();
         console.log('[rn] joined single room');
 
-        // Single source of truth for incoming records: verify signature,
-        // score against own posts, admit into the bounded inbox, persist
-        // into SQLite. The Inbox/Thread screens auto-refresh from SQLite.
+        // Announce-then-pull. Two handlers:
+        //  - onAnnouncement (high-volume): rank the lightweight summary locally,
+        //    keep it in Tier-1, and pull the full body only if it earns a slot.
+        //  - onRecord (bounded): a pulled body — verify its signature, re-score
+        //    on the VERIFIED embedding, admit into the inbox, persist.
+        disposeAnnouncementHandler = c.network.onAnnouncement((announcement) => {
+          void handleAnnouncement(
+            c,
+            announcement,
+            externalOwnEmbeddings.current,
+            aboutYouEmbeddingRef.current,
+          );
+        });
         disposeRecordHandler = c.network.onRecord((record) => {
           void persistRecord(
             c,
@@ -115,6 +127,9 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       if (disposeRecordHandler !== null) {
         disposeRecordHandler();
+      }
+      if (disposeAnnouncementHandler !== null) {
+        disposeAnnouncementHandler();
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -471,6 +486,49 @@ function buildAgentDeps(
   };
 }
 
+/**
+ * Receive-side handler for a gossiped announcement (the high-volume path).
+ * Ranks the lightweight summary against the user's own posts, keeps it in
+ * Tier-1, and — only if it earns an inbox slot on the UNVERIFIED announced
+ * embedding — asks the worker to pull the full body. Nothing is trusted here;
+ * authenticity and the real admission are settled in `persistRecord` once the
+ * body arrives. Our own announcements are skipped (we already hold the post).
+ */
+async function handleAnnouncement(
+  c: PlatformContainer,
+  announcement: Announcement,
+  ownEmbeddings: ReadonlyArray<OwnEmbedding>,
+  interestProfile: Float32Array | null,
+): Promise<void> {
+  if (announcement.author === c.self) {
+    return;
+  }
+  const currentInboxCount = await c.posts.countRemotePosts(c.self);
+  const inboxMin = await c.posts.minSimilarityRemotePost(c.self);
+  const result = ingestAnnouncement({
+    announcement,
+    ownEmbeddings,
+    interestProfile,
+    currentInboxCount,
+    inboxMin,
+    config: {
+      capacity: RoomConfig.inboxCapacity,
+      minSimilarity: RoomConfig.inboxMinSimilarity,
+    },
+  });
+  await c.announcements.upsert(announcement, result.score.similarity);
+  await c.announcements.enforceCap(RoomConfig.announceTier1Capacity);
+  if (result.shouldPull) {
+    try {
+      await c.network.requestPull(announcement.author, announcement.feedIndex);
+    } catch (e) {
+      console.warn(
+        `[rn] pull request failed for ${String(announcement.author).slice(0, 12)}:${announcement.feedIndex}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+}
+
 async function persistRecord(
   c: PlatformContainer,
   record: import('@core/domain/types').SignedRecord,
@@ -505,6 +563,13 @@ async function persistRecord(
     return;
   }
   const address = addressOf(record.author, record.feedIndex);
+
+  if (record.author !== c.self) {
+    // This body arrived because we admitted its announcement and pulled it.
+    // Mark the Tier-1 summary pulled so a later re-rank does not request it
+    // again (no-op if we have no summary row for it).
+    await c.announcements.markPulled(address);
+  }
 
   if (record.body.kind === 'post') {
     const isOwn = record.author === c.self;

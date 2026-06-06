@@ -35,8 +35,13 @@ export const RoomConfig = {
    *             The wire/codec gains a third body variant; v4 isolates peers on
    *             the old format. (Agent provenance fields will land in a later
    *             bump once the agent layer exists.)
+   *   v4 → v5 — announce-then-pull: the directory channel now gossips signed
+   *             ANNOUNCEMENTS (author + embedding + digest) instead of outbox
+   *             keys, and peers pull only the records they admit (sparse) rather
+   *             than replicating every core. The room protocol is incompatible
+   *             with v4 peers, so the prefix bump isolates them.
    */
-  topicPrefix: 'resonance/v4/room/',
+  topicPrefix: 'resonance/v5/room/',
 
   /**
    * Maximum concurrent Hyperswarm connections per node. Mirrors the conf-9
@@ -78,6 +83,26 @@ export const RoomConfig = {
    * tighter.
    */
   maxResponseChars: 2000,
+
+  /**
+   * Tier-1 capacity (announce-then-pull). The directory now gossips lightweight
+   * signed announcements instead of full records; every announcement a node
+   * sees is kept here as a cheap summary and ranked locally. Only the ~K
+   * winners are pulled in full (`inboxCapacity`). Tier-1 is generously sized
+   * because ranking is the whole point — the larger it is, the closer the
+   * local top-K is to the true global top-K — but it is still bounded so a
+   * flood cannot grow it without limit. Lowest-scoring non-pulled summaries are
+   * evicted first.
+   */
+  announceTier1Capacity: 5000,
+
+  /**
+   * How long a single sparse block pull waits before giving up (ms). After an
+   * announcement wins admission we open the author's outbox core and request
+   * exactly its one block; if no peer holding it answers within this window the
+   * pull is abandoned (and may be retried) rather than blocking the inbox.
+   */
+  pullTimeoutMs: 8000,
 } as const;
 
 export type RoomConfigShape = typeof RoomConfig;

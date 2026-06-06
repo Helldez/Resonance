@@ -5,6 +5,7 @@ import { MatchingConfig } from '@core/config/MatchingConfig';
 import { StorageConfig } from '@core/config/StorageConfig';
 import { bootstrapIdentity } from '@core/identity/IdentityManager';
 import { PostRepository } from '@data/PostRepository';
+import { AnnouncementRepository } from '@data/AnnouncementRepository';
 import { ResponseRepository } from '@data/ResponseRepository';
 import { ReactionRepository } from '@data/ReactionRepository';
 import { PeerRepository } from '@data/PeerRepository';
@@ -26,6 +27,7 @@ import { SystemClock } from './SystemClock';
 
 export interface DesktopContainer extends AppContainer {
   readonly posts: PostRepository;
+  readonly announcements: AnnouncementRepository;
   readonly responses: ResponseRepository;
   readonly reactions: ReactionRepository;
   readonly peers: PeerRepository;
@@ -94,6 +96,8 @@ export async function bootstrapDesktop(
       `dropped ${droppedPosts} posts: stored embedding dim incompatible with current model (expected ${MatchingConfig.embeddingDim}-dim)`,
     );
   }
+  const announcements = new AnnouncementRepository(database);
+  await announcements.createSchema();
   const responses = new ResponseRepository(database);
   await responses.createSchema();
   const reactions = new ReactionRepository(database);
@@ -135,6 +139,7 @@ export async function bootstrapDesktop(
     network,
     mailbox,
     posts,
+    announcements,
     responses,
     reactions,
     agentActivity,

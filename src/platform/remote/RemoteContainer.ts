@@ -17,8 +17,9 @@ import type {
   PlatformEmbeddingService,
   PlatformLlmService,
 } from '@platform/PlatformContainer';
-import type { PeerId, SignedRecord } from '@core/domain/types';
+import type { Announcement, PeerId, SignedRecord } from '@core/domain/types';
 import { PostRepository } from '@data/PostRepository';
+import { AnnouncementRepository } from '@data/AnnouncementRepository';
 import { ResponseRepository } from '@data/ResponseRepository';
 import { ReactionRepository } from '@data/ReactionRepository';
 import { PeerRepository } from '@data/PeerRepository';
@@ -62,6 +63,7 @@ export async function bootstrapRemote(): Promise<PlatformContainer> {
 
   // Repositories are pure SQL — they happily wrap a remote IDatabase.
   const posts = new PostRepository(database);
+  const announcements = new AnnouncementRepository(database);
   const responses = new ResponseRepository(database);
   const reactions = new ReactionRepository(database);
   const agentActivity = new AgentActivityRepository(database);
@@ -82,6 +84,7 @@ export async function bootstrapRemote(): Promise<PlatformContainer> {
     network,
     mailbox,
     posts,
+    announcements,
     responses,
     reactions,
     agentActivity,
@@ -332,6 +335,7 @@ class RemoteLlmService implements PlatformLlmService, ILlmService {
 
 class RemoteNetwork implements IPeerNetwork {
   private recordHandlers: Array<(r: SignedRecord) => void> = [];
+  private announcementHandlers: Array<(a: Announcement) => void> = [];
   private presenceHandlers: Array<(p: PeerId, present: boolean) => void> = [];
 
   constructor(private readonly bridge: IpcBridge) {
@@ -339,6 +343,12 @@ class RemoteNetwork implements IPeerNetwork {
       const record = payload as SignedRecord;
       for (const h of this.recordHandlers) {
         h(record);
+      }
+    });
+    bridge.on('network/announcement', (payload) => {
+      const announcement = payload as Announcement;
+      for (const h of this.announcementHandlers) {
+        h(announcement);
       }
     });
     bridge.on('network/presence', (payload) => {
@@ -370,10 +380,21 @@ class RemoteNetwork implements IPeerNetwork {
     await this.bridge.call('network', 'rescan', []);
   }
 
+  async requestPull(author: PeerId, feedIndex: number): Promise<void> {
+    await this.bridge.call('network', 'requestPull', [author, feedIndex]);
+  }
+
   onRecord(handler: (record: SignedRecord) => void): () => void {
     this.recordHandlers.push(handler);
     return () => {
       this.recordHandlers = this.recordHandlers.filter((h) => h !== handler);
+    };
+  }
+
+  onAnnouncement(handler: (a: Announcement) => void): () => void {
+    this.announcementHandlers.push(handler);
+    return () => {
+      this.announcementHandlers = this.announcementHandlers.filter((h) => h !== handler);
     };
   }
 
