@@ -8,13 +8,16 @@ routing, or record-ingestion surface changes.
 The product posture (see `AGENTS.md`) is **privacy-as-constraint, no central
 server, no telemetry**. The security posture below follows from that.
 
-> **Topology note (important).** Resonance is now a **single shared room**
-> (conf-9 "Keet model", `RoomConfig.topicPrefix = resonance/v4/room/`). The
-> earlier LSH/bucket routing (v1–v2) is **gone**. Several findings below exist
-> *because* of the single-room switch — in particular, the old "Hyperswarm caps
-> peers per bucket so a flood can't reach you" assumption **no longer holds**:
-> directory gossip propagates every peer's outbox key to everyone, so every node
-> tends to replicate every record regardless of the 32-connection cap.
+> **Topology note (important).** Resonance is a **single shared room with
+> announce-then-pull** (`RoomConfig.topicPrefix = resonance/v5/room/`). The
+> earlier LSH/bucket routing (v1–v2) and the replicate-every-core single room
+> (v3–v4) are **gone**. Lightweight signed announcements (author + embedding +
+> digest) gossip to every peer; full record bodies are sparse-pulled **only for
+> the bounded set a node admits** (~`inboxCapacity`), and signatures are
+> verified only for pulled bodies. This shrinks the per-node blast radius of a
+> flood from "download + verify + store everything" to "score a stream of
+> summaries" — but announcements themselves are still uncapped per author
+> (see S3), and the 32-connection cap still does not bound who can reach you.
 
 ---
 
@@ -46,12 +49,15 @@ AsyncStorage + Corestore (both private keys) to Google Drive. **Fix:** `app.json
 sets `"android": { "allowBackup": false }`; the regenerated manifest confirms
 `android:allowBackup="false"`. Purge existing backups via Google Drive → Backups.
 
-#### S3 — No anti-sybil / rate-limit / cost to post (single-room) — **DEFERRED (Phase 2)**
+#### S3 — No anti-sybil / rate-limit / cost to post (single-room) — **DEFERRED (Phase 2), blast radius reduced (Phase 1)**
 Identities are free and the global room has no proof-of-work and no per-author
-receive-side rate cap. One actor can mint unlimited identities and flood the room;
-every honest node replicates and verifies all of it, so this is **also a DoS
-amplifier** (ties to the scaling audit). This is the highest security-at-scale
-risk. **Planned fix:** NIP-13-style proof-of-work on each announcement (cheap to
+receive-side rate cap. One actor can mint unlimited identities and flood the room.
+**Phase 1 reduced the amplification:** a flood now costs honest nodes only the
+announcement stream + a dot product per announcement — bodies are pulled and
+signatures verified only for the bounded admitted set, so a flood can no longer
+force every node to download/verify/store everything. Still the highest
+security-at-scale risk, because announcements themselves are uncapped.
+**Planned fix:** NIP-13-style proof-of-work on each announcement (cheap to
 verify, ~1 s to produce) + a per-author token-bucket rate cap, both enforced in
 the Bare worker before scoring/forwarding. See plan, Phase 2.
 
@@ -69,16 +75,20 @@ impersonation — prioritise the migration. **Planned fix:** `expo-secure-store`
 Symmetric to F2 (`bare/p2p.mjs:loadOrCreateSwarmKeyPair`). **Planned fix:**
 generate via `expo-secure-store` on the RN side, pass to the worker at `init`.
 
-#### S2 — Embedding is not bound to text (trusted on the wire) — **PARTIAL / DEFERRED (Phase 1)**
-The receiver uses the sender-supplied `body.embedding` for inbox admission but
-never re-embeds `body.text` to confirm they correspond. A hostile peer can craft
-an embedding tuned to pass any receiver's filter while the visible text is
-unrelated (spam/scam/phishing). The signature binds the embedding to the author,
-not to the text's actual meaning. **Mitigated now:** wrong-dimension embeddings
-are rejected at ingest (S5 fix). **Planned fix (Phase 1):** with announce-then-pull
-the admitted set is small (~200), so re-embedding admitted posts on receipt
-becomes affordable; the announcement also carries a second signature binding the
-quantized embedding + body digest to the author.
+#### S2 — Announced embedding can lie about the body — **MITIGATED (Phase 1)**
+The announcement's embedding is attacker-controlled and is used (unverified) to
+decide whether to spend a pull. **Mitigation (landed with announce-then-pull):**
+the pulled body's canonical digest and Ed25519 signature are verified, and the
+post is then **re-scored on the VERIFIED body embedding**
+(`IngestPulledPost`) before anything is committed — an announcement that lied
+to win a tentative slot gets its post dropped at commit. The residual cost of a
+lie is one wasted pull (bounded by admissions; further bounded by the Phase-2
+PoW/rate-cap). Wrong-dimension embeddings are rejected at ingest (S5).
+**Remaining gap (accepted):** the receiver does not re-embed `body.text`, so an
+author can still sign a self-consistent post whose embedding does not match its
+own text's meaning; that is a content-quality attack on the author's own
+reputation rather than an inbox-integrity hole, and re-embedding the ~200
+admitted posts stays an available hardening if it proves to matter.
 
 #### S4 — Indirect prompt injection into the autonomous agent — **MITIGATED (Phase 0)**
 Incoming post/thread text (attacker-controlled) is concatenated into the agent's
@@ -110,11 +120,13 @@ wrong-dimension embedding is dropped at ingest. **Residual:** a giant embedding
 array can still be allocated during `JSON.parse` inside the worker before the
 RN-side length check; a hard wire-level cap belongs to the Phase-1 codec rework.
 
-#### S6 — No schema validation of inbound wire records — **PARTIAL / DEFERRED (Phase 1)**
-`recordFromBlock` (`bare/p2p.mjs`) `JSON.parse`s untrusted blocks (try/catch) but
-does not validate shape; the RN side assumes the `WireRecord` shape. `S5`'s
-length/dim checks now reject the most damaging malformed bodies, but full shape
-validation is deferred to the Phase-1 codec (compact-encoding struct).
+#### S6 — No schema validation of inbound wire records — **PARTIAL / DEFERRED**
+`recordFromBlock` and the announce channel (`bare/p2p.mjs`) `JSON.parse` untrusted
+payloads (try/catch) but do not validate shape; the RN side assumes the
+`WireRecord` / `WireAnnouncement` shapes. `S5`'s length/dim checks reject the
+most damaging malformed bodies, and only pulled (admitted) records reach the
+expensive path, but full shape validation is deferred to a future binary codec
+(compact-encoding struct) — v5 kept JSON on the wire.
 
 #### S7 — Attacker-controlled timestamps — **OPEN (informational)**
 `createdAt` is inside the signed body, so the author chooses it freely. Reaction
@@ -167,10 +179,11 @@ bridge; no in-process sandbox. A property of the Bare runtime, not a Resonance b
 | Adversary | Defended? | Mechanism |
 |---|---|---|
 | Network observer on the same Wi-Fi | Partial | Hyperswarm uses Noise XX (authenticated encryption per connection). DHT-level metadata (which topic you announce, your IP to connected peers) is exposed (S8). |
-| Peer in the room | Read-only | Sees every replicated record (text + embedding). Cannot impersonate other peers (Ed25519). |
-| Malicious peer crafting forged records | Yes | Digest + signature verification rejects them on ingest. |
-| Malicious peer sending oversized/malformed input | Partial (Phase 0) | `validateRecordBody` drops over-long text and wrong-dim embeddings before storage; full wire-shape validation deferred to Phase 1. |
-| Sybil flood of fake peers | **No (deferred Phase 2)** | Single-room + directory gossip means the 32-connection cap no longer bounds ingestion. PoW + per-author rate cap planned. |
+| Peer in the room | Read-only | Sees every announcement (embedding + digest) and can pull any body it wants. Cannot impersonate other peers (Ed25519). |
+| Malicious peer crafting forged records | Yes | Digest + signature verification rejects pulled bodies on ingest. |
+| Malicious peer announcing a lying embedding | Yes (Phase 1) | The pulled body is re-scored on its VERIFIED embedding before commit; the lie costs the victim one bounded pull. |
+| Malicious peer sending oversized/malformed input | Partial (Phase 0) | `validateRecordBody` drops over-long text and wrong-dim embeddings before storage; full wire-shape validation deferred. |
+| Sybil flood of fake peers | Partial (Phase 1) → Phase 2 | Announce-then-pull bounds the damage to the announcement stream + a dot product each (no forced download/verify/store). Announcements per author are still uncapped; PoW + per-author rate cap planned. |
 | Indirect prompt injection of the agent | Partial (Phase 0) | Untrusted-content prompt framing + link/handle stripping + never-list + deterministic `ActionGovernor`; autopilot opt-in, default *suggest*. |
 | Lost/stolen unlocked device | No | Plaintext keys (F2/F3 deferred). Mitigation: device lock screen. |
 | Cloud-backup exfiltration of secrets | **Yes** | `allowBackup=false` (F1). |
@@ -185,8 +198,9 @@ bridge; no in-process sandbox. A property of the Bare runtime, not a Resonance b
 | **Done** | F1 — disable Android Auto Backup. |
 | **Done (Phase 0)** | S5 — bound untrusted input (`maxPostChars`/`maxResponseChars`, embedding-dim check). |
 | **Done (Phase 0)** | S4 — agent prompt-injection hardening (untrusted framing, link/handle stripping, never-list). |
-| Phase 1 | S2 / S6 — announce-then-pull: re-embed admitted posts, compact-encoding wire struct with shape validation. |
+| **Done (Phase 1)** | S2 — announce-then-pull landed (topic v5): bodies pulled only on admission, verified, and re-scored on the verified embedding; flood blast radius bounded. Validated desktop↔mobile. |
 | Phase 2 | S3 — proof-of-work + per-author rate cap (anti-sybil / anti-DoS). |
+| Future | S6 — binary wire codec (compact-encoding) with full shape validation. |
 | Phase 2 | F2 / F3 — migrate keys to `expo-secure-store`; native `bare-crypto` verify in the worker. |
 | Future | S8 — cover-traffic / relays to reduce DHT deanonymisation. |
 | Future | S10 — identity revocation / verified-identity QR (Briar-style) out-of-band verification. |

@@ -1,11 +1,13 @@
 # Resonance — Semantic Routing
 
-> **⚠️ Historical.** Resonance moved to the single-room "Keet model"
-> (ResonanceSim conf 9): one shared Hyperswarm room + directory gossip +
-> bounded top-K local inbox, with **no LSH, buckets, sticky peers or DHT
-> routing table**. The semantic-routing design below is kept for context on
-> *why* those mechanisms were tried and dropped. The current model is
-> summarised in [AGENTS.md](../AGENTS.md) ("Matching conventions").
+> **⚠️ Historical.** Resonance moved to a single shared Hyperswarm room with
+> **announce-then-pull** (topic v5): lightweight signed announcements gossip
+> globally, bodies are sparse-pulled only on admission into the bounded top-K
+> inbox, with **no LSH, buckets, sticky peers or DHT routing table**. The
+> semantic-routing design below is kept for context on *why* those mechanisms
+> were tried and dropped (as was the v3–v4 replicate-every-core room that
+> followed them). The current model is summarised in
+> [AGENTS.md](../AGENTS.md) ("Matching conventions").
 
 > **Looking for the current runtime flow (what happens when you publish or
 > receive a post)?** That belongs in [MATCHING_FLOW.md](MATCHING_FLOW.md).

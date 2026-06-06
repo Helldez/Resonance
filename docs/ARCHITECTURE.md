@@ -48,48 +48,59 @@ Qwen3-1.7B (Q4_0), also via QVAC in the worklet (`ModelProfiles.llm`).
 Both are abstracted behind ports so the calibration script can swap a
 Node-side embedding model in for offline analysis.
 
-## The single-room model (conf 9, "Keet model")
+## The single-room model — announce-then-pull (v5)
 
 Resonance runs **one shared P2P room** — no semantic buckets, no DHT
 routing table, no sticky peers. Every node joins a single Hyperswarm topic
-derived as `sha256(RoomConfig.topicPrefix || RoomConfig.roomId)`, and peer
-outbox keys gossip transitively (`bare/room-directory.mjs`) so every post
-eventually reaches every peer in ~log₃₂(N) hops
-(`RoomConfig.maxConnections = 32`).
+derived as `sha256(RoomConfig.topicPrefix || RoomConfig.roomId)`. Signed
+**announcements** (author + outbox key + embedding + digest) gossip
+transitively over the `resonance-announce/v1` channel
+(`bare/announce-directory.mjs`) so every announcement reaches every peer in
+~log₃₂(N) hops (`RoomConfig.maxConnections = 32`). Record **bodies are not
+replicated wholesale**: a peer sparse-downloads exactly the blocks it admits.
 
 ```
 text ──embed──▶ Float32Array (768-dim, unit norm)
                        │
-                       ├──▶ signed PostBody ──▶ own Hypercore feed
-                       │                     ──▶ replicated to the room
+                       ├──▶ signed PostBody ──▶ own Hypercore feed (outbox)
                        │
-                       └──▶ directory gossip spreads the author's outbox key
+                       └──▶ ANNOUNCEMENT {author, embedding, digest}
+                            gossiped to the room (re-announced on boot)
 ```
 
-Publishing is just embed → sign → append; there is no routing decision at
-compose time. Source: `src/core/posts/CreatePost.ts`, `bare/p2p.mjs`,
-`bare/room-directory.mjs`.
+Publishing is just embed → sign → append → announce; there is no routing
+decision at compose time. Source: `src/core/posts/CreatePost.ts`,
+`bare/p2p.mjs`, `bare/announce-directory.mjs`.
 
-On the receiver, every replicated post is scored and filtered into a
-**bounded top-K inbox**:
+On the receiver, ingestion is **two-tier** — rank the cheap summary first,
+download only the winners:
 
 ```
-incoming SignedRecord
+incoming ANNOUNCEMENT (unverified embedding — cheap)
          │
-         ├──▶ verify Ed25519 signature   (mismatch → dropped, never stored)
-         │
-         ├──▶ ScoreIncomingPost: similarity = MAX cosine vs own posts
+         ├──▶ scoreAgainstOwn: similarity = MAX cosine vs own posts
          │      (cold start: cosine vs the "About you" embedding)
          │
+         ├──▶ Tier-1 summary store (`announcements` table,
+         │      cap RoomConfig.announceTier1Capacity, for re-ranking)
+         │
          └──▶ decideAdmission (src/core/inbox/InboxAdmission.ts)
-                  ├─ similarity < RoomConfig.inboxMinSimilarity ─▶ drop
-                  ├─ under RoomConfig.inboxCapacity ─────────────▶ admit
-                  └─ full ─▶ replace the weakest iff the newcomer scores higher
+                  ├─ similarity < RoomConfig.inboxMinSimilarity ─▶ no pull
+                  ├─ under RoomConfig.inboxCapacity ─────────────▶ PULL
+                  └─ full ─▶ PULL iff the newcomer beats the weakest
+
+PULL → sparse-download that ONE block from the author's outbox
+         │
+         ├──▶ input bounds (ValidateRecordBody) + canonical digest check
+         ├──▶ verify Ed25519 signature   (mismatch → dropped, never stored)
+         └──▶ RE-SCORE on the verified embedding → commit to the Tier-2
+              inbox (or drop — a lying announcement dies here)
 ```
 
-The inbox keeps at most `RoomConfig.inboxCapacity` (200) remote posts; own
-posts and responses are stored separately and do not count against it. The
-`similarity` is computed once at receive time and frozen in SQLite.
+The Tier-2 inbox keeps at most `RoomConfig.inboxCapacity` (200) remote
+posts; own posts and responses are stored separately and do not count
+against it. Download, signature verification and body storage are paid only
+for that bounded set; the announcement stream is the only O(N) cost.
 
 ## Identity & signing
 
@@ -111,18 +122,17 @@ posts and responses are stored separately and do not count against it. The
 - Inbox admission and topic clustering: `src/core/{inbox,topics}/`.
 - All use cases: `src/core/{posts,responses,identity,net}/`.
 - All Expo/RN/Bare code: `src/platform/mobile/` + the Bare worker
-  (`bare/p2p.mjs`, `bare/room-directory.mjs`).
+  (`bare/p2p.mjs`, `bare/announce-directory.mjs`).
 
 ## Routing history
 
-The current model is the single-room one above; `RoomConfig` is its source
-of truth. The earlier LSH-bucket routing — the cliff problem with
-single-bucket LSH, the multi-table / Hamming-1 / gossip-top-K / Semantica
-tiers, and the volume scenarios that gated each — was dropped in conf 9 and
-now lives, clearly marked historical, in `docs/SEMANTIC_ROUTING.md`. The
-runtime publish/receive flow is detailed in `docs/MATCHING_FLOW.md` (whose
-body is likewise the superseded LSH flow, with a current-model banner on
-top).
+The current model is the announce-then-pull single room above; `RoomConfig`
+is its source of truth. Earlier topologies — the LSH-bucket routing (v1–v2,
+with the single-bucket cliff problem and the multi-table / Hamming-1 /
+gossip-top-K tiers) and the replicate-every-core single room (v3–v4) — are
+preserved, clearly marked historical, in `docs/SEMANTIC_ROUTING.md`. The
+current runtime publish/gossip/pull flow is detailed step-by-step in
+`docs/MATCHING_FLOW.md`.
 
 ## What is NOT in the MVP
 

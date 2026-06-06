@@ -1,9 +1,10 @@
 # Desktop target — runbook & architecture
 
-> Status: **second-class target** (Android remains the MVP). The desktop
-> peer exists primarily so a contributor can run a second Resonance node
-> on a development machine and exercise the P2P matching path end-to-end
-> without provisioning a second phone.
+> Status: **experimental** (Android remains the MVP and the only
+> first-class target). The desktop peer is a development/testing aid — it
+> exists so a contributor can run a second Resonance node on a development
+> machine and exercise the P2P matching path end-to-end without provisioning
+> a second phone. Expect rough edges; it is not a shipped product surface.
 
 ## Architecture
 
@@ -17,7 +18,7 @@ adapter layer differs:
 | `ILogger` | `mobile/ConsoleLogger` | `desktop/ConsoleLogger` |
 | `IFileSystem` | `mobile/ExpoFileSystem` | `desktop/NodeFileSystem` |
 | `IKeyValueStore` | `mobile/AsyncStorageKv` | `desktop/NodeKvStore` (atomic JSON-on-disk) |
-| `IDatabase` | `mobile/ExpoSqliteDatabase` | `desktop/NodeSqliteDatabase` (`better-sqlite3`) |
+| `IDatabase` | `mobile/ExpoSqliteDatabase` | `desktop/NodeSqliteDatabase` (built-in `node:sqlite`) |
 | `IIdentity` | `mobile/Ed25519Identity` | `desktop/Ed25519Identity` *(re-export, pure JS)* |
 | `IEmbeddingService` | `mobile/QvacEmbeddingService` | `desktop/QvacEmbeddingService` *(re-export)* |
 | `ILlmService` | `mobile/QvacLlmService` | `desktop/QvacLlmService` *(re-export)* |
@@ -56,13 +57,18 @@ REPL commands (all input on stdin):
 
 | Command | Effect |
 |---|---|
-| `publish <text>` | Embed → derive bucket → join swarm → sign → append to own Hypercore |
-| `peers` | List known peer Noise keys |
-| `buckets` | List buckets currently joined |
-| `exit` | Clean shutdown |
+| `publish <text>` | Embed → sign → append to own Hypercore → publish into the shared room |
+| `room` | Show the single-room join status |
+| `exit` / `quit` | Clean shutdown |
 
+Under the v5 announce-then-pull room the CLI peer acts as a **mirror node**:
+it has no interest profile, so it subscribes to announcements and pulls
+EVERY announced record — useful for end-to-end testing because it exercises
+the sparse-pull path and gives the room a node that holds everything.
 Incoming records are verified against the author's Ed25519 public key,
-upserted into the SQLite projection, and printed to stdout.
+upserted into the SQLite projection, and printed to stdout. To run a second
+peer on the same machine, point it at a separate data dir (e.g. PowerShell:
+`$env:APPDATA='C:\Users\<you>\AppData\Roaming\ResonanceB'; npm run desktop:peer`).
 
 App-data root resolution (`src/platform/desktop/bootstrap.ts:defaultAppDataDir`):
 
@@ -106,7 +112,8 @@ tested under web before they can be relied on.
   Bare worker through the same standalone runtime used by
   `DesktopP2pWorker`. The first `npm run desktop:peer` invocation that
   actually calls `embedder.embed(...)` will validate this assumption.
-- **Native modules in Electron**: `better-sqlite3` ships prebuilds for
-  Node ABI, not Electron's. Production packaging will need
-  `electron-rebuild` (or use `@journeyapps/sqlcipher`-style prebuilds).
-  Not relevant for the headless CLI peer, which runs under plain Node.
+- **SQLite in Electron**: the desktop adapter uses Node's built-in
+  `node:sqlite`, so there is **no native addon to rebuild** for Electron's
+  ABI (this replaced an earlier `better-sqlite3` dependency that broke under
+  Node 24). The only requirement is a runtime whose Node version ships
+  `node:sqlite`.

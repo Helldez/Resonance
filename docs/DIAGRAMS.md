@@ -4,9 +4,11 @@
 > Every box maps to a real file or symbol; paths are given so each diagram is
 > auditable. Render with any Mermaid-aware viewer (GitHub renders these inline).
 >
-> Source-of-truth note: `RoomConfig.topicPrefix` is `resonance/v4/room/`
-> (v4 added the signed `reaction` record). Inbox capacity is `200`
-> (`RoomConfig.inboxCapacity`).
+> Source-of-truth note: `RoomConfig.topicPrefix` is `resonance/v5/room/`
+> (v5 switched the room to announce-then-pull: announcements gossip, bodies
+> are sparse-pulled on admission). Inbox capacity is `200`
+> (`RoomConfig.inboxCapacity`); the Tier-1 announcement store is capped at
+> `RoomConfig.announceTier1Capacity` (5000).
 
 ---
 
@@ -150,28 +152,40 @@ sequenceDiagram
 
 ---
 
-## 4. Receive path — inbox admission (bounded top-K)
+## 4. Receive path — two-tier ingestion (announce, then pull)
 
-Handler: `persistRecord()` in `src/ui/AppContainerContext.tsx`,
-scoring `src/core/posts/ScoreIncomingPost.ts`, admission
+Handlers: `handleAnnouncement()` + `persistRecord()` in
+`src/ui/AppContainerContext.tsx`; scoring `src/core/inbox/ScoreAgainstOwn.ts`
+(via `IngestAnnouncement`/`IngestPulledPost`); admission
 `src/core/inbox/InboxAdmission.ts`.
 
 ```mermaid
 flowchart TD
-    R["onRecord(SignedRecord)<br/>from Bare worker 'record' event"] --> V{verify Ed25519<br/>+ digest match?}
-    V -- no --> X1["drop · never stored"]
+    AN["onAnnouncement<br/>from Bare worker (high volume)"] --> S1["score UNVERIFIED embedding:<br/>MAX cosine vs own posts<br/>(cold start: 'About you' embedding)"]
+    S1 --> T1["Tier-1 upsert<br/>announcements table (cap 5000)"]
+    T1 --> A1{decideAdmission}
+    A1 -- "sim &lt; inboxMinSimilarity (0.3)" --> X0["no pull · summary kept"]
+    A1 -- "admit / replace (or non-post)" --> PULL["requestPull(author, idx)<br/>sparse: ONE block"]
+
+    PULL --> R["onRecord(SignedRecord)<br/>pulled body (bounded volume)"]
+    R --> L{"input bounds OK?<br/>(ValidateRecordBody)"}
+    L -- no --> X1["drop · never stored"]
+    L -- yes --> V{verify Ed25519<br/>+ digest match?}
+    V -- no --> X1
     V -- yes --> K{body.kind?}
 
     K -- response --> RR["ResponseRepository.upsert"]
     K -- reaction --> RX["ReactionRepository.applyFromRecord<br/>(1 per author+target)"]
-    K -- post --> S["scoreRemotePost:<br/>MAX cosine vs own posts<br/>(cold start: 'About you' embedding)"]
+    K -- post --> S2["RE-SCORE on VERIFIED embedding<br/>(a lying announcement dies here)"]
 
-    S --> A{decideAdmission}
-    A -- "sim &lt; inboxMinSimilarity (0.3)" --> X2["reject-threshold"]
-    A -- "count &lt; inboxCapacity (200)" --> ADM["admit → PostRepository.upsert"]
-    A -- "full & sim &gt; weakest" --> REP["replace: evict weakest, upsert"]
-    A -- "full & sim ≤ weakest" --> X3["reject-full"]
+    S2 --> A2{decideAdmission<br/>vs CURRENT inbox}
+    A2 -- "sim &lt; 0.3" --> X2["reject-threshold"]
+    A2 -- "count &lt; inboxCapacity (200)" --> ADM["admit → PostRepository.upsert"]
+    A2 -- "full & sim &gt; weakest" --> REP["replace: evict weakest, upsert"]
+    A2 -- "full & sim ≤ weakest" --> X3["reject-full"]
 
+    ADM --> MP["AnnouncementRepository.markPulled"]
+    REP --> MP
     ADM --> PEER["PeerRepository.touch"]
     REP --> PEER
     RR --> PEER
@@ -220,38 +234,40 @@ and the autopilot `sessionActionBudget` (12) circuit breaker.
 
 ---
 
-## 6. P2P topology — single shared room + directory gossip
+## 6. P2P topology — single shared room, announce-then-pull (v5)
 
 One Hyperswarm topic = `sha256(topicPrefix || roomId)`. Each peer owns one
-writable outbox Hypercore; the `resonance-directory/v2` protocol gossips outbox
-keys transitively so every feed reaches every peer (~log₃₂(N) hops, fan-out
-capped at 32).
+writable outbox Hypercore; the `resonance-announce/v1` protocol
+(`bare/announce-directory.mjs`) gossips signed **announcements** (author +
+outbox key + embedding + digest) transitively so every summary reaches every
+peer (~log₃₂(N) hops, fan-out capped at 32). Bodies are **pulled on demand**:
+an admitted announcement triggers a sparse download of exactly that one block.
 
 ```mermaid
 flowchart LR
     subgraph PeerA["Peer A"]
         OA["outbox Hypercore A"]
-        DA["directory state A"]
+        DA["announce state A"]
     end
     subgraph PeerB["Peer B"]
         OB["outbox Hypercore B"]
-        DB["directory state B"]
+        DB["announce state B"]
     end
     subgraph PeerC["Peer C"]
         OC["outbox Hypercore C"]
-        DC["directory state C"]
+        DC["announce state C"]
     end
 
-    OA <-->|"corestore replicate (Protomux)"| OB
-    OB <-->|"corestore replicate"| OC
-    DA <-->|"resonance-directory/v2<br/>gossip outbox keys"| DB
+    DA <-->|"resonance-announce/v1<br/>gossip announcements"| DB
     DB <-->|"gossip + transitive forward"| DC
-    DA -. "learns C's key via B" .-> OC
+    DA -. "learns C's post via B" .-> DC
+    DA -- "admit → pull(author, idx)<br/>sparse: ONE block" --> OC
+    DC -- "admit → pull" --> OA
 ```
 
 Wire frame (`bare/rpc-frame.mjs`): `[4-byte BE length][UTF-8 JSON]`.
-RPC methods worklet exposes: `init`, `append`, `joinRoom`, `rescan`,
-`shutdown`. Events emitted: `record`, `presence`.
+RPC methods worklet exposes: `init`, `append`, `pull`, `joinRoom`, `rescan`,
+`shutdown`. Events emitted: `announcement`, `record`, `presence`.
 
 ---
 
@@ -291,8 +307,19 @@ erDiagram
         TEXT text
         BLOB embedding "Float32 LE, 768-dim"
         INT  created_at
-        REAL similarity "frozen at receive"
+        REAL similarity "re-scored on verified embedding"
         TEXT matched_own_address
+    }
+    announcements {
+        TEXT address PK "Tier-1 summary, cap 5000"
+        TEXT author
+        INT  feed_index
+        TEXT kind
+        INT  created_at
+        BLOB embedding "Float32 LE, null for non-posts"
+        BLOB digest
+        REAL best_sim "drives re-rank + cap eviction"
+        INT  pulled "1 = body fetched"
     }
     responses {
         TEXT address PK
@@ -374,7 +401,8 @@ sequenceDiagram
     App->>App: load own post embeddings into cache
     App->>BS: stage = 'network'
     App->>Net: joinRoom() — sha256(topicPrefix||roomId)
-    App->>Net: onRecord(persistRecord) + onPeerPresence
+    App->>Net: onAnnouncement(handleAnnouncement) + onRecord(persistRecord)
+    App->>Net: rescan() — drain announcements that arrived during boot
     App->>BS: stage = 'ready'  // Gate reveals screens
     App->>App: start agent loop (tickIntervalMs)
 ```

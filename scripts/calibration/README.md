@@ -15,7 +15,8 @@ that test that hypothesis offline, without any of the app stack.
    - Embed each text (model TBD — at first run, swap in an off-the-shelf
      sentence-transformer; later, hook directly into the same QVAC
      worklet the app uses).
-   - L2-normalise to 256 dims (Matryoshka truncation).
+   - L2-normalise the full 768-dim EmbeddingGemma-300M output (no Matryoshka
+     truncation — 768 is the project-wide convention; see `MatchingConfig.ts`).
    - For each post, write `nearest-<id>.md` with the top-10 nearest
      neighbours by cosine similarity and their similarity scores.
 3. Human-review a stratified sample. Mark each top-10 list as:
@@ -25,10 +26,13 @@ that test that hypothesis offline, without any of the app stack.
    - **BAD** — neighbours are off-topic or surface-level lexical
      matches.
 4. Compute the similarity threshold above which the GOOD-rate is at
-   least 80%. That value goes into `MatchingConfig.inboxSimilarityThreshold`.
-5. Decide on `MatchingConfig.lshBits` so that the expected bucket
-   population (corpus size / 2^bits) is roughly in `[20, 200]` for the
-   target user base.
+   least 80%. That value calibrates the inbox admission threshold
+   (`RoomConfig.inboxMinSimilarity`) and the `MatchingConfig.thresholdPresets`
+   the receiving device applies locally.
+
+> Note: routing is now a single shared room (the "Keet model"), so there are no
+> LSH buckets to size. The earlier `lshBits` tuning step is obsolete — see
+> `docs/SEMANTIC_ROUTING.md` for why LSH was dropped.
 
 ## Why this is a gate
 

@@ -8,6 +8,10 @@ rather than by follow graph, advertising, or central index.
 No server. No cloud. No accounts. Two devices that have something to say
 to each other find each other through the meaning of what they wrote.
 
+> **New to the codebase?** Read [`docs/GUIDE.md`](docs/GUIDE.md) — a single
+> front-to-back walkthrough (functional first, then technical) with deep dives
+> on the P2P layer and the on-device AI-agent layer.
+
 ## The vision
 
 The internet today connects you to whoever bought the ad slot next to your
@@ -67,15 +71,50 @@ You write a post.
  (evicting the weakest entry when full)
    │
    ▼
- They tap "Write reply" (typed) or "Draft with AI" (Qwen 3 drafts it)
+ They tap "Write reply" (typed) or "Draft with AI" (Qwen 3 drafts it),
+ or react (a signed "like")
    │
    ▼
- Their reply comes back to you through the same P2P fabric
+ Their reply or reaction comes back to you through the same P2P fabric
 ```
 
-The semantic map screen lets you *see* this geometry: a 2-D PCA projection
-of the posts your device holds, each point coloured by its author, your
-anchor post highlighted — the on-device view of the room's embedding space.
+The semantic map screen lets you *see* this geometry: a 2-D "topic atlas"
+of the posts your device holds — a UMAP projection of their embeddings (with a
+PCA-2 fallback for small sets) grouped into named topics — the on-device view
+of the room's embedding space.
+
+### The on-device AI agent
+
+Every node can run an optional **AI agent** that acts in the room on the
+user's behalf. You never write prompts — you set a profile (name, interests,
+goals, tone, daily limits) and turn an **autonomy dial**:
+
+- **off** — the agent never acts.
+- **suggest** — it drafts reactions/replies/posts into an approval queue;
+  nothing publishes until you tap approve.
+- **autopilot** — it acts on its own, strictly within your limits.
+
+Each tick the agent *perceives* recent inbox posts, *triages* relevance with
+the local LLM, *decides* react / respond / do-nothing, and then a deterministic
+**governor** — the only code that can authorise a write — enforces daily caps,
+per-thread turns, a dedup ledger, a "never" phrase list, a kill-switch, and a
+per-session circuit breaker. The LLM only ever proposes. Full spec in
+[`docs/AGENTS_FLOW.md`](docs/AGENTS_FLOW.md).
+
+### A note on the network
+
+The room topic is derived deterministically from a public prefix
+(`sha256(topicPrefix || roomId)`), and discovery uses the public Holepunch
+DHT. There is no allowlist or invite: **any node that runs this code joins the
+same shared room**, its announcements reach every peer, and any peer can pull
+the full posts. Treat it as a public, experimental network — don't post
+anything you wouldn't publish openly.
+
+Hyperswarm is also **not anonymous**: joining a topic exposes your IP address to
+the peers you connect with (the connections themselves are end-to-end encrypted
+via Noise, but the IP metadata is visible). Post content is signed and travels
+in clear within the room. See [`SECURITY.md`](SECURITY.md) for the full threat
+model.
 
 ## What's in this repository
 
@@ -84,11 +123,14 @@ documentation of the design decisions behind it.
 
 | Path | What it is |
 |---|---|
-| `src/core/` | Pure-TypeScript domain. Use cases, matching math, ports. Runs in plain Node too — that is how the calibration script in `scripts/calibration/` evaluates embedding quality without booting the app. |
-| `src/data/` | SQLite-backed projection repositories (posts, responses, peers). |
+| `src/core/` | Pure-TypeScript domain. Use cases, matching math, the agent loop + governor, ports. Runs in plain Node too — that is how the calibration script in `scripts/calibration/` evaluates embedding quality without booting the app. |
+| `src/data/` | SQLite-backed projection repositories (posts, responses, reactions, peers, agent activity/log/pending). |
 | `src/platform/mobile/` | Concrete adapters for Expo / React Native / Bare. |
-| `src/app/` | The Expo Router screens: Feed, Compose, semantic Map, Thread, Settings, Bootstrap. |
+| `src/platform/desktop/` | Adapters for the Node/Electron desktop peer (Bare as a subprocess; `node:sqlite`). |
+| `src/app/` | The Expo Router screens: Feed, Compose, semantic Map, Thread, Agent, Activity, Approvals, Settings, Bootstrap. |
 | `qvac/`, `bare/` | The Bare worklet that hosts the @qvac/sdk inference plugin and the Hyperswarm + Hypercore + Corestore stack. |
+| `docs/GUIDE.md` | The complete front-to-back walkthrough — start here. |
+| `docs/AGENTS_FLOW.md` | Full runtime spec of the on-device AI agent and reactions. |
 | `docs/ARCHITECTURE.md` | Layered view of the codebase, the hexagonal boundary, where the two AI surfaces (embedding + LLM) plug in. |
 | `docs/SEMANTIC_ROUTING.md` | Historical design rationale for the LSH routing that preceded the single-room model — why those mechanisms were tried and dropped. |
 | `docs/ROADMAP.md` | Milestones M0 → M5. |
@@ -103,12 +145,21 @@ demonstrates:
 
 - ✅ Ed25519 identity, on-device key generation, signed records
 - ✅ EmbeddingGemma 300M Q8 + Qwen 3 1.7B Q4 running locally via @qvac/sdk
-- ✅ Single shared Hyperswarm room with directory-gossip global convergence
-  (~log₃₂(N) hops, ≤32 connections per node)
-- ✅ Bounded top-200 local inbox, ranked by cosine vs your own posts
+- ✅ Single shared Hyperswarm room with **announce-then-pull** convergence:
+  lightweight signed announcements (embedding + digest) gossip globally
+  (~log₃₂(N) hops, ≤32 connections per node); full bodies are sparse-pulled
+  only for the posts a node admits, so download/verify/store costs are
+  bounded by the inbox, not by the size of the room
+- ✅ Bounded top-200 local inbox, ranked by cosine vs your own posts (plus a
+  capped Tier-1 store of announcement summaries for re-ranking)
+- ✅ Signed reactions (a single "like")
+- ✅ On-device AI agent: triage → decide → governor → act, with off /
+  suggest / autopilot autonomy modes and an activity log
 - ✅ Android foreground service so the worker keeps replicating in the
   background
-- ✅ Dark UI, PCA-2 semantic map coloured by author
+- 🧪 Experimental desktop peer (Node/Electron) for two-device testing without
+  a second phone
+- ✅ Dark UI, topic-atlas semantic map (UMAP projection, named topics)
 
 The Milestone 0 calibration (corpus-based threshold tuning) is the gate
 before public release.
@@ -144,10 +195,16 @@ Type-check:
 npm run typecheck
 ```
 
-Two-device test: install on two phones on the same Wi-Fi with the same
-"About you" text. Compose a post on one, watch it appear on the other
-within a few seconds; reply; watch the reply come back. Toggle Settings
-to see all 8 Tier-2 bucket IDs and confirm overlap.
+Desktop peer (**experimental** — for testing without a second phone, see [`docs/DESKTOP.md`](docs/DESKTOP.md)):
+
+```powershell
+npm run build:bare:desktop
+npm run desktop:peer
+```
+
+Two-device test: run the app on a phone and the desktop peer (or a second
+phone) with related "About you" text. Compose a post on one, watch it appear
+in the other's inbox within a few seconds; reply or react; watch it come back.
 
 ## License
 

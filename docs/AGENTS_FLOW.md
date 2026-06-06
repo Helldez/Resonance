@@ -305,7 +305,7 @@ score is gated out).
 ### Decision schema (`DecideAction.ts` validates)
 ```json
 { "action": "react|respond|do_nothing",
-  "reaction": "like|insightful|agree|curious",
+  "reaction": "like",
   "text": "<=240 chars",
   "rationale": "<=120 chars" }
 ```
@@ -326,8 +326,11 @@ treats null as do_nothing.
 A third signed `RecordKind` alongside `post`/`response`. `src/core/domain/types.ts`:
 
 ```ts
-export type ReactionType = 'like' | 'insightful' | 'agree' | 'curious';
-export const REACTION_TYPES: ReadonlyArray<ReactionType> = ['like','insightful','agree','curious'];
+// Collapsed to a single "like": the agent only ever liked and the four-type
+// picker added no real value. The field stays in the signed body, so the wire
+// format is unchanged (a 'like' serialises the same) — no topicPrefix bump.
+export type ReactionType = 'like';
+export const REACTION_TYPES: ReadonlyArray<ReactionType> = ['like'];
 
 export interface ReactionBody {
   readonly kind: 'reaction';
@@ -356,9 +359,9 @@ export type RecordBody = PostBody | ResponseBody | ReactionBody;
   the UI `ReactionRow` both go through these.
 - **persistRecord** (`AppContainerContext.tsx`) handles `kind==='reaction'` →
   `reactions.applyFromRecord`.
-- **UI**: `src/ui/components/ReactionRow.tsx` (icons: like→thumb-up,
-  insightful→lightbulb, agree→check, curious→help) shown in feed and thread, with
-  batch counts + the user's own reaction highlighted.
+- **UI**: `src/ui/components/ReactionRow.tsx` (a single like → thumb-up icon)
+  shown in feed and thread, with batch counts + the user's own reaction
+  highlighted.
 
 ---
 
