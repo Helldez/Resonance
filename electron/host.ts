@@ -23,7 +23,7 @@ import { bootstrapDesktop, defaultAppDataDir } from '@platform/desktop/bootstrap
 import type { DesktopContainer } from '@platform/desktop/bootstrap';
 import { DesktopConfig } from '@core/config/DesktopConfig';
 import type { ModelProgressUpdate } from '@qvac/sdk';
-import type { PeerId, SignedRecord } from '@core/domain/types';
+import type { Announcement, PeerId, SignedRecord } from '@core/domain/types';
 
 const REPO_ROOT = resolve(__dirname, '..');
 
@@ -110,6 +110,9 @@ function attachEventForwarders(c: DesktopContainer): void {
   c.network.onRecord((record: SignedRecord) => {
     broadcast('network/record', record);
   });
+  c.network.onAnnouncement((announcement: Announcement) => {
+    broadcast('network/announcement', announcement);
+  });
   c.network.onPeerPresence((peer: PeerId, present: boolean) => {
     broadcast('network/presence', { peerId: peer, present });
   });
@@ -170,6 +173,7 @@ const handlers: Record<string, Record<string, Handler>> = {
   network: {
     joinRoom: (c) => c.network.joinRoom(),
     rescan: (c) => c.network.rescan(),
+    requestPull: (c, a) => c.network.requestPull(a[0] as PeerId, a[1] as number),
   },
   mailbox: {
     append: (c, a) => c.mailbox.append(a[0] as SignedRecord),

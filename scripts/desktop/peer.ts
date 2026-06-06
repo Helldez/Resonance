@@ -61,6 +61,16 @@ async function main(): Promise<void> {
   container.network.onRecord((record) => {
     void onIncoming(container, record);
   });
+  // Announce-then-pull: the full UI (AppContainerContext) ranks announcements
+  // and pulls only what it admits. This headless test node has no interest
+  // profile, so it pulls EVERY announced record — that makes it a useful
+  // "mirror" peer for end-to-end testing and exercises the sparse-pull path.
+  container.network.onAnnouncement((a) => {
+    console.log(`[peer] announce ${a.author.slice(0, 12)}:${a.feedIndex} kind=${a.kind} → pull`);
+    void container.network.requestPull(a.author, a.feedIndex).catch((err) => {
+      console.warn(`[peer] pull failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  });
   container.network.onPeerPresence((peer, present) => {
     console.log(`[peer] presence: peer=${peer.slice(0, 12)} present=${present}`);
   });

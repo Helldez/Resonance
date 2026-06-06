@@ -212,6 +212,28 @@ async function initialize({ storagePath, maxConnections, pullTimeoutMs: pt }) {
     pullTimeoutMs = pt
   }
 
+  // Re-announce our own existing outbox records. Announcements are in-memory
+  // and only minted on append, but the outbox is durable — so without this a
+  // restarted node would never tell peers about posts it published in earlier
+  // sessions (the old model replicated the whole core, which masked this).
+  // Reading our own local feed is cheap (no network).
+  for (let i = 0; i < outbox.length; i++) {
+    try {
+      const block = await outbox.get(i, { wait: false })
+      if (block === null) continue
+      const record = recordFromBlock(block, 'self')
+      if (record !== null) {
+        const idx = typeof record.feedIndex === 'number' ? record.feedIndex : i
+        announceDir.learn([announcementFromRecord(record, idx)])
+      }
+    } catch (err) {
+      // skip an unreadable block; best-effort backfill
+    }
+  }
+  if (outbox.length > 0) {
+    console.log(`[p2p] re-announced ${announceDir.size} own outbox record(s) on boot`)
+  }
+
   const maxPeers =
     typeof maxConnections === 'number' && maxConnections > 0
       ? maxConnections
