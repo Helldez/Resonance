@@ -11,13 +11,6 @@ import { RoomConfig } from '@core/config/RoomConfig';
 import { DesignTokens as T } from '@core/config/DesignTokens';
 import { Avatar, Button, IconButton, Text, TextField } from '@ui/design-system';
 
-/** Compose-only width cap: full width on phones, centered 600px on desktop. */
-const composeColumn = {
-  width: '100%',
-  maxWidth: T.size.contentMaxWidth,
-  alignSelf: 'center',
-} as const;
-
 /**
  * X-style compose: cancel left, accent Post pill right, avatar + large
  * borderless input, character counter against the room's signed limit.
@@ -97,39 +90,22 @@ export default function ComposeScreen() {
       style={{ flex: 1, backgroundColor: T.color.bg }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
+      {/* Header: just the cancel — the action lives under the editor. */}
       <View
         style={{
           paddingTop: insets.top,
+          flexDirection: 'row',
+          alignItems: 'center',
+          paddingHorizontal: T.space.sm,
+          height: T.size.topBarHeight + insets.top,
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: T.color.border,
         }}
       >
-        {/* On a wide desktop window the compose content is capped and
-            centered, so Post sits next to the editor instead of flying to
-            the far corner. Phones are unaffected (width < cap). */}
-        <View style={[composeColumn, { flexDirection: 'row', alignItems: 'center', height: T.size.topBarHeight, paddingHorizontal: T.space.sm }]}>
-          <IconButton icon="x" accessibilityLabel="Cancel" onPress={() => router.back()} />
-          <View style={{ flex: 1 }} />
-          <Text
-            variant="small"
-            color={remaining < 0 ? T.color.danger : T.color.textMuted}
-            style={{ marginRight: T.space.md }}
-          >
-            {String(remaining)}
-          </Text>
-          <Button
-            label="Post"
-            small
-            loading={submitting}
-            disabled={submitting || text.trim().length === 0 || remaining < 0}
-            onPress={() => {
-              void submit();
-            }}
-          />
-        </View>
+        <IconButton icon="x" accessibilityLabel="Cancel" onPress={() => router.back()} />
       </View>
 
-      <View style={[composeColumn, { flexDirection: 'row', padding: T.space.lg, gap: T.space.md, flex: 1 }]}>
+      <View style={{ flexDirection: 'row', padding: T.space.lg, gap: T.space.md }}>
         <Avatar peerId={container.self} label={displayName} />
         <View style={{ flex: 1 }}>
           <TextField
@@ -144,6 +120,26 @@ export default function ComposeScreen() {
             error={error}
           />
         </View>
+      </View>
+
+      {/* Counter + a full-width Post right under the editor. */}
+      <View style={{ paddingHorizontal: T.space.lg, gap: T.space.sm }}>
+        <Text
+          variant="small"
+          color={remaining < 0 ? T.color.danger : T.color.textMuted}
+          style={{ textAlign: 'right' }}
+        >
+          {String(remaining)}
+        </Text>
+        <Button
+          label="Post"
+          full
+          loading={submitting}
+          disabled={submitting || text.trim().length === 0 || remaining < 0}
+          onPress={() => {
+            void submit();
+          }}
+        />
       </View>
     </KeyboardAvoidingView>
   );
