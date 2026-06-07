@@ -7,7 +7,8 @@ import { MatchingConfig } from '@core/config/MatchingConfig';
 import { RoomConfig } from '@core/config/RoomConfig';
 import { decideAdmission } from '@core/inbox/InboxAdmission';
 import { ingestAnnouncement } from '@core/inbox/IngestAnnouncement';
-import { addressOf } from '@core/utils/AddressOf';
+import { rerankAnnouncements } from '@core/inbox/RerankAnnouncements';
+import { addressOf, parseAddress } from '@core/utils/AddressOf';
 import { canonicalDigest } from '@core/utils/CanonicalRecord';
 import { validateRecordBody } from '@core/validation/ValidateRecordBody';
 import { cosineOnUnit } from '@core/matching/CosineSimilarity';
@@ -30,6 +31,25 @@ interface OwnEmbedding {
 }
 
 const AppContainerContext = createContext<PlatformContainer | null>(null);
+
+/**
+ * Serialized ingest queue for announcements and pulled records.
+ *
+ * Admission reads the inbox count and weakest occupant from SQLite before
+ * deciding; with concurrent handlers a burst of N announcements all read the
+ * same stale state and the capacity rule is bypassed (observed in the 400-post
+ * stress test: a 457-announcement burst grew the K=200 inbox to 421). One
+ * task at a time makes every decision see the state the previous one
+ * committed. Network pulls are NOT awaited inside the queue — they resolve
+ * through `onRecord`, which enqueues its own task.
+ */
+let ingestQueue: Promise<void> = Promise.resolve();
+
+function enqueueIngest(task: () => Promise<void>): void {
+  ingestQueue = ingestQueue.then(task).catch((e) => {
+    console.warn(`[rn] ingest task failed: ${e instanceof Error ? e.message : String(e)}`);
+  });
+}
 
 export function AppContainerProvider({ children }: { children: ReactNode }) {
   const [container, setContainer] = useState<PlatformContainer | null>(null);
@@ -88,6 +108,13 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
         );
         externalOwnEmbeddings.current = ownFromDb;
 
+        // Self-heal: trim any over-capacity remainder from a previous session
+        // back to the cap before new admissions are decided against it.
+        const trimmed = await c.posts.enforceRemoteCapacity(c.self, RoomConfig.inboxCapacity);
+        if (trimmed > 0) {
+          console.log(`[rn] inbox trimmed ${trimmed} over-capacity remote posts`);
+        }
+
         // Single-room model: join the one shared room. There is no per-post
         // routing or bucket churn — Hyperswarm discovery plus directory
         // gossip carry every post to every peer.
@@ -100,19 +127,23 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
         //  - onRecord (bounded): a pulled body — verify its signature, re-score
         //    on the VERIFIED embedding, admit into the inbox, persist.
         disposeAnnouncementHandler = c.network.onAnnouncement((announcement) => {
-          void handleAnnouncement(
-            c,
-            announcement,
-            externalOwnEmbeddings.current,
-            aboutYouEmbeddingRef.current,
+          enqueueIngest(() =>
+            handleAnnouncement(
+              c,
+              announcement,
+              externalOwnEmbeddings.current,
+              aboutYouEmbeddingRef.current,
+            ),
           );
         });
         disposeRecordHandler = c.network.onRecord((record) => {
-          void persistRecord(
-            c,
-            record,
-            externalOwnEmbeddings.current,
-            aboutYouEmbeddingRef.current,
+          enqueueIngest(() =>
+            persistRecord(
+              c,
+              record,
+              externalOwnEmbeddings.current,
+              aboutYouEmbeddingRef.current,
+            ),
           );
         });
 
@@ -153,28 +184,39 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
       return;
     }
     let cancelled = false;
-    void (async () => {
-      try {
-        // Mirror the boot path: an empty "About you" means no interest signal,
-        // so the embedding stays null and cold-start posts are not admitted.
-        const embedding =
-          receiverContext.trim().length === 0
-            ? null
-            : await c.embedder.embed(receiverContext);
-        if (!cancelled) {
+    // Debounced: the Settings field updates the store per keystroke, and an
+    // embed per character is wasted inference. Embed once typing pauses.
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          // Mirror the boot path: an empty "About you" means no interest signal,
+          // so the embedding stays null and cold-start posts are not admitted.
+          const embedding =
+            receiverContext.trim().length === 0
+              ? null
+              : await c.embedder.embed(receiverContext);
+          if (cancelled) {
+            return;
+          }
           aboutYouEmbeddingRef.current = embedding;
           console.log(
             `[rn] about-you embedding ${embedding === null ? 'cleared (no profile)' : 'refreshed'}`,
           );
+          // The interest basis changed: re-rank Tier-1 so announcements that
+          // were unscorable on a cold profile get pulled now, not at next boot.
+          if (embedding !== null) {
+            await rerankTier1AndPull(c, embedding);
+          }
+        } catch (e) {
+          console.warn(
+            `[rn] about-you re-embed failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
         }
-      } catch (e) {
-        console.warn(
-          `[rn] about-you re-embed failed: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
-    })();
+      })();
+    }, MatchingConfig.interestProfileDebounceMs);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [container, receiverContext]);
 
@@ -350,6 +392,48 @@ export async function rescoreInboxAgainstOwnPosts(
     await c.posts.updateScore(post.address, similarity, matchedOwnAddress);
   }
   console.log(`[rn] rescored inbox count=${remote.length} ownPosts=${own.length}`);
+  // The matching basis changed, so Tier-1 summaries that lost the admission
+  // race earlier may now rank inside the top-K — give them their shot too.
+  await rerankTier1AndPull(c, null);
+}
+
+/**
+ * Re-score every Tier-1 post summary against the current interest signals and
+ * pull the not-yet-pulled winners. Runs whenever the matching basis changes
+ * (the user edited "About you", or published a post): announcements received
+ * earlier — possibly scored against an empty profile — get re-ranked now
+ * instead of waiting for the next boot rescan. Each pulled body still goes
+ * through the verified re-score + admission in `persistRecord`.
+ */
+async function rerankTier1AndPull(
+  c: PlatformContainer,
+  interestProfile: Float32Array | null,
+): Promise<void> {
+  const candidates = await c.announcements.listPostsForRerank(MatchingConfig.embeddingDim);
+  if (candidates.length === 0) {
+    return;
+  }
+  const { scores, toPull } = rerankAnnouncements({
+    candidates,
+    ownEmbeddings: getOwnEmbeddingsSnapshot(),
+    interestProfile,
+    config: {
+      capacity: RoomConfig.inboxCapacity,
+      minSimilarity: RoomConfig.inboxMinSimilarity,
+    },
+  });
+  for (const s of scores) {
+    await c.announcements.updateScore(s.address, s.similarity);
+  }
+  for (const address of toPull) {
+    const { author, feedIndex } = parseAddress(address);
+    void c.network.requestPull(author, feedIndex).catch((e) => {
+      console.warn(
+        `[rn] rerank pull failed for ${String(author).slice(0, 12)}:${feedIndex}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    });
+  }
+  console.log(`[rn] reranked tier1 candidates=${candidates.length} toPull=${toPull.length}`);
 }
 
 /**
@@ -510,6 +594,13 @@ async function handleAnnouncement(
   if (announcement.author === c.self) {
     return;
   }
+  // Re-gossips and boot rescans re-emit announcements whose bodies we already
+  // hold; skip them entirely — re-pulling is wasted bandwidth and the Tier-2
+  // score is authoritative once the body is committed.
+  const address = addressOf(announcement.author, announcement.feedIndex);
+  if (await c.announcements.isPulled(address)) {
+    return;
+  }
   const currentInboxCount = await c.posts.countRemotePosts(c.self);
   const inboxMin = await c.posts.minSimilarityRemotePost(c.self);
   const result = ingestAnnouncement({
@@ -526,13 +617,14 @@ async function handleAnnouncement(
   await c.announcements.upsert(announcement, result.score.similarity);
   await c.announcements.enforceCap(RoomConfig.announceTier1Capacity);
   if (result.shouldPull) {
-    try {
-      await c.network.requestPull(announcement.author, announcement.feedIndex);
-    } catch (e) {
+    // Fire-and-forget: this handler runs on the serialized ingest queue, and
+    // a pull is a network round-trip (up to RoomConfig.pullTimeoutMs). The
+    // body lands in `onRecord`, which enqueues its own task.
+    void c.network.requestPull(announcement.author, announcement.feedIndex).catch((e) => {
       console.warn(
         `[rn] pull request failed for ${String(announcement.author).slice(0, 12)}:${announcement.feedIndex}: ${e instanceof Error ? e.message : String(e)}`,
       );
-    }
+    });
   }
 }
 

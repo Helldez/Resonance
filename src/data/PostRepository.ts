@@ -142,6 +142,29 @@ export class PostRepository {
   }
 
   /**
+   * Trim the remote inbox back to `capacity`, evicting the weakest first
+   * (null-similarity rows go first — they were never comparably scored).
+   * Boot-time self-heal: a concurrent ingest burst in a previous session
+   * could over-admit past the cap before the serialized queue existed, and
+   * a capacity downgrade in config would otherwise leave the excess in
+   * place forever. Returns the number of rows removed.
+   */
+  async enforceRemoteCapacity(self: PeerId, capacity: number): Promise<number> {
+    const before = await this.countRemotePosts(self);
+    if (before <= capacity) {
+      return 0;
+    }
+    await this.db.exec(
+      `DELETE FROM posts WHERE address IN (
+         SELECT address FROM posts WHERE author != ?
+         ORDER BY (similarity IS NULL) DESC, similarity ASC
+         LIMIT ?)`,
+      [self, before - capacity],
+    );
+    return before - capacity;
+  }
+
+  /**
    * Number of remote (non-self) posts currently held — the size of the
    * bounded inbox, used by the conf-9 admission rule. Own posts do not
    * count against the inbox budget.

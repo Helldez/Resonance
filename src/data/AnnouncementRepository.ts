@@ -80,6 +80,20 @@ export class AnnouncementRepository {
     await this.db.exec('UPDATE announcements SET pulled = 1 WHERE address = ?', [address]);
   }
 
+  /**
+   * Whether this announcement's body is already pulled and committed.
+   * Checked before issuing a pull: re-gossips and boot rescans re-emit
+   * announcements we already hold in full, and re-downloading them is pure
+   * waste (observed in the 400-post stress test: 774 pulls for ~460 records).
+   */
+  async isPulled(address: RecordAddress): Promise<boolean> {
+    const rows = await this.db.query<{ pulled: number }>(
+      'SELECT pulled FROM announcements WHERE address = ?',
+      [address],
+    );
+    return rows.length > 0 && rows[0].pulled !== 0;
+  }
+
   /** Whether we have already seen this announcement (any state). */
   async has(address: RecordAddress): Promise<boolean> {
     const rows = await this.db.query<{ n: number }>(

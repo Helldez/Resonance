@@ -49,6 +49,15 @@ export const MatchingConfig = {
   uiRefreshIntervalMs: 3000,
 
   /**
+   * Debounce before re-embedding the "About you" interest profile after the
+   * user edits it. The Settings field updates the store per keystroke;
+   * embedding on every character wastes an inference call each time (and the
+   * stress test showed ~10 re-embeds for one sentence). Embed once the user
+   * pauses typing.
+   */
+  interestProfileDebounceMs: 600,
+
+  /**
    * Hard cap on how many responses a single peer can post under a given
    * post. The MVP semantic is "one perspective per peer per post" —
    * publishing a second response is rejected until the first is deleted.
