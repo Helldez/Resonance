@@ -1,32 +1,33 @@
 import type { SignedRecord } from '@core/domain/types';
 import type { IMailbox } from '@core/ports/IMailbox';
-import type { P2pWorklet } from './P2pWorklet';
+import type { P2pWorker } from './P2pWorker';
 
 /**
- * The mailbox-as-port view of the local outbox. Append writes to the
- * Hypercore in the Bare worker; ingest is a no-op because remote records
- * arrive through `IPeerNetwork.onRecord` already — they are durably
- * stored in the SQLite projection by the sync engine.
+ * The mailbox-as-port view of the local outbox, shared by mobile and
+ * desktop. Append writes to the Hypercore in the Bare worker; ingest is a
+ * no-op because remote records arrive through `IPeerNetwork.onRecord`
+ * already — they are durably stored in the SQLite projection by the app's
+ * record handler.
  *
  * `iterate` is a future surface for backfill on cold start.
  */
-export class BareWorkletMailbox implements IMailbox {
-  constructor(private readonly worklet: P2pWorklet) {}
+export class P2pMailbox implements IMailbox {
+  constructor(private readonly worker: P2pWorker) {}
 
   async initialize(): Promise<void> {
-    // P2pWorklet.initialize is owned by the network adapter.
+    // P2pWorker.initialize is owned by the network adapter.
   }
 
   async shutdown(): Promise<void> {}
 
   async append(record: SignedRecord): Promise<number> {
-    return this.worklet.append(record);
+    return this.worker.append(record);
   }
 
   async ingest(_record: SignedRecord): Promise<void> {
     // No-op for now: incoming records are routed through the network port
-    // (`IPostNetwork.onRecord`) and persisted into SQLite by the
-    // `AppContainerProvider` record handler.
+    // (`IPeerNetwork.onRecord`) and persisted into SQLite by the app's
+    // record handler.
   }
 
   async *iterate(): AsyncIterable<SignedRecord> {

@@ -1,9 +1,11 @@
 import { Buffer } from 'buffer';
+import type { RpcTransport } from './RpcTransport';
 
 /**
- * RN-side companion to bare/rpc-frame.mjs. Wraps a streamx Duplex coming
- * from `react-native-bare-kit`'s Worklet IPC and exposes a typed
- * request/event API.
+ * App-side companion to bare/rpc-frame.mjs. Wraps any `RpcTransport`
+ * (Worklet IPC on mobile, BareSubprocess on desktop — the `buffer` package
+ * is an exact Buffer polyfill on Hermes and a passthrough on Node) and
+ * exposes a typed request/event API.
  *
  * Wire format (must match the Bare worker exactly):
  *   <4-byte BE uint32 length> <UTF-8 JSON payload>
@@ -16,18 +18,13 @@ type Pending = {
 
 export type EventHandler<T = unknown> = (payload: T) => void;
 
-interface DuplexLike {
-  on(event: 'data', handler: (chunk: Uint8Array) => void): void;
-  write(chunk: Uint8Array): void;
-}
-
 export class FramedRpcClient {
   private buffer = new Uint8Array(0);
   private pending = new Map<number, Pending>();
   private nextId = 1;
   private handlers = new Map<string, Array<EventHandler<unknown>>>();
 
-  constructor(private readonly stream: DuplexLike) {
+  constructor(private readonly stream: RpcTransport) {
     stream.on('data', (chunk) => this.onData(chunk));
   }
 

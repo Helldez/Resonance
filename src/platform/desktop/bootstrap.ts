@@ -14,9 +14,10 @@ import { PendingActionRepository } from '@data/PendingActionRepository';
 import { AgentLogRepository } from '@data/AgentLogRepository';
 
 import { ConsoleLogger } from './ConsoleLogger';
-import { DesktopMailbox } from './DesktopMailbox';
-import { DesktopNetwork } from './DesktopNetwork';
-import { DesktopP2pWorker } from './DesktopP2pWorker';
+import { SubprocessTransport } from './SubprocessTransport';
+import { P2pWorker } from '@platform/shared/P2pWorker';
+import { P2pNetwork } from '@platform/shared/P2pNetwork';
+import { P2pMailbox } from '@platform/shared/P2pMailbox';
 import { Ed25519Identity } from './Ed25519Identity';
 import { NodeFileSystem } from './NodeFileSystem';
 import { NodeKvStore } from './NodeKvStore';
@@ -41,7 +42,7 @@ export interface DesktopContainer extends AppContainer {
    * surface (the UI never touches it) — kept on the concrete container only
    * for lifecycle (shutdown) by the Electron host.
    */
-  readonly p2p: DesktopP2pWorker;
+  readonly p2p: P2pWorker;
 }
 
 export interface DesktopBootstrapOptions {
@@ -117,13 +118,13 @@ export async function bootstrapDesktop(
   const embedder = new QvacEmbeddingService();
   const llm = new QvacLlmService();
 
-  const p2p = new DesktopP2pWorker({
-    entryPath: options.bareEntryPath,
+  const p2p = new P2pWorker({
+    transport: new SubprocessTransport(options.bareEntryPath),
     storagePath: corestoreDir,
   });
-  const network = new DesktopNetwork(p2p);
+  const network = new P2pNetwork(p2p);
   await network.initialize();
-  const mailbox = new DesktopMailbox(p2p);
+  const mailbox = new P2pMailbox(p2p);
   await mailbox.initialize();
 
   cached = {

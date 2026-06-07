@@ -1,12 +1,15 @@
 import type { Announcement, PeerId, SignedRecord } from '@core/domain/types';
 import type { IPeerNetwork } from '@core/ports/IPeerNetwork';
-import type { DesktopP2pWorker } from './DesktopP2pWorker';
+import type { P2pWorker } from './P2pWorker';
 
 /**
- * Desktop counterpart of `BareWorkletNetwork`. Identical contract — only
- * the underlying worker handle differs (subprocess instead of worklet).
+ * Bridges the `IPeerNetwork` port onto the Bare P2P worker. All actual
+ * Hyperswarm/Hypercore work happens in `bare/p2p.mjs`; this class is the
+ * thin app-side facade, shared by mobile and desktop. In the single-room
+ * model there is exactly one topic (the shared room), joined once via
+ * `joinRoom`.
  */
-export class DesktopNetwork implements IPeerNetwork {
+export class P2pNetwork implements IPeerNetwork {
   private joinedRoom = false;
   private recordHandlers: Array<(r: SignedRecord) => void> = [];
   private announcementHandlers: Array<(a: Announcement) => void> = [];
@@ -15,7 +18,7 @@ export class DesktopNetwork implements IPeerNetwork {
   private detachAnnouncement: (() => void) | null = null;
   private detachPresence: (() => void) | null = null;
 
-  constructor(private readonly worker: DesktopP2pWorker) {}
+  constructor(private readonly worker: P2pWorker) {}
 
   async initialize(): Promise<void> {
     await this.worker.initialize();
@@ -64,8 +67,9 @@ export class DesktopNetwork implements IPeerNetwork {
   }
 
   async publish(_record: SignedRecord): Promise<void> {
-    // Implicit: Hypercore replication + directory gossip propagate after
-    // mailbox.append.
+    // Publishing is implicit: the record is already in our outbox after
+    // IMailbox.append(), and Hypercore replication + directory gossip
+    // propagate it. Appending again here would write duplicate blocks.
   }
 
   async rescan(): Promise<void> {
