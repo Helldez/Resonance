@@ -32,4 +32,6 @@ export interface SettingsState {
    * in Phase 1.
    */
   readonly displayName: string;
+  /** True once the first-run onboarding flow has been completed (or skipped). */
+  readonly onboardingDone: boolean;
 }

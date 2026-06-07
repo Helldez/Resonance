@@ -4,6 +4,8 @@ export type ModelKind = 'embedding' | 'llm';
 
 export interface ModelDescriptor {
   readonly id: string;
+  /** Human-readable name shown in the UI (settings/onboarding model rows). */
+  readonly label: string;
   readonly kind: ModelKind;
   readonly url: string;
   readonly sha256: string;
@@ -37,6 +39,7 @@ export interface ModelDescriptor {
 export const ModelProfiles = {
   embedding: {
     id: 'embeddinggemma-300m-q8_0',
+    label: 'EmbeddingGemma 300M',
     kind: 'embedding' as const,
     url: HttpModelSources.embeddingGemma300mQ8.url,
     sha256: HttpModelSources.embeddingGemma300mQ8.sha256,
@@ -47,6 +50,7 @@ export const ModelProfiles = {
 
   llm: {
     id: 'qwen3-1.7b-q4_0',
+    label: 'Qwen3 1.7B',
     kind: 'llm' as const,
     url: HttpModelSources.qwen3_1_7bQ4_0.url,
     sha256: HttpModelSources.qwen3_1_7bQ4_0.sha256,

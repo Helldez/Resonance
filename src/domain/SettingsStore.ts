@@ -10,6 +10,7 @@ interface SettingsStore extends SettingsState {
   setReceiverContext: (text: string) => void;
   setSimilarityThreshold: (value: number) => void;
   setDisplayName: (value: string) => void;
+  setOnboardingDone: (value: boolean) => void;
 }
 
 /**
@@ -25,10 +26,12 @@ export const useSettingsStore = create<SettingsStore>()(
       receiverContext: '',
       similarityThreshold: MatchingConfig.defaultInboxSimilarityThreshold,
       displayName: '',
+      onboardingDone: false,
       setResponseMode: (responseMode) => set({ responseMode }),
       setReceiverContext: (receiverContext) => set({ receiverContext }),
       setSimilarityThreshold: (similarityThreshold) => set({ similarityThreshold }),
       setDisplayName: (displayName) => set({ displayName }),
+      setOnboardingDone: (onboardingDone) => set({ onboardingDone }),
     }),
     {
       name: StorageConfig.settingsKvKey,
@@ -38,6 +41,7 @@ export const useSettingsStore = create<SettingsStore>()(
         receiverContext: state.receiverContext,
         similarityThreshold: state.similarityThreshold,
         displayName: state.displayName,
+        onboardingDone: state.onboardingDone,
       }),
     },
   ),

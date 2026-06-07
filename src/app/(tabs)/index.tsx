@@ -185,7 +185,7 @@ export default function FeedScreen() {
         <Link href="/agent" asChild>
           <IconButton icon="robot-outline" mode="contained-tonal" accessibilityLabel="My agent" />
         </Link>
-        <Link href="/map" asChild>
+        <Link href="/atlas" asChild>
           <IconButton icon="graph" mode="contained-tonal" accessibilityLabel="Semantic map" />
         </Link>
         <Link href="/settings" asChild>

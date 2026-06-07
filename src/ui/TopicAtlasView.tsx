@@ -7,13 +7,6 @@ import {
   useWindowDimensions,
   type LayoutChangeEvent,
 } from 'react-native';
-import {
-  Surface,
-  Text,
-  Button,
-  IconButton,
-  useTheme,
-} from 'react-native-paper';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, G } from 'react-native-svg';
@@ -23,6 +16,8 @@ import { useSettingsStore } from '@domain/SettingsStore';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 import { TopicConfig } from '@core/config/TopicConfig';
 import { ThemeConfig } from '@core/config/ThemeConfig';
+import { DesignTokens as T } from '@core/config/DesignTokens';
+import { Button, IconButton, Text, TopBar } from '@ui/design-system';
 import { computeTopicAtlas } from '@core/topics/TopicAtlas';
 import type { TopicAtlasResult, AtlasTopic } from '@core/topics/TopicAtlas';
 import { nameTopics } from '@core/topics/NameTopics';
@@ -52,15 +47,15 @@ function topicColor(id: number, k: number): string {
   return `hsl(${hue}, 65%, 60%)`;
 }
 
-function legendChipStyle(background: string) {
+function legendChipStyle() {
   return {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
-    backgroundColor: background,
-    borderRadius: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    marginRight: 8,
+    backgroundColor: T.color.bgElevated,
+    borderRadius: T.radius.pill,
+    paddingHorizontal: T.space.md - T.space.xxs,
+    paddingVertical: T.space.xs + 1,
+    marginRight: T.space.sm,
   };
 }
 
@@ -77,7 +72,6 @@ function legendSwatchStyle(color: string) {
 export function TopicAtlasView() {
   const container = useRequireContainer();
   const router = useRouter();
-  const theme = useTheme();
   const insets = useSafeAreaInsets();
   const threshold = useSettingsStore((s) => s.similarityThreshold);
   const { width, height } = useWindowDimensions();
@@ -309,34 +303,22 @@ export function TopicAtlasView() {
       style={{
         flex: 1,
         backgroundColor: ThemeConfig.map.backgroundColor,
-        paddingTop: insets.top,
         paddingBottom: insets.bottom,
       }}
     >
-      <Surface
-        style={{
-          padding: 8,
-          backgroundColor: theme.colors.surface,
-          flexDirection: 'row',
-          alignItems: 'center',
-        }}
-        elevation={2}
-      >
-        <IconButton icon="arrow-left" size={22} onPress={() => router.back()} accessibilityLabel="Back" />
-        <View style={{ flex: 1 }}>
-          <Text variant="labelLarge" style={{ color: theme.colors.onSurface }}>
-            Topics
-          </Text>
-          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }} numberOfLines={1}>
-            {atlas === null
-              ? 'Projecting…'
-              : `${atlas.k} ${atlas.k === 1 ? 'topic' : 'topics'} · ${atlas.points.length} posts · tap a dot to read`}
-          </Text>
-        </View>
-      </Surface>
+      <TopBar
+        title="Atlas"
+        subtitle={
+          atlas === null
+            ? 'Projecting…'
+            : `${atlas.k} ${atlas.k === 1 ? 'topic' : 'topics'} · ${atlas.points.length} posts · tap a dot to read`
+        }
+      />
 
       {loadError !== null && (
-        <Text style={{ color: theme.colors.error, padding: 8 }}>{loadError}</Text>
+        <Text variant="small" color={T.color.danger} style={{ padding: T.space.sm }}>
+          {loadError}
+        </Text>
       )}
 
       <GestureDetector gesture={gesture}>
@@ -435,17 +417,24 @@ export function TopicAtlasView() {
       {/* Legend: one chip per topic (its colour + name), plus the "You"
           swatch. Tapping a chip opens that topic. This replaces the on-map
           text labels, which overlapped and were hard to read. */}
-      <Surface elevation={2} style={{ backgroundColor: theme.colors.surface, paddingVertical: 6 }}>
+      <View
+        style={{
+          backgroundColor: T.color.bg,
+          paddingVertical: T.space.xs,
+          borderTopWidth: 1,
+          borderTopColor: T.color.border,
+        }}
+      >
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingHorizontal: 12, alignItems: 'center' }}
+            contentContainerStyle={{ paddingHorizontal: T.space.md, alignItems: 'center' }}
             style={{ flex: 1 }}
           >
-            <View style={legendChipStyle(theme.colors.surfaceVariant)}>
+            <View style={legendChipStyle()}>
               <View style={legendSwatchStyle(ThemeConfig.map.selfStarColor)} />
-              <Text variant="labelSmall" style={{ color: theme.colors.onSurface }}>
+              <Text variant="caption" color={T.color.text}>
                 You
               </Text>
             </View>
@@ -456,21 +445,17 @@ export function TopicAtlasView() {
                   setSelected(null);
                   setSelectedTopic(t);
                 }}
-                style={legendChipStyle(theme.colors.surfaceVariant)}
+                style={legendChipStyle()}
               >
                 <View style={legendSwatchStyle(topicColor(t.id, atlas.k))} />
-                <Text
-                  variant="labelSmall"
-                  style={{ color: theme.colors.onSurface }}
-                >
+                <Text variant="caption" color={T.color.text}>
                   {t.label}
                 </Text>
               </Pressable>
             ))}
           </ScrollView>
           <IconButton
-            icon="restore"
-            mode="contained-tonal"
+            icon="refresh"
             accessibilityLabel="Reset view"
             onPress={() => {
               setTx(0);
@@ -479,73 +464,67 @@ export function TopicAtlasView() {
             }}
           />
         </View>
-      </Surface>
+      </View>
 
       {selectedTopic !== null && (
-        <Surface
-          style={{
-            position: 'absolute',
-            bottom: insets.bottom + 96,
-            left: 12,
-            right: 12,
-            padding: 16,
-            backgroundColor: theme.colors.surface,
-            borderRadius: 16,
-          }}
-          elevation={4}
-        >
-          <Text variant="labelLarge" style={{ color: theme.colors.onSurfaceVariant }}>
+        <View style={panelStyle(insets.bottom)}>
+          <Text variant="caption">
             {`Topic · ${selectedTopic.count} ${selectedTopic.count === 1 ? 'post' : 'posts'}`}
           </Text>
-          <ScrollView style={{ maxHeight: 160, marginTop: 6 }}>
-            <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
-              {selectedTopic.labelFull}
-            </Text>
+          <ScrollView style={{ maxHeight: 160, marginTop: T.space.xs }}>
+            <Text variant="body">{selectedTopic.labelFull}</Text>
           </ScrollView>
-          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
-            <Button onPress={() => setSelectedTopic(null)}>Close</Button>
+          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: T.space.md }}>
+            <Button label="Close" variant="ghost" small onPress={() => setSelectedTopic(null)} />
           </View>
-        </Surface>
+        </View>
       )}
 
       {selected !== null && (
-        <Surface
-          style={{
-            position: 'absolute',
-            bottom: insets.bottom + 96,
-            left: 12,
-            right: 12,
-            padding: 16,
-            backgroundColor: theme.colors.surface,
-            borderRadius: 16,
-          }}
-          elevation={4}
-        >
-          <Text variant="labelLarge" style={{ color: theme.colors.onSurfaceVariant }}>
+        <View style={panelStyle(insets.bottom)}>
+          <Text variant="caption">
             {selected.isOwn ? 'Your post' : shortPeer(selected.author)}
             {selected.topicLabel.length > 0 ? `  ·  ${selected.topicLabel}` : ''}
           </Text>
-          <ScrollView style={{ maxHeight: 160, marginTop: 6 }}>
-            <Text variant="bodyMedium" style={{ color: theme.colors.onSurface }}>
-              {selected.text}
-            </Text>
+          <ScrollView style={{ maxHeight: 160, marginTop: T.space.xs }}>
+            <Text variant="body">{selected.text}</Text>
           </ScrollView>
-          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
-            <Button onPress={() => setSelected(null)}>Close</Button>
+          <View
+            style={{
+              flexDirection: 'row',
+              justifyContent: 'flex-end',
+              gap: T.space.sm,
+              marginTop: T.space.md,
+            }}
+          >
+            <Button label="Close" variant="ghost" small onPress={() => setSelected(null)} />
             <Button
-              mode="contained"
-              style={{ marginLeft: 8 }}
+              label="Open thread"
+              small
               onPress={() => {
                 const target = selected.address;
                 setSelected(null);
                 router.push({ pathname: '/thread/[id]', params: { id: target } });
               }}
-            >
-              Open thread
-            </Button>
+            />
           </View>
-        </Surface>
+        </View>
       )}
     </View>
   );
+}
+
+/** Floating detail panel above the legend: elevated surface, hairline border. */
+function panelStyle(bottomInset: number) {
+  return {
+    position: 'absolute' as const,
+    bottom: bottomInset + 96,
+    left: T.space.md,
+    right: T.space.md,
+    padding: T.space.lg,
+    backgroundColor: T.color.bgElevated,
+    borderRadius: T.radius.lg,
+    borderWidth: 1,
+    borderColor: T.color.border,
+  };
 }
