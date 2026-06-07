@@ -15,4 +15,3 @@ export { ListGroup, ListRow } from './ListRow';
 export { Switch } from './Switch';
 export { TopBar } from './TopBar';
 export { TextField } from './TextField';
-export { ContentColumn } from './ContentColumn';

@@ -14,7 +14,6 @@ import { useApprovals } from '@ui/agent/useApprovals';
 import { formatRelative } from '@ui/format/relativeTime';
 import {
   Button,
-  ContentColumn,
   EmptyState,
   Icon,
   IconButton,
@@ -131,7 +130,6 @@ export default function AgentScreen() {
           </>
         }
       />
-      <ContentColumn>
       <FlatList
         data={shown}
         keyExtractor={(e) => String(e.id)}
@@ -248,7 +246,6 @@ export default function AgentScreen() {
         }
         renderItem={({ item }) => <LogRow entry={item} />}
       />
-      </ContentColumn>
     </View>
   );
 }

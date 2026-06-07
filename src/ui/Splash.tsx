@@ -57,9 +57,7 @@ export function Splash() {
         Resonance
       </Text>
 
-      {/* width+maxWidth (no alignSelf:stretch) so the parent's alignItems
-          keeps the checklist centered under the mark on wide windows. */}
-      <View style={{ width: '100%', maxWidth: 360, gap: T.space.md }}>
+      <View style={{ alignSelf: 'stretch', maxWidth: 360, width: '100%', gap: T.space.md }}>
         {STEPS.map((step) => {
           const state = stepState(step.stage, stage);
           return (

@@ -10,7 +10,6 @@ import { useModelDownload } from '@ui/hooks/useModelDownload';
 import { formatMb } from '@ui/Splash';
 import {
   Button,
-  ContentColumn,
   ListGroup,
   ListRow,
   Pill,
@@ -63,7 +62,6 @@ export default function SettingsScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: T.color.bg }}>
       <TopBar title="Settings" back />
-      <ContentColumn>
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + T.space.xxl }}>
         <ListGroup
           title="Profile"
@@ -151,7 +149,6 @@ export default function SettingsScreen() {
           <View />
         </ListGroup>
       </ScrollView>
-      </ContentColumn>
 
       <Sheet visible={editing === 'name'} onClose={() => setEditing('none')} title="Display name">
         <TextField

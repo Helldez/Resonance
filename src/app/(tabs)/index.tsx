@@ -15,7 +15,6 @@ import {
   ActionBar,
   Avatar,
   Button,
-  ContentColumn,
   EmptyState,
   Icon,
   Row,
@@ -129,7 +128,6 @@ export default function FeedScreen() {
         <Icon name="resonance" size={T.size.iconLarge} color={T.color.accent} />
       </View>
 
-      <ContentColumn>
       <FlatList
         data={items}
         refreshControl={
@@ -313,7 +311,6 @@ export default function FeedScreen() {
       >
         <Icon name="plus" size={T.size.iconLarge} color={T.color.accentText} />
       </Pressable>
-      </ContentColumn>
     </View>
   );
 }

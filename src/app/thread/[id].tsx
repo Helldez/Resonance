@@ -20,7 +20,6 @@ import {
   ActionBar,
   Avatar,
   Button,
-  ContentColumn,
   IconButton,
   Row,
   Skeleton,
@@ -92,7 +91,6 @@ export default function ThreadScreen() {
     >
       <TopBar title="Post" back />
 
-      <ContentColumn>
       <ScrollView contentContainerStyle={{ paddingBottom: T.space.xxl }}>
         {thread.loading && post === null ? (
           <View style={{ padding: T.space.lg, gap: T.space.md }}>
@@ -246,7 +244,6 @@ export default function ThreadScreen() {
           )}
         </View>
       )}
-      </ContentColumn>
     </KeyboardAvoidingView>
   );
 }

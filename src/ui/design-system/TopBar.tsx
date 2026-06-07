@@ -32,9 +32,6 @@ export function TopBar(props: {
       <View
         style={{
           height: T.size.topBarHeight,
-          width: '100%',
-          maxWidth: T.size.contentMaxWidth,
-          alignSelf: 'center',
           flexDirection: 'row',
           alignItems: 'center',
           paddingHorizontal: T.space.sm,
