@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { View, FlatList, Pressable, RefreshControl } from 'react-native';
-import { confirmDestructive } from '@ui/confirmDestructive';
 import {
   Text,
   IconButton,
@@ -10,45 +9,18 @@ import {
   Button,
   useTheme,
 } from 'react-native-paper';
-import { Link, useFocusEffect, useRouter } from 'expo-router';
+import { Link, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireContainer } from '@ui/AppContainerContext';
 import { useSettingsStore } from '@domain/SettingsStore';
-import { MatchingConfig } from '@core/config/MatchingConfig';
-import { RoomConfig } from '@core/config/RoomConfig';
 import { ThemeConfig } from '@core/config/ThemeConfig';
 import { formatAuthor, shortPeer } from '@domain/AuthorFormatting';
 import { clamp01, interpolateColor } from '@ui/colorMath';
-import type { RecordAddress, ReactionType } from '@core/domain/types';
-import { publishReaction } from '@core/reactions/PublishReaction';
-import { addressOf } from '@core/utils/AddressOf';
-import {
-  ReactionRow,
-  EMPTY_REACTION_COUNTS,
-  type ReactionCounts,
-} from '@ui/components/ReactionRow';
-
-interface FeedRow {
-  readonly address: string;
-  readonly author: string;
-  readonly text: string;
-  readonly similarity: number | null;
-  readonly matchedOwnAddress: string | null;
-  readonly createdAt: number;
-}
-
-/**
- * Flattened render units for the grouped feed. Each of the user's own posts
- * is an anchor; the remote posts that matched it (their MAX cosine) are
- * nested beneath it, most-similar first. Remote posts with no own match
- * (cold start, or a match to an own post not in view) fall into the
- * "Based on your interests" group.
- */
-type FeedItem =
-  | { readonly kind: 'own'; readonly row: FeedRow; readonly childCount: number }
-  | { readonly kind: 'child'; readonly row: FeedRow }
-  | { readonly kind: 'orphan-header'; readonly count: number }
-  | { readonly kind: 'orphan'; readonly row: FeedRow };
+import { groupFeed, type FeedRow } from '@ui/feed/groupFeed';
+import { useFeed } from '@ui/feed/useFeed';
+import { useReactions } from '@ui/feed/useReactions';
+import { formatRelative } from '@ui/format/relativeTime';
+import { ReactionRow, EMPTY_REACTION_COUNTS } from '@ui/components/ReactionRow';
 
 export default function FeedScreen() {
   const container = useRequireContainer();
@@ -59,16 +31,9 @@ export default function FeedScreen() {
   const receiverContext = useSettingsStore((s) => s.receiverContext);
   const displayName = useSettingsStore((s) => s.displayName);
 
-  const [rows, setRows] = useState<FeedRow[]>([]);
-  const [hiddenCount, setHiddenCount] = useState(0);
-  const [refreshing, setRefreshing] = useState(false);
   // Addresses of own posts whose resonances are expanded. Collapsed by default
   // — the user taps the "N resonances" row to reveal the matched remote posts.
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
-  const [reactions, setReactions] = useState<
-    Map<string, { counts: ReactionCounts; mine: ReactionType | null }>
-  >(new Map());
-  const [commentCounts, setCommentCounts] = useState<Map<string, number>>(new Map());
 
   const toggleExpanded = useCallback((address: string): void => {
     setExpanded((prev) => {
@@ -82,201 +47,14 @@ export default function FeedScreen() {
     });
   }, []);
 
-  const load = useCallback(async (): Promise<void> => {
-    const data = await container.database.query<{
-      address: string;
-      author: string;
-      text: string;
-      similarity: number | null;
-      matched_own_address: string | null;
-      created_at: number;
-    }>(
-      'SELECT address, author, text, similarity, matched_own_address, created_at FROM posts WHERE author = ? OR similarity IS NULL OR similarity >= ? ORDER BY created_at DESC LIMIT ?',
-      [container.self, threshold, RoomConfig.inboxCapacity],
-    );
-    setRows(
-      data.map((d) => ({
-        address: d.address,
-        author: d.author,
-        text: d.text,
-        similarity: d.similarity,
-        matchedOwnAddress: d.matched_own_address,
-        createdAt: d.created_at,
-      })),
-    );
+  const { rows, hiddenCount, refreshing, reactions, commentCounts, reload, onPullRefresh } =
+    useFeed(container, threshold);
+  const { reactTo, askDelete } = useReactions(container, reactions, reload);
 
-    const hidden = await container.database.query<{ n: number }>(
-      'SELECT COUNT(*) AS n FROM posts WHERE author != ? AND similarity IS NOT NULL AND similarity < ?',
-      [container.self, threshold],
-    );
-    setHiddenCount(hidden[0]?.n ?? 0);
-
-    // Batch-load reaction counts + my reaction + comment counts for every
-    // visible post, in three queries (no N+1 per card).
-    const addresses = data.map((d) => d.address) as RecordAddress[];
-    const [countRows, mineRows] = await Promise.all([
-      container.reactions.countsForTargets(addresses),
-      container.reactions.myReactionsForTargets(container.self, addresses),
-    ]);
-    const byTarget = new Map<string, { counts: ReactionCounts; mine: ReactionType | null }>();
-    for (const a of addresses) {
-      byTarget.set(a, { counts: { ...EMPTY_REACTION_COUNTS }, mine: null });
-    }
-    for (const cr of countRows) {
-      const e = byTarget.get(cr.target);
-      if (e !== undefined) {
-        e.counts[cr.reaction] = cr.count;
-      }
-    }
-    for (const mr of mineRows) {
-      const e = byTarget.get(mr.target);
-      if (e !== undefined) {
-        byTarget.set(mr.target, { counts: e.counts, mine: mr.reaction });
-      }
-    }
-    setReactions(byTarget);
-
-    const commentRows =
-      addresses.length === 0
-        ? []
-        : await container.database.query<{ in_reply_to: string; n: number }>(
-            `SELECT in_reply_to, COUNT(*) AS n FROM responses
-             WHERE in_reply_to IN (${addresses.map(() => '?').join(', ')})
-             GROUP BY in_reply_to`,
-            addresses,
-          );
-    const commentMap = new Map<string, number>();
-    for (const cr of commentRows) {
-      commentMap.set(cr.in_reply_to, cr.n);
-    }
-    setCommentCounts(commentMap);
-  }, [container, threshold]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  useFocusEffect(
-    useCallback(() => {
-      void load();
-      const id = setInterval(() => {
-        void load();
-      }, MatchingConfig.uiRefreshIntervalMs);
-      return () => {
-        clearInterval(id);
-      };
-    }, [load]),
+  const items = useMemo(
+    () => groupFeed(rows, container.self, expanded),
+    [rows, container.self, expanded],
   );
-
-  const onPullRefresh = useCallback(async (): Promise<void> => {
-    setRefreshing(true);
-    try {
-      await load();
-    } finally {
-      setRefreshing(false);
-    }
-  }, [load]);
-
-  const askDelete = useCallback(
-    (address: string, isOwn: boolean) => {
-      const detail = isOwn
-        ? 'Removes the post from your local DB. Peers who already replicated it still have a copy in their Hypercore.'
-        : 'Removes from your feed. The author still has it; it may show again on next replication if the threshold allows.';
-      confirmDestructive('Delete this post?', detail, () => {
-        void (async () => {
-          await container.posts.delete(address as RecordAddress);
-          await load();
-        })();
-      });
-    },
-    [container, load],
-  );
-
-  const reactTo = useCallback(
-    async (target: string, type: ReactionType): Promise<void> => {
-      const mine = reactions.get(target)?.mine ?? null;
-      if (mine === type) {
-        await container.reactions.clear(container.self, target as RecordAddress);
-      } else {
-        const record = await publishReaction(
-          {
-            mailbox: container.mailbox,
-            network: container.network,
-            identity: container.identity,
-            clock: container.clock,
-            self: container.self,
-          },
-          { inReplyTo: target as RecordAddress, reaction: type },
-        );
-        if (record.body.kind === 'reaction') {
-          await container.reactions.applyFromRecord(
-            addressOf(record.author, record.feedIndex),
-            record.author,
-            record.feedIndex,
-            record.body,
-          );
-        }
-      }
-      await load();
-    },
-    [container, reactions, load],
-  );
-
-  // Group the flat rows into anchors (own posts) + their matched remote posts,
-  // with a trailing "Based on your interests" group for unmatched remotes.
-  const items = useMemo<FeedItem[]>(() => {
-    const ownPosts: FeedRow[] = [];
-    const ownAddresses = new Set<string>();
-    for (const r of rows) {
-      if (r.author === container.self) {
-        ownPosts.push(r);
-        ownAddresses.add(r.address);
-      }
-    }
-
-    const childrenByOwn = new Map<string, FeedRow[]>();
-    const orphans: FeedRow[] = [];
-    for (const r of rows) {
-      if (r.author === container.self) {
-        continue;
-      }
-      const parent = r.matchedOwnAddress;
-      if (parent !== null && ownAddresses.has(parent)) {
-        const list = childrenByOwn.get(parent);
-        if (list === undefined) {
-          childrenByOwn.set(parent, [r]);
-        } else {
-          list.push(r);
-        }
-      } else {
-        orphans.push(r);
-      }
-    }
-
-    const bySimilarityDesc = (a: FeedRow, b: FeedRow): number =>
-      (b.similarity ?? -Infinity) - (a.similarity ?? -Infinity);
-
-    const out: FeedItem[] = [];
-    // Own posts are already in created_at DESC order from the query.
-    for (const own of ownPosts) {
-      const children = (childrenByOwn.get(own.address) ?? []).sort(bySimilarityDesc);
-      out.push({ kind: 'own', row: own, childCount: children.length });
-      // Resonances are collapsed by default; only expanded groups emit them.
-      if (expanded.has(own.address)) {
-        for (const child of children) {
-          out.push({ kind: 'child', row: child });
-        }
-      }
-    }
-    if (orphans.length > 0) {
-      orphans.sort(bySimilarityDesc);
-      out.push({ kind: 'orphan-header', count: orphans.length });
-      for (const o of orphans) {
-        out.push({ kind: 'orphan', row: o });
-      }
-    }
-    return out;
-  }, [rows, container.self, expanded]);
 
   const aboutEmpty = receiverContext.trim().length === 0;
 
@@ -565,24 +343,4 @@ export default function FeedScreen() {
       />
     </View>
   );
-}
-
-function formatRelative(ts: number): string {
-  const deltaSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
-  if (deltaSec < 60) {
-    return 'just now';
-  }
-  const minutes = Math.floor(deltaSec / 60);
-  if (minutes < 60) {
-    return `${minutes}m`;
-  }
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) {
-    return `${hours}h`;
-  }
-  const days = Math.floor(hours / 24);
-  if (days < 7) {
-    return `${days}d`;
-  }
-  return new Date(ts).toLocaleDateString();
 }
