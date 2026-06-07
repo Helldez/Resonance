@@ -8,7 +8,7 @@
 Resonance is a **local-first P2P social network**. A user writes a thought,
 need or topic. The text is embedded on-device and published into a **single
 shared room** on Hyperswarm. The room runs an **announce-then-pull** protocol
-(v5): every peer gossips a lightweight signed **announcement** (author +
+(v6): every peer gossips a lightweight signed **announcement** (author +
 embedding + digest) for each record it authors; every other peer receives every
 announcement, ranks it locally against its own posts (cosine similarity), and
 **pulls the full body only for the records that win a slot** in its bounded
@@ -89,13 +89,16 @@ agent on its behalf (commits, PRs, READMEs, issues, social posts).
   `PostRepository.dropIfDimChanged` drops any post whose stored embedding
   byte-length is incompatible with the active model — handles model swaps
   without leaking stale vectors into matching.
-- **Routing is a single shared room, announce-then-pull (v5)**. There is
+- **Routing is a single shared room, announce-then-pull (v6)**. There is
   **no LSH, no buckets, no DHT routing table, no sticky peers**. Every node
   joins one Hyperswarm topic (`sha256(RoomConfig.topicPrefix ||
   RoomConfig.roomId)`); signed **announcements** (author + outbox key + full
   float32 embedding + digest) gossip transitively over the
-  `resonance-announce/v1` protocol (`bare/announce-directory.mjs`) so every
-  announcement reaches every peer in ~log₃₂(N) hops. Full record bodies are
+  `resonance-announce/v2` protocol (`bare/announce-directory.mjs`) as
+  compact-encoding binary (`bare/announce-codec.mjs`), batched at
+  `RoomConfig.announceBatchSize` per message so the on-open snapshot never
+  exceeds the transport's frame cap — and every announcement reaches every
+  peer in ~log₃₂(N) hops. Full record bodies are
   NOT replicated wholesale: a peer opens an author's outbox core only on
   demand and sparse-downloads exactly the admitted block (`pull` RPC in
   `bare/p2p.mjs`). Connection fan-out is capped at
@@ -125,7 +128,7 @@ agent on its behalf (commits, PRs, READMEs, issues, social posts).
   by the network. The presets in `MatchingConfig.thresholdPresets` are the same
   vocabulary the map's radial reference rings use.
 - The network is versioned via `RoomConfig.topicPrefix` (currently
-  `resonance/v5/room/`). Bumping it isolates peers using incompatible embedding
+  `resonance/v6/room/`). Bumping it isolates peers using incompatible embedding
   spaces, topologies or wire protocols.
 
 ## P2P conventions
@@ -137,7 +140,7 @@ agent on its behalf (commits, PRs, READMEs, issues, social posts).
 - Posts are addressed by `<peerPublicKey>:<feedIndex>`. Responses and
   reactions point at the record they answer by that address.
 - Transport is Hyperswarm + Hypercore, but replication is **announce-then-pull
-  (v5)**: only announcements are flooded; bodies are sparse-pulled per block
+  (v6)**: only announcements are flooded; bodies are sparse-pulled per block
   on admission. No node replicates another node's whole feed, and no relays
   in the MVP.
 - The Bare worklet at `qvac/worker.entry.mjs` owns all P2P + AI state. The

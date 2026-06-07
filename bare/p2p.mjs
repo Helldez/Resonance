@@ -1,5 +1,5 @@
 /**
- * Resonance P2P Bare worker — single-room, announce-then-pull (v5).
+ * Resonance P2P Bare worker — single-room, announce-then-pull (v6).
  *
  * Responsibilities (all running inside the Bare worklet on-device):
  *   1. Open a Corestore at the app-data directory.

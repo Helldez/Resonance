@@ -62,7 +62,7 @@ REPL commands (all input on stdin):
 | `room` | Show the single-room join status |
 | `exit` / `quit` | Clean shutdown |
 
-Under the v5 announce-then-pull room the CLI peer acts as a **mirror node**:
+Under the v6 announce-then-pull room the CLI peer acts as a **mirror node**:
 it has no interest profile, so it subscribes to announcements and pulls
 EVERY announced record — useful for end-to-end testing because it exercises
 the sparse-pull path and gives the room a node that holds everything.
@@ -76,6 +76,19 @@ App-data root resolution (`src/platform/desktop/bootstrap.ts:defaultAppDataDir`)
 - Windows: `%APPDATA%/Resonance`
 - macOS: `~/Library/Application Support/Resonance`
 - Linux: `$XDG_DATA_HOME/Resonance` or `~/.local/share/Resonance`
+
+### Windows gotcha: `@qvac/embed-llamacpp` needs OpenSSL 3 DLLs
+
+The win32-x64 prebuild of `@qvac/embed-llamacpp` (0.16.x) links against
+`libcrypto-3-x64.dll` / `libssl-3-x64.dll`, which are not Windows system
+libraries. If they are not resolvable, the QVAC worker dies before IPC with
+exit code `0xC0000409` and `Addon.load: The specified module could not be
+found` — the P2P worker still boots, so the failure surfaces only on the
+first `embed()` call. Workaround until the prebuild bundles them: copy the
+two DLLs (Git for Windows ships compatible ones under
+`C:\Program Files\Git\mingw64\bin\`) into
+`node_modules\bare-runtime-win32-x64\bin\` (next to `bare.exe`). Note that
+`npm install` wipes the copy.
 
 ## Electron shell
 

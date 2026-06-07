@@ -1,4 +1,4 @@
-# Resonance — Matching Flow (operational baseline, v5 announce-then-pull)
+# Resonance — Matching Flow (operational baseline, v6 announce-then-pull)
 
 This document describes **what actually happens at runtime** when a peer
 publishes a post and when another peer receives one. It is the baseline for
@@ -7,7 +7,7 @@ battery has to be argued against this concrete flow, not against an abstract
 model.
 
 The current topology is a **single shared Hyperswarm room** running an
-**announce-then-pull** protocol (network version `resonance/v5/room/`).
+**announce-then-pull** protocol (network version `resonance/v6/room/`).
 Lightweight signed **announcements** gossip to every peer; full record bodies
 are **pulled on demand**, only for the records a node admits into its bounded
 inbox. Ranking is global (every post's embedding is scored); download,
@@ -38,8 +38,9 @@ record appended to the peer's own outbox Hypercore (feedIndex stamped)
    ▼  worker derives the ANNOUNCEMENT from the record
 { author, outboxKey, feedIndex, kind, createdAt, embedding (full f32), digest }
    │
-   ▼  gossiped to every connected peer on 'resonance-announce/v1'
-   (and re-forwarded transitively — reaches every peer in ~log₃₂(N) hops)
+   ▼  gossiped to every connected peer on 'resonance-announce/v2'
+   (compact-encoding binary, batched — re-forwarded transitively,
+    reaches every peer in ~log₃₂(N) hops)
 ```
 
 Key invariants:
@@ -59,12 +60,18 @@ Source: `src/core/posts/CreatePost.ts`, `bare/p2p.mjs` (`append`,
 
 ## 2. Gossip path — how announcements reach everyone
 
-Every connection multiplexes the `resonance-announce/v1` Protomux channel over
+Every connection multiplexes the `resonance-announce/v2` Protomux channel over
 the Noise stream. On channel open each side sends the full set of
 announcements it knows; afterwards only freshly-learned ones are forwarded.
-Dedup is by record address (`<author>:<feedIndex>`), which also makes the
-flood loop-free. Connection fan-out is capped at `RoomConfig.maxConnections`
-(32); transitive forwarding gives ~log₃₂(N)-hop convergence.
+Announcements travel as **compact-encoding binary** (~3.2KB for a 768-dim
+post vs ~15KB as JSON text; codec in `bare/announce-codec.mjs`) and every
+send is capped at `RoomConfig.announceBatchSize` announcements per message —
+the snapshot grows with the room's history, and a single oversized frame
+kills the connection at open (observed at 1063 announcements ≈ 15.6MB as
+JSON). Dedup is by record address (`<author>:<feedIndex>`), which also makes
+the flood loop-free. Connection fan-out is capped at
+`RoomConfig.maxConnections` (32); transitive forwarding gives ~log₃₂(N)-hop
+convergence.
 
 The worker emits each freshly-learned announcement up to the app exactly once.
 Because a peer can connect while the app is still booting, the app drains the
@@ -137,12 +144,19 @@ pulled record
    │     a lying announcement that won a tentative slot is dropped here
    │     if the real embedding does not earn it
    ▼  decideAdmission against the CURRENT inbox state
-   ├─ admit    → posts.upsert (similarity + matched own post recorded)
-   ├─ replace  → evict the weakest, then upsert
-   └─ reject   → dropped (the pull was spent, nothing is stored)
-   │
-   ▼  Tier-1 row marked `pulled` (a re-rank will not request it again)
+   ├─ admit    → posts.upsert, Tier-1 row marked `pulled`
+   ├─ replace  → evict the weakest (its `pulled` flag CLEARS — it can win a
+   │             future re-rank again), then upsert + mark `pulled`
+   └─ reject   → dropped, Tier-1 row stays UNMARKED (the pull was spent,
+                 nothing stored; a later basis change may pull it again)
 ```
+
+`pulled` means "body **currently held** in Tier-2", not "downloaded once":
+it is set only on a successful commit and cleared on eviction (replace and
+the boot trim both clear it). Marking before the decision would burn every
+evicted/rejected record forever — no re-rank could ever bring it back. A boot
+self-heal (`resetOrphanedPulledPosts`) repairs flags left orphaned by a crash
+between eviction and clear.
 
 Responses and reactions skip scoring and land directly in their thread
 projections (`responses` / `reactions` tables, with their per-author product

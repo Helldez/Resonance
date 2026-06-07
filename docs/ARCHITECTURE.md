@@ -48,16 +48,19 @@ Qwen3-1.7B (Q4_0), also via QVAC in the worklet (`ModelProfiles.llm`).
 Both are abstracted behind ports so the calibration script can swap a
 Node-side embedding model in for offline analysis.
 
-## The single-room model — announce-then-pull (v5)
+## The single-room model — announce-then-pull (v6)
 
 Resonance runs **one shared P2P room** — no semantic buckets, no DHT
 routing table, no sticky peers. Every node joins a single Hyperswarm topic
 derived as `sha256(RoomConfig.topicPrefix || RoomConfig.roomId)`. Signed
 **announcements** (author + outbox key + embedding + digest) gossip
-transitively over the `resonance-announce/v1` channel
-(`bare/announce-directory.mjs`) so every announcement reaches every peer in
-~log₃₂(N) hops (`RoomConfig.maxConnections = 32`). Record **bodies are not
-replicated wholesale**: a peer sparse-downloads exactly the blocks it admits.
+transitively over the `resonance-announce/v2` channel
+(`bare/announce-directory.mjs`; compact-encoding binary via
+`bare/announce-codec.mjs`, batched at `RoomConfig.announceBatchSize` per
+message so the on-open snapshot never exceeds the transport's frame cap) so
+every announcement reaches every peer in ~log₃₂(N) hops
+(`RoomConfig.maxConnections = 32`). Record **bodies are not replicated
+wholesale**: a peer sparse-downloads exactly the blocks it admits.
 
 ```
 text ──embed──▶ Float32Array (768-dim, unit norm)
