@@ -81,6 +81,17 @@ export class AnnouncementRepository {
   }
 
   /**
+   * Inverse of `markPulled`, called when a post is EVICTED from the bounded
+   * inbox. `pulled` means "body currently held in Tier-2", not "downloaded
+   * once": without the clear, an evicted record stayed flagged forever and no
+   * future re-rank could ever bring it back — the 1000-post stress test burned
+   * the whole Italian corpus this way on first boot.
+   */
+  async clearPulled(address: RecordAddress): Promise<void> {
+    await this.db.exec('UPDATE announcements SET pulled = 0 WHERE address = ?', [address]);
+  }
+
+  /**
    * Whether this announcement's body is already pulled and committed.
    * Checked before issuing a pull: re-gossips and boot rescans re-emit
    * announcements we already hold in full, and re-downloading them is pure
@@ -92,6 +103,31 @@ export class AnnouncementRepository {
       [address],
     );
     return rows.length > 0 && rows[0].pulled !== 0;
+  }
+
+  /**
+   * Boot self-heal: reset `pulled` on post summaries whose body is NOT in the
+   * `posts` table. Before `pulled` was tied to "currently held", an evicted or
+   * rejected body left the flag set forever and the record could never be
+   * re-pulled; devices that ran that code still carry the orphaned flags.
+   * Posts only — responses/reactions live in their own tables and are always
+   * committed, so their flags are truthful. Returns the number of rows healed.
+   */
+  async resetOrphanedPulledPosts(): Promise<number> {
+    const rows = await this.db.query<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM announcements
+       WHERE pulled = 1 AND kind = 'post'
+         AND address NOT IN (SELECT address FROM posts)`,
+    );
+    const orphaned = rows[0]?.n ?? 0;
+    if (orphaned > 0) {
+      await this.db.exec(
+        `UPDATE announcements SET pulled = 0
+         WHERE pulled = 1 AND kind = 'post'
+           AND address NOT IN (SELECT address FROM posts)`,
+      );
+    }
+    return orphaned;
   }
 
   /** Whether we have already seen this announcement (any state). */

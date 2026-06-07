@@ -95,7 +95,7 @@ async function main(): Promise<void> {
 
   console.log('PostRepository.enforceRemoteCapacity');
 
-  await check('trims weakest-first back to capacity, nulls evicted first', async () => {
+  await check('trims weakest-first back to capacity, returns evicted addresses', async () => {
     const { posts } = await freshDb();
     // 8 remote posts: two unscored (null), six scored 0.4..0.9. Cap 5 →
     // evict the two nulls and the weakest scored (0.4).
@@ -104,8 +104,9 @@ async function main(): Promise<void> {
       await posts.upsert(addressOf(REMOTE, i), REMOTE, i, post(sims[i] ?? 0), sims[i]);
     }
     await posts.upsert(addressOf(SELF, 0), SELF, 0, post(0), null); // own, exempt
-    const removed = await posts.enforceRemoteCapacity(SELF, CAPACITY);
-    assert.equal(removed, 3);
+    const evicted = await posts.enforceRemoteCapacity(SELF, CAPACITY);
+    assert.equal(evicted.length, 3);
+    assert.ok(evicted.includes(addressOf(REMOTE, 2))); // the 0.4 one
     assert.equal(await posts.countRemotePosts(SELF), CAPACITY);
     const min = await posts.minSimilarityRemotePost(SELF);
     assert.ok(min !== null && min.similarity >= 0.5);
@@ -114,8 +115,39 @@ async function main(): Promise<void> {
   await check('no-op when already within capacity', async () => {
     const { posts } = await freshDb();
     await posts.upsert(addressOf(REMOTE, 0), REMOTE, 0, post(0.5), 0.5);
-    assert.equal(await posts.enforceRemoteCapacity(SELF, CAPACITY), 0);
+    assert.deepEqual(await posts.enforceRemoteCapacity(SELF, CAPACITY), []);
     assert.equal(await posts.countRemotePosts(SELF), 1);
+  });
+
+  console.log('pulled-flag lifecycle (evicted records must be re-pullable)');
+
+  await check('clearPulled makes an evicted record pullable again', async () => {
+    const { announcements } = await freshDb();
+    const a = ann(2);
+    const address = addressOf(a.author, a.feedIndex);
+    await announcements.upsert(a, 0.5);
+    await announcements.markPulled(address);
+    await announcements.clearPulled(address); // eviction path
+    assert.equal(await announcements.isPulled(address), false);
+  });
+
+  await check('resetOrphanedPulledPosts heals flags whose body is gone', async () => {
+    const { posts, announcements } = await freshDb();
+    // Record A: pulled and still held (body in posts) → flag stays.
+    const a = ann(10);
+    const aAddr = addressOf(a.author, a.feedIndex);
+    await announcements.upsert(a, 0.9);
+    await announcements.markPulled(aAddr);
+    await posts.upsert(aAddr, REMOTE, 10, post(0.9), 0.9);
+    // Record B: pulled but evicted under the OLD semantics (no body) → heal.
+    const b = ann(11);
+    const bAddr = addressOf(b.author, b.feedIndex);
+    await announcements.upsert(b, 0.4);
+    await announcements.markPulled(bAddr);
+    const healed = await announcements.resetOrphanedPulledPosts();
+    assert.equal(healed, 1);
+    assert.equal(await announcements.isPulled(aAddr), true);
+    assert.equal(await announcements.isPulled(bAddr), false);
   });
 
   console.log('serialized admission burst');

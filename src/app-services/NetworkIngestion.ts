@@ -8,7 +8,7 @@ import { addressOf, parseAddress } from '@core/utils/AddressOf';
 import { canonicalDigest } from '@core/utils/CanonicalRecord';
 import { validateRecordBody } from '@core/validation/ValidateRecordBody';
 import { cosineOnUnit } from '@core/matching/CosineSimilarity';
-import type { Announcement, RecordAddress, SignedRecord } from '@core/domain/types';
+import type { Announcement, PeerId, RecordAddress, SignedRecord } from '@core/domain/types';
 
 /**
  * Network ingestion orchestration: the receive-side of the announce-then-pull
@@ -62,6 +62,33 @@ export function enqueueIngest(task: () => Promise<void>): void {
   ingestQueue = ingestQueue.then(task).catch((e) => {
     console.warn(`[rn] ingest task failed: ${e instanceof Error ? e.message : String(e)}`);
   });
+}
+
+/**
+ * Addresses with a pull currently in flight. A rescan can re-emit an
+ * announcement while its body from a previous pull is still on the wire —
+ * Tier-1 `pulled` only flips once the body commits, so without this guard a
+ * burst issued the same pull many times over (observed: 1245 pulls for ~1030
+ * records on one first boot).
+ */
+const pullsInFlight = new Set<RecordAddress>();
+
+function requestPullGuarded(c: PlatformContainer, author: PeerId, feedIndex: number): void {
+  const address = addressOf(author, feedIndex);
+  if (pullsInFlight.has(address)) {
+    return;
+  }
+  pullsInFlight.add(address);
+  void c.network
+    .requestPull(author, feedIndex)
+    .catch((e) => {
+      console.warn(
+        `[rn] pull request failed for ${String(author).slice(0, 12)}:${feedIndex}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    })
+    .finally(() => {
+      pullsInFlight.delete(address);
+    });
 }
 
 /**
@@ -119,11 +146,7 @@ export async function rerankTier1AndPull(
   }
   for (const address of toPull) {
     const { author, feedIndex } = parseAddress(address);
-    void c.network.requestPull(author, feedIndex).catch((e) => {
-      console.warn(
-        `[rn] rerank pull failed for ${String(author).slice(0, 12)}:${feedIndex}: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    });
+    requestPullGuarded(c, author, feedIndex);
   }
   console.log(`[rn] reranked tier1 candidates=${candidates.length} toPull=${toPull.length}`);
 }
@@ -168,14 +191,11 @@ export async function handleAnnouncement(
   await c.announcements.upsert(announcement, result.score.similarity);
   await c.announcements.enforceCap(RoomConfig.announceTier1Capacity);
   if (result.shouldPull) {
-    // Fire-and-forget: this handler runs on the serialized ingest queue, and
-    // a pull is a network round-trip (up to RoomConfig.pullTimeoutMs). The
-    // body lands in `onRecord`, which enqueues its own task.
-    void c.network.requestPull(announcement.author, announcement.feedIndex).catch((e) => {
-      console.warn(
-        `[rn] pull request failed for ${String(announcement.author).slice(0, 12)}:${announcement.feedIndex}: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    });
+    // Fire-and-forget (guarded against duplicates): this handler runs on the
+    // serialized ingest queue, and a pull is a network round-trip (up to
+    // RoomConfig.pullTimeoutMs). The body lands in `onRecord`, which enqueues
+    // its own task.
+    requestPullGuarded(c, announcement.author, announcement.feedIndex);
   }
 }
 
@@ -213,16 +233,16 @@ export async function persistRecord(
     return;
   }
   const address = addressOf(record.author, record.feedIndex);
+  const isOwn = record.author === c.self;
 
-  if (record.author !== c.self) {
-    // This body arrived because we admitted its announcement and pulled it.
-    // Mark the Tier-1 summary pulled so a later re-rank does not request it
-    // again (no-op if we have no summary row for it).
-    await c.announcements.markPulled(address);
-  }
+  // Tier-1 `pulled` means "body currently HELD in Tier-2", not "downloaded
+  // once" — so it is set only after a successful commit below, and cleared
+  // when an occupant is evicted. A rejected body stays unmarked: when the
+  // matching basis changes, a future re-rank may legitimately pull it again.
+  // (Marking before the decision burned every evicted/rejected record forever
+  // — the 1000-post stress test lost the whole Italian corpus this way.)
 
   if (record.body.kind === 'post') {
-    const isOwn = record.author === c.self;
     if (isOwn) {
       await c.posts.upsert(address, record.author, record.feedIndex, record.body, null);
       await c.peers.touch(record.author, c.clock.now());
@@ -256,6 +276,7 @@ export async function persistRecord(
     }
     if (decision.kind === 'replace') {
       await c.posts.delete(decision.evict);
+      await c.announcements.clearPulled(decision.evict);
     }
     await c.posts.upsert(
       address,
@@ -265,6 +286,7 @@ export async function persistRecord(
       similarity,
       matchedOwnAddress,
     );
+    await c.announcements.markPulled(address);
     console.log(
       `[rn] inbox ${decision.kind} author=${shortAuthor} similarity=${similarity === null ? 'null' : similarity.toFixed(3)} count=${currentCount}`,
     );
@@ -279,11 +301,17 @@ export async function persistRecord(
       record.feedIndex,
       record.body,
     );
+    if (!isOwn) {
+      await c.announcements.markPulled(address);
+    }
     await c.peers.touch(record.author, c.clock.now());
     return;
   }
 
   await c.responses.upsert(address, record.author, record.feedIndex, record.body);
+  if (!isOwn) {
+    await c.announcements.markPulled(address);
+  }
   await c.peers.touch(record.author, c.clock.now());
 }
 

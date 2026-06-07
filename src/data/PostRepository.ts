@@ -147,21 +147,24 @@ export class PostRepository {
    * Boot-time self-heal: a concurrent ingest burst in a previous session
    * could over-admit past the cap before the serialized queue existed, and
    * a capacity downgrade in config would otherwise leave the excess in
-   * place forever. Returns the number of rows removed.
+   * place forever. Returns the evicted addresses so the caller can reset
+   * their Tier-1 `pulled` flags (an evicted body is no longer held).
    */
-  async enforceRemoteCapacity(self: PeerId, capacity: number): Promise<number> {
+  async enforceRemoteCapacity(self: PeerId, capacity: number): Promise<RecordAddress[]> {
     const before = await this.countRemotePosts(self);
     if (before <= capacity) {
-      return 0;
+      return [];
     }
-    await this.db.exec(
-      `DELETE FROM posts WHERE address IN (
-         SELECT address FROM posts WHERE author != ?
-         ORDER BY (similarity IS NULL) DESC, similarity ASC
-         LIMIT ?)`,
+    const victims = await this.db.query<{ address: string }>(
+      `SELECT address FROM posts WHERE author != ?
+       ORDER BY (similarity IS NULL) DESC, similarity ASC
+       LIMIT ?`,
       [self, before - capacity],
     );
-    return before - capacity;
+    for (const v of victims) {
+      await this.db.exec('DELETE FROM posts WHERE address = ?', [v.address]);
+    }
+    return victims.map((v) => v.address as RecordAddress);
   }
 
   /**

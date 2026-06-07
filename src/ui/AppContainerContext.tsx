@@ -82,10 +82,22 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
         );
 
         // Self-heal: trim any over-capacity remainder from a previous session
-        // back to the cap before new admissions are decided against it.
-        const trimmed = await c.posts.enforceRemoteCapacity(c.self, RoomConfig.inboxCapacity);
-        if (trimmed > 0) {
-          console.log(`[rn] inbox trimmed ${trimmed} over-capacity remote posts`);
+        // back to the cap before new admissions are decided against it. The
+        // evicted bodies are no longer held, so their Tier-1 `pulled` flags
+        // reset and a future re-rank can fetch them again.
+        const evicted = await c.posts.enforceRemoteCapacity(c.self, RoomConfig.inboxCapacity);
+        for (const address of evicted) {
+          await c.announcements.clearPulled(address);
+        }
+        if (evicted.length > 0) {
+          console.log(`[rn] inbox trimmed ${evicted.length} over-capacity remote posts`);
+        }
+        // Heal Tier-1 flags orphaned by the old "downloaded once" semantics
+        // (or by a crash between eviction and flag clear): a pulled=1 summary
+        // with no held body can never win a re-rank, so reset it.
+        const healed = await c.announcements.resetOrphanedPulledPosts();
+        if (healed > 0) {
+          console.log(`[rn] tier1 healed ${healed} orphaned pulled flags`);
         }
 
         // Single-room model: join the one shared room. There is no per-post
