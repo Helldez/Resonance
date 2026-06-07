@@ -29,6 +29,11 @@ export async function draftResponse(
   deps: DraftResponseDeps,
   input: DraftResponseInput,
 ): Promise<DraftResponseResult> {
+  // `/no_think` switches Qwen3 (and other thinking models) out of reasoning
+  // mode for this turn, so the small token budget goes into the reply itself
+  // rather than a <think> block — which could swallow the whole budget (or
+  // trip a stop sequence mid-think) and leave the user an empty draft.
+  // Harmless on models that don't recognise it. Same trick as StructuredLlm.
   const prompt = [
     MatchingConfig.prompts.draftResponseSystem,
     '',
@@ -40,6 +45,7 @@ export async function draftResponse(
     input.post.post.text.trim(),
     '---',
     'Your reply:',
+    '/no_think',
   ].join('\n');
 
   const raw = await deps.llm.complete(prompt, {

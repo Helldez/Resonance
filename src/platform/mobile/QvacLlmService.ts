@@ -1,8 +1,30 @@
 import { cancel, completion, unloadModel } from '@qvac/sdk';
 import type { ModelProgressUpdate } from '@qvac/sdk';
 import type { ILlmService, LlmGenerateOptions } from '@core/ports/ILlmService';
+import { LlmConfig } from '@core/config/LlmConfig';
 import { ModelProfiles } from '@core/config/ModelProfiles';
 import { loadWithFallback } from '@core/utils/LoadWithFallback';
+
+/** Sentinel returned by the watchdog race when no token arrived in time. */
+const WATCHDOG_TIMEOUT = Symbol('llm-watchdog-timeout');
+
+/** Race `pending` against the watchdog timer. */
+async function raceWatchdog<T>(
+  pending: Promise<T>,
+  timeoutMs: number,
+): Promise<T | typeof WATCHDOG_TIMEOUT> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<typeof WATCHDOG_TIMEOUT>((resolve) => {
+    timer = setTimeout(() => resolve(WATCHDOG_TIMEOUT), timeoutMs);
+  });
+  try {
+    return await Promise.race([pending, timeout]);
+  } finally {
+    if (timer !== null) {
+      clearTimeout(timer);
+    }
+  }
+}
 
 export type LlmProgressCallback = (p: ModelProgressUpdate) => void;
 
@@ -122,12 +144,59 @@ export class QvacLlmService implements ILlmService {
       responseFormat,
     } as never) as { tokenStream: AsyncIterable<string> };
 
-    for await (const token of result.tokenStream) {
+    // Manual iteration (no for-await): on a client-side stop or a watchdog
+    // expiry we must cancel the worker-side request and DRAIN the stream to a
+    // terminal state before returning. A bare `break` here let the worker keep
+    // generating with the model held (observed live: a 21-minute completion),
+    // while the serial queue advanced and the next call was rejected by QVAC's
+    // registry concurrency policy.
+    const iterator = result.tokenStream[Symbol.asyncIterator]();
+    // The first token waits on the whole prefill, so it gets a wider budget
+    // than the steady decode-time gap.
+    let timeoutMs: number = LlmConfig.firstTokenTimeoutMs;
+    while (true) {
+      const next = await raceWatchdog(iterator.next(), timeoutMs);
+      if (next === WATCHDOG_TIMEOUT) {
+        this.cancelGeneration();
+        await this.drainCancelled(iterator);
+        throw new Error(
+          `LLM generation stalled — no token for ${timeoutMs} ms; request cancelled`,
+        );
+      }
+      if (next.done === true) {
+        return;
+      }
+      const token = next.value;
       if (options.stop !== undefined && options.stop.some((s) => token.includes(s))) {
-        break;
+        // `params.stop` is also passed to the worker, but it is not reliably
+        // honoured — cancel explicitly so the model is freed now.
+        this.cancelGeneration();
+        await this.drainCancelled(iterator);
+        return;
       }
       onChunk(token);
+      timeoutMs = LlmConfig.tokenGapTimeoutMs;
     }
+  }
+
+  /**
+   * Consume a just-cancelled token stream until it ends, bounded by
+   * `cancelDrainTimeoutMs`, so the serial queue only advances once the worker
+   * has actually released the model. A cancelled stream may end with an error;
+   * either way the request has reached a terminal state, so errors are
+   * swallowed. If even the drain stalls we give up and let the queue move on.
+   */
+  private async drainCancelled(iterator: AsyncIterator<string>): Promise<void> {
+    const drain = (async (): Promise<void> => {
+      try {
+        while (!(await iterator.next()).done) {
+          // discard
+        }
+      } catch {
+        // terminal state reached via error — fine
+      }
+    })();
+    await raceWatchdog(drain, LlmConfig.cancelDrainTimeoutMs);
   }
 
 

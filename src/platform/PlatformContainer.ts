@@ -26,6 +26,12 @@ export interface PlatformEmbeddingService extends IEmbeddingService {
 export interface PlatformLlmService extends ILlmService {
   readonly isLoaded: boolean;
   load(onProgress?: (p: ModelProgressUpdate) => void): Promise<void>;
+  /**
+   * Abort the in-flight generation (if any), freeing the model immediately.
+   * Used by the agent kill switch: gating future ticks is not enough when a
+   * completion can hold the model for minutes.
+   */
+  cancelGeneration(): void;
 }
 
 export interface PlatformContainer extends AppContainer {

@@ -161,6 +161,9 @@ const handlers: Record<string, Record<string, Handler>> = {
       c.llmConcrete.load((p: ModelProgressUpdate) => broadcast('llm/progress', p)),
     complete: (c, a) =>
       c.llm.complete(a[0] as string, a[1] as Parameters<typeof c.llm.complete>[1]),
+    cancelGeneration: (c) => {
+      c.llmConcrete.cancelGeneration();
+    },
     completeStream: async (c, a) => {
       const streamId = a[0] as string;
       const prompt = a[1] as string;

@@ -303,6 +303,10 @@ class RemoteLlmService implements PlatformLlmService, ILlmService {
     return (await this.bridge.call('llm', 'complete', [prompt, options])) as string;
   }
 
+  cancelGeneration(): void {
+    void this.bridge.call('llm', 'cancelGeneration', []);
+  }
+
   async completeStream(
     prompt: string,
     options: LlmGenerateOptions,

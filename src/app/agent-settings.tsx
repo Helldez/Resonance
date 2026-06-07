@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAgentProfileStore } from '@domain/AgentProfileStore';
+import { useRequireContainer } from '@ui/AppContainerContext';
 import { AgentConfig } from '@core/config/AgentConfig';
 import { DesignTokens as T } from '@core/config/DesignTokens';
 import {
@@ -23,6 +24,7 @@ import {
  */
 export default function AgentSettingsScreen() {
   const insets = useSafeAreaInsets();
+  const container = useRequireContainer();
   const profile = useAgentProfileStore((s) => s.profile);
   const setProfile = useAgentProfileStore((s) => s.setProfile);
   const killSwitch = useAgentProfileStore((s) => s.killSwitch);
@@ -201,7 +203,14 @@ export default function AgentSettingsScreen() {
             right={
               <Switch
                 value={killSwitch}
-                onValueChange={setKillSwitch}
+                onValueChange={(v) => {
+                  setKillSwitch(v);
+                  if (v) {
+                    // Gating future ticks is not enough: a completion can hold
+                    // the model for minutes. Abort the in-flight one too.
+                    container.llmConcrete.cancelGeneration();
+                  }
+                }}
                 color={T.color.danger}
                 accessibilityLabel="Kill switch"
               />
