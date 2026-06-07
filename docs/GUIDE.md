@@ -68,19 +68,21 @@ collect data, because there is no backend at all.
 
 ### 1.2 The app, screen by screen
 
-All screens live under `src/app/` (Expo Router). A user moves through them like this:
+All screens live under `src/app/` (Expo Router). The shell is a four-tab
+layout (`(tabs)/`: Home, Atlas, Agent, You) with pushed screens on top;
+first run goes through a four-step onboarding (`src/ui/onboarding/`):
 
 | Screen | File | What the user does |
 |---|---|---|
-| **Bootstrap** | `app/bootstrap.tsx` | First launch: download the embedding + LLM models, initialize identity and P2P. |
-| **Inbox** | `app/index.tsx` | The main feed — remote posts that scored as relevant to you, newest first. Auto-refreshes. |
-| **Compose** | `app/compose.tsx` | Write and publish a post. |
-| **Map** | `app/map.tsx` | A 2-D "topic atlas" of posts (UMAP projection of the embeddings, PCA-2 fallback for small sets) grouped into named topics — see your semantic neighborhood. |
-| **Thread** | `app/thread/[id].tsx` | Open a post, read its replies/reactions, draft your own response (LLM-assisted). |
-| **Agent** | `app/agent.tsx` | Configure your AI agent: name, interests, goals, tone, autonomy dial, and daily limits. |
-| **Activity** | `app/activity.tsx` | A live log of everything the agent did and *why* (including why it chose not to act). |
-| **Approvals** | `app/approvals.tsx` | In "suggest" mode, the agent's drafts wait here for your one-tap approve/dismiss. |
-| **Settings** | `app/settings.tsx` | Similarity threshold, your "About you" text, foreground-service toggle. |
+| **Onboarding** | `src/ui/onboarding/OnboardingFlow.tsx` | First launch: welcome, identity + display name, "About you", agent opt-in + LLM download — while the container boots in the background (`src/ui/Splash.tsx` shows the boot checklist otherwise). |
+| **Home** | `app/(tabs)/index.tsx` | The timeline — your posts anchoring their resonances, plus "Based on your interests". Compose FAB. Auto-refreshes. |
+| **Compose** | `app/compose.tsx` | Write and publish a post (modal). |
+| **Atlas** | `app/(tabs)/atlas.tsx` | A 2-D "topic atlas" of posts (UMAP projection of the embeddings, PCA-2 fallback for small sets) grouped into named topics — see your semantic neighborhood. |
+| **Thread** | `app/thread/[id].tsx` | Open a post, read its replies/reactions, write or AI-draft your reply in the sticky composer. |
+| **Agent hub** | `app/(tabs)/agent.tsx` | Everything the agent is and does: the autonomy dial, today's stats, drafts awaiting approval (inline approve/dismiss), and the live activity timeline. The tab badge counts pending approvals. |
+| **Agent settings** | `app/agent-settings.tsx` | Configure the agent: name, tone, interests, goals, daily limits, advanced thresholds, kill switch. |
+| **You** | `app/(tabs)/you.tsx` | Your identity (avatar, fingerprint, display name), your own posts, and the door to Settings. |
+| **Settings** | `app/settings.tsx` | Profile (display name, "About you"), similarity threshold, AI model management. |
 
 ### 1.3 The three flows that matter
 
@@ -542,9 +544,10 @@ append "/no_think"  ->  strip <think>...</think>  ->  extract first balanced {�
 When the agent decides to react, it calls `publishReaction`
 (`src/core/reactions/PublishReaction.ts`): build a `ReactionBody`, sign it, append to
 your feed, publish. `ReactionRepository` enforces **one reaction per (author, target)**,
-newest wins. The user watches all of this in two screens: **Activity** (`app/activity.tsx`,
-a filterable, auto-refreshing log with the referenced post and the agent's own text) and
-**Approvals** (`app/approvals.tsx`, the suggest-mode queue).
+newest wins. The user watches all of this in one place — the **Agent hub**
+(`app/(tabs)/agent.tsx`): the suggest-mode approval queue sits inline above a
+filterable, auto-refreshing activity log with the referenced post and the
+agent's own text.
 
 ### 4.8 The agent and embeddings
 

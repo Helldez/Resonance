@@ -85,7 +85,7 @@ history lives in [`SEMANTIC_ROUTING.md`](SEMANTIC_ROUTING.md).
   **Approvals** (suggest-mode queue). Full spec in [`AGENTS_FLOW.md`](AGENTS_FLOW.md).
 
 ### Topic atlas (semantic map)
-- `src/app/map.tsx` + `src/ui/TopicAtlasView.tsx`: a 2-D atlas of the posts the
+- `src/app/(tabs)/atlas.tsx` + `src/ui/TopicAtlasView.tsx`: a 2-D atlas of the posts the
   device holds. Layout is a **UMAP** projection of the 768-dim embeddings, with
   a deterministic **PCA-2** fallback for small sets (`src/core/topics/`,
   `AtlasProjection.ts`). Spherical k-means groups posts into named topics

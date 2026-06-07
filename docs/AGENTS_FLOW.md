@@ -386,17 +386,18 @@ gained `ref_text` via an in-place `ALTER TABLE` migration.
 
 ## 10. UX surfaces
 
-- **My agent** (`src/app/agent.tsx`): the form (enable, autonomy segmented
-  control, name, interests chips, goals list, tone, numeric limit steppers,
-  today's counts, kill-switch) + links to *To approve* and *Live activity*.
-- **To approve** (`src/app/approvals.tsx`): the Suggest-mode queue; approve →
-  publishes through the real use-cases; dismiss → deletes.
-- **Agent activity** (`src/app/activity.tsx`): real-time, newest-first,
-  auto-refreshing log. Each row: phase icon + label + time + target, the summary
+- **Agent hub** (`src/app/(tabs)/agent.tsx`): the autonomy dial (pills),
+  today's counts, the Suggest-mode approval queue inline (approve →
+  publishes through the real use-cases via `@ui/agent/useApprovals`;
+  dismiss → deletes), and the real-time, newest-first activity log. Each
+  log row: phase icon + label + relative time + target, the summary
   (incl. *why-not*: "Skipping — relevance 40% below 55%", "Blocked: …"), an
   **"In reply to"** box (the `ref_text`, the post being considered) and an
   **"Agent wrote"** box (the agent's own text). Filters: All / Actions /
-  Reasoning. Clear button.
+  Reasoning. Clear action in the header. The tab badge counts pending
+  approvals.
+- **Agent settings** (`src/app/agent-settings.tsx`): name, tone, interests,
+  goals, numeric limit steppers, advanced thresholds, kill-switch.
 
 ---
 

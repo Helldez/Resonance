@@ -207,7 +207,11 @@ npm run desktop:peer
 - Don't add a server. Don't add analytics. Don't add a sign-in. Don't add a
   "share to social" button.
 - Don't introduce a global state library beyond the existing Zustand stores.
-- Don't add a UI library beyond `react-native-paper`.
+- Don't add a UI component library. The UI is the in-repo design system
+  (`src/ui/design-system/`, built on RN primitives + `react-native-svg`),
+  driven exclusively by `src/core/config/DesignTokens.ts`. New visual
+  constants go in the tokens; new glyphs go in `design-system/Icon.tsx`.
+  `react-native-paper` was removed — don't reintroduce it.
 - Don't bring matching or similarity logic out of `src/core/matching/` /
   `src/core/inbox/`.
 - Don't put network code outside the Bare worklet or the
