@@ -119,6 +119,23 @@ the Bare polyfill in `src/platform/mobile/bootstrap.ts` need validation,
 and (b) the `react-native-svg` semantic map and gesture handler must be
 tested under web before they can be relied on.
 
+## UI smoke driver (Playwright)
+
+`scripts/desktop/drive-ui.mjs` is a one-shot driver for agent/CI use: it
+launches the Electron app via Playwright's `_electron`, walks the compose
+flow (Home → FAB → compose → type → Post → Home) and drops screenshots plus
+a DOM audit of the tappable controls at every step into `.ui-shots/`
+(gitignored). No xvfb needed on Windows.
+
+```powershell
+node scripts/desktop/drive-ui.mjs [outDir]
+```
+
+Related fix: the desktop renderer used to crash on first paint because
+screens rendered before the store hydration finished; the bootstrap gate is
+now hydration-safe (the splash stays up until stores are hydrated), which is
+also what makes this driver deterministic.
+
 ## Known unknowns
 
 - **`@qvac/sdk` under Node**: the desktop QVAC services re-export the

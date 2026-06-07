@@ -1,0 +1,14 @@
+Resonance
+Copyright 2026 Helldez (https://github.com/Helldez)
+
+This product is developed and maintained at
+https://github.com/Helldez/Resonance
+
+Licensed under the Apache License, Version 2.0. If you redistribute this
+software or a derivative work, you must retain this NOTICE file per
+Section 4(d) of the License, including the attribution above.
+
+Resonance runs entirely on-device on top of the QVAC SDK by Tether
+(https://qvac.tether.io) and the Holepunch P2P stack
+(Hyperswarm / Hypercore / Corestore). Those components are licensed by
+their respective owners under their own terms.

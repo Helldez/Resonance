@@ -23,16 +23,20 @@ history lives in [`SEMANTIC_ROUTING.md`](SEMANTIC_ROUTING.md).
   expo-file-system, AsyncStorage KV. SQLite is a projection; Hypercore feeds
   are the source of truth.
 
-### P2P layer (single room, announce-then-pull v5 — validated bidirectionally desktop↔mobile)
+### P2P layer (single room, announce-then-pull, room v6 — validated bidirectionally desktop↔mobile)
 - **`bare/p2p.mjs`**: Bare worker owning a Corestore, a writable outbox
   Hypercore, a Hyperswarm instance, the announce-gossip channel and the sparse
   `pull` RPC. Bundled by `npm run build:bare` (mobile) /
   `build:bare:desktop`.
 - **Single shared room**: every node joins one Hyperswarm topic
-  `sha256(RoomConfig.topicPrefix || roomId)` (`resonance/v5/room/`, `global`).
+  `sha256(RoomConfig.topicPrefix + networkSalt || roomId)`
+  (`resonance/v6/room/`, `global`; the salt is empty on the public network —
+  a shared secret salt yields a private one, see `SECURITY.md`).
   **No LSH, no buckets, no routing table.** Signed **announcements** (author +
   outbox key + full float32 embedding + digest) gossip transitively over
-  `resonance-announce/v1` (`bare/announce-directory.mjs`), reaching every peer
+  `resonance-announce/v2` (`bare/announce-directory.mjs`; binary
+  compact-encoding via `bare/announce-codec.mjs`, snapshots batched at
+  `RoomConfig.announceBatchSize`), reaching every peer
   in ~log₃₂(N) hops; ≤32 connections per node. The worker re-announces its own
   outbox on boot.
 - **Bodies are pulled, not replicated**: an admitted announcement triggers

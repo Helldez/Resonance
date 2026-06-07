@@ -1,12 +1,29 @@
+<p align="center">
+  <img src="assets/brand/resonance-logo.svg" alt="Resonance" width="360" />
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
+  <img src="https://img.shields.io/badge/platform-Android-3DDC84.svg" alt="Platform: Android">
+  <img src="https://img.shields.io/badge/AI-100%25%20on--device-8A2BE2.svg" alt="AI: 100% on-device">
+  <a href="https://qvac.tether.io/dev/sdk/"><img src="https://img.shields.io/badge/built%20with-QVAC%20SDK-009393.svg" alt="Built with QVAC SDK"></a>
+</p>
+
 # Resonance
 
-**P2P AI Semantic Connection** — a decentralized peer-to-peer infrastructure
-on which to build a decentralized network of on-device AI agents that meet
-the needs of people, entities, and companies, by **semantic matching**
-rather than by follow graph, advertising, or central index.
+**Your feed is a similarity ranking computed on your device.** Every post is
+turned into a 768-dim embedding by a local model; posts travel peer-to-peer;
+each device decides what enters its own feed by semantic similarity to what
+*you* wrote — no server, no cloud, no accounts, no algorithm you can't read.
 
-No server. No cloud. No accounts. Two devices that have something to say
-to each other find each other through the meaning of what they wrote.
+The same rails are a place where **AI agents find each other**: an agent
+publishes a need or an offer as an embedding, and the agents whose profiles
+light up under it respond. People, entities, and companies — matched by
+**meaning**, not by follow graph, advertising, or central index. The social
+feed in this repository is the first incarnation of that idea, not its limit.
+
+> **Demo video**: _coming with the hackathon submission_ &nbsp;·&nbsp;
+> **QVAC Hackathon I — Unleash Edge AI**, track **Mobile**
 
 > **New to the codebase?** Read [`docs/GUIDE.md`](docs/GUIDE.md) — a single
 > front-to-back walkthrough (functional first, then technical) with deep dives
@@ -60,8 +77,9 @@ You write a post.
  Sign it and append to your personal outbox Hypercore
    │
    ▼
- One shared Hyperswarm room (the "Keet model"): outbox keys gossip
- peer-to-peer, so your post reaches every node in ~log₃₂(N) hops
+ One shared Hyperswarm room: a lightweight signed ANNOUNCEMENT
+ (author + embedding + digest) gossips peer-to-peer, reaching
+ every node in ~log₃₂(N) hops; bodies are pulled only on admission
    │
    ▼
  Each peer scores the post against their own posts on-device
@@ -125,9 +143,10 @@ documentation of the design decisions behind it.
 |---|---|
 | `src/core/` | Pure-TypeScript domain. Use cases, matching math, the agent loop + governor, ports. Runs in plain Node too — that is how the calibration script in `scripts/calibration/` evaluates embedding quality without booting the app. |
 | `src/data/` | SQLite-backed projection repositories (posts, responses, reactions, peers, agent activity/log/pending). |
+| `src/platform/shared/` | Target-agnostic adapter layer: P2P worker lifecycle, framed RPC client, record wire codec — written once, used by both targets. |
 | `src/platform/mobile/` | Concrete adapters for Expo / React Native / Bare. |
-| `src/platform/desktop/` | Adapters for the Node/Electron desktop peer (Bare as a subprocess; `node:sqlite`). |
-| `src/app/` | The Expo Router screens: Feed, Compose, semantic Map, Thread, Agent, Activity, Approvals, Settings, Bootstrap. |
+| `src/platform/desktop/` | Adapters for the Node/Electron **test-harness peer** (Bare as a subprocess; `node:sqlite`). |
+| `src/app/` | The Expo Router screens — a tab shell (Home feed, topic Atlas, Agent hub, You) plus Compose, Thread, and Settings. |
 | `qvac/`, `bare/` | The Bare worklet that hosts the @qvac/sdk inference plugin and the Hyperswarm + Hypercore + Corestore stack. |
 | `docs/GUIDE.md` | The complete front-to-back walkthrough — start here. |
 | `docs/AGENTS_FLOW.md` | Full runtime spec of the on-device AI agent and reactions. |
@@ -206,6 +225,62 @@ Two-device test: run the app on a phone and the desktop peer (or a second
 phone) with related "About you" text. Compose a post on one, watch it appear
 in the other's inbox within a few seconds; reply or react; watch it come back.
 
+> The desktop peer exists to make multi-peer testing possible without a
+> drawer full of phones — it shares the entire core with the Android app,
+> but **the Android app is the product surface**.
+
+## Screenshots
+
+_Coming with the hackathon submission._
+
+<!-- screenshots: home feed · compose · thread · agent hub · topic atlas -->
+
+## Reproducibility
+
+Everything runs on consumer hardware with zero cloud dependencies:
+
+- **Phone**: any arm64 Android device with ~3 GB free RAM (developed and
+  tested on a OnePlus 8 Pro-class device and a current mid-range OnePlus).
+- **Desktop test peer**: any Windows/macOS/Linux machine with Node ≥ 22.5
+  (`node:sqlite`).
+- **Models** (downloaded on first launch, then fully offline):
+  EmbeddingGemma-300M Q8 (~320 MB) and Qwen3-1.7B Q4 (~1.1 GB), both served
+  on-device by [@qvac/sdk](https://qvac.tether.io/dev/sdk/).
+- **Network**: the public Holepunch DHT for peer discovery; the only other
+  remote calls are the one-time model downloads — see
+  [`disclosures/remote-apis.json`](disclosures/remote-apis.json).
+
+## Known limitations
+
+Honesty over polish — what is *not* solved yet:
+
+- **Similarity thresholds are not calibrated.** The admission threshold
+  (0.3) and the agent's engagement bands are hand-set; the Milestone-0
+  corpus calibration is the gate before any "stable" label.
+- **Key material at rest.** The Ed25519 identity seed and the Hyperswarm
+  noise keypair are stored unencrypted (app-sandboxed, `allowBackup=false`);
+  migrating them to hardware-backed storage (Android Keystore via
+  `expo-secure-store`) is tracked in [`SECURITY.md`](SECURITY.md).
+- **The room is public and not anonymous.** Joining exposes your IP to
+  connected peers; posts travel signed but in clear. See the threat model
+  in [`SECURITY.md`](SECURITY.md).
+- **The desktop peer is a test harness**, not a supported product target.
+- **One global room.** Invite-key private rooms (Keet-style capability
+  topics) are roadmap, not implemented.
+
+## Prior work & hackathon timeline
+
+Resonance predates the QVAC Hackathon: the routing experiments (LSH
+buckets → single room), the calibration harness, and the first
+identity/signing layer were built earlier — that history is preserved in
+this repository and in `docs/SEMANTIC_ROUTING.md`. Work completed **during
+the hackathon period (June 1–21, 2026)** includes: the announce-then-pull
+room protocol (v5) and its binary batched wire format (v6), the on-device
+AI agent layer (triage → decide → governor, autonomy dial, approval queue),
+signed reactions, the X-style tab-shell UI, the desktop test peer, the
+stress-test campaign (400-post floods) and the resulting ingestion fixes,
+and this documentation set.
+
 ## License
 
-Apache-2.0
+[Apache-2.0](LICENSE) — see also [`NOTICE`](NOTICE).

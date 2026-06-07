@@ -9,7 +9,7 @@ The product posture (see `AGENTS.md`) is **privacy-as-constraint, no central
 server, no telemetry**. The security posture below follows from that.
 
 > **Topology note (important).** Resonance is a **single shared room with
-> announce-then-pull** (`RoomConfig.topicPrefix = resonance/v5/room/`). The
+> announce-then-pull** (`RoomConfig.topicPrefix = resonance/v6/room/`). The
 > earlier LSH/bucket routing (v1–v2) and the replicate-every-core single room
 > (v3–v4) are **gone**. Lightweight signed announcements (author + embedding +
 > digest) gossip to every peer; full record bodies are sparse-pulled **only for
@@ -18,6 +18,36 @@ server, no telemetry**. The security posture below follows from that.
 > flood from "download + verify + store everything" to "score a stream of
 > summaries" — but announcements themselves are still uncapped per author
 > (see S3), and the 32-connection cap still does not bound who can reach you.
+
+---
+
+## Room & topic model — what is public, what is secret
+
+The threat model assumes **this source code is public**. Consequences:
+
+- **The room topic is a rendezvous, not a secret.** It is derived as
+  `sha256(topicPrefix + networkSalt || roomId)` from values in
+  `src/core/config/RoomConfig.ts`. With the default empty salt the seed is
+  committed in this repository, so *anyone* can compute the topic and join
+  the public room — by design, exactly like a public testnet. Nothing in the
+  protocol relies on topic secrecy: integrity comes from Ed25519 signatures
+  on every record, and flood resistance from the bounded announce-then-pull
+  ingestion (see S2/S3), not from hiding the rendezvous.
+- **Private networks are capability-based, not obscurity-based.** Setting a
+  high-entropy `EXPO_PUBLIC_NETWORK_SALT` (see `.env.example`) yields a
+  topic that cannot be derived from public source; only devices sharing the
+  salt out-of-band meet in that swarm. This is the same model as libp2p
+  private networks (pre-shared key) and Keet invites (the invite *is* the
+  key). It is how the development/test network stays isolated from the
+  public one. A *committed* prefix change (v5 → v6 …) partitions networks
+  for protocol compatibility but never protects them — any prefix in git
+  history is derivable forever.
+- **Per-room invites are roadmap.** User-facing private rooms (topic derived
+  from a random 32-byte invite key shared via link/QR, Keet-style) are a
+  planned extension of the same mechanism; they do not exist yet.
+- **Joining is not anonymous.** Hyperswarm exposes your IP to the peers you
+  connect with (transport is Noise-encrypted; the metadata is not hidden).
+  Announcements and pulled bodies are readable by every peer in the room.
 
 ---
 

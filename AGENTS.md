@@ -91,8 +91,10 @@ agent on its behalf (commits, PRs, READMEs, issues, social posts).
   without leaking stale vectors into matching.
 - **Routing is a single shared room, announce-then-pull (v6)**. There is
   **no LSH, no buckets, no DHT routing table, no sticky peers**. Every node
-  joins one Hyperswarm topic (`sha256(RoomConfig.topicPrefix ||
-  RoomConfig.roomId)`); signed **announcements** (author + outbox key + full
+  joins one Hyperswarm topic (`sha256(RoomConfig.topicPrefix +
+  RoomConfig.networkSalt || RoomConfig.roomId)` — the salt is empty on the
+  public network; a shared secret salt yields a private test network, see
+  `SECURITY.md`); signed **announcements** (author + outbox key + full
   float32 embedding + digest) gossip transitively over the
   `resonance-announce/v2` protocol (`bare/announce-directory.mjs`) as
   compact-encoding binary (`bare/announce-codec.mjs`), batched at
@@ -129,7 +131,10 @@ agent on its behalf (commits, PRs, READMEs, issues, social posts).
   vocabulary the map's radial reference rings use.
 - The network is versioned via `RoomConfig.topicPrefix` (currently
   `resonance/v6/room/`). Bumping it isolates peers using incompatible embedding
-  spaces, topologies or wire protocols.
+  spaces, topologies or wire protocols. Versioning partitions, it does not
+  protect: any committed prefix is derivable from public source. Privacy of a
+  network comes only from a non-empty `RoomConfig.networkSalt`
+  (env `EXPO_PUBLIC_NETWORK_SALT`, gitignored `.env`).
 
 ## P2P conventions
 

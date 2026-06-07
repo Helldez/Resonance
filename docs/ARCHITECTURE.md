@@ -19,13 +19,25 @@ embeddings, then answered by on-device LLMs.
 ├──────────────────────────────────────────────────────────────┤
 │  src/data/     SQLite-backed projection repositories         │
 ├──────────────────────────────────────────────────────────────┤
-│  src/platform/mobile/   Concrete adapters (Expo, RN, Bare)   │
+│  src/platform/shared/   Target-agnostic adapter layer:       │
+│                         P2pWorker + P2pMailbox + P2pNetwork, │
+│                         FramedRpcClient, WireCodec           │
+├──────────────────────────────────────────────────────────────┤
+│  src/platform/mobile/   Expo/RN adapters + WorkletTransport  │
+│  src/platform/desktop/  Node/Electron adapters +             │
+│                         SubprocessTransport                  │
 ├──────────────────────────────────────────────────────────────┤
 │  qvac/worker.entry.mjs  Bare worklet:                        │
 │                         QVAC embedding/LLM + Hyperswarm      │
 │                         + Hypercore + bare-crypto            │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+`src/platform/shared/` is the seam that makes the desktop peer cheap: the
+whole P2P adapter stack (worker lifecycle, RPC framing, record wire codec)
+is written once against an injected `RpcTransport`; mobile supplies a Bare
+worklet channel, desktop a loopback-TCP channel to a Bare subprocess. See
+`docs/DESKTOP.md` for the per-port adapter matrix.
 
 Arrows point downward only. `src/core/**` must never import anything from
 `src/platform/`, RN, Expo, Bare, or Node. It only imports from

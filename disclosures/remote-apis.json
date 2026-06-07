@@ -1,0 +1,32 @@
+{
+  "$comment": "QVAC Hackathon I transparency disclosure: every remote endpoint this project contacts. All AI inference (embeddings, LLM completions) runs 100% on-device via @qvac/sdk — no cloud AI API is used anywhere.",
+  "project": "Resonance",
+  "repository": "https://github.com/Helldez/Resonance",
+  "remoteCalls": [
+    {
+      "purpose": "One-time download of the embedding model at first launch (then fully offline)",
+      "endpoint": "https://huggingface.co/ggml-org/embeddinggemma-300M-GGUF/resolve/main/embeddinggemma-300M-Q8_0.gguf",
+      "protocol": "HTTPS GET",
+      "dataSent": "none (anonymous public download)",
+      "definedIn": "src/core/config/HttpModelSources.ts",
+      "aiInference": false
+    },
+    {
+      "purpose": "One-time download of the LLM at first launch (then fully offline)",
+      "endpoint": "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/d7f544eead698dbd1f15126ef60b45a1e1933222/Qwen3-1.7B-Q4_0.gguf",
+      "protocol": "HTTPS GET",
+      "dataSent": "none (anonymous public download)",
+      "definedIn": "src/core/config/HttpModelSources.ts",
+      "aiInference": false
+    },
+    {
+      "purpose": "Peer discovery on the public Holepunch DHT (Hyperswarm default bootstrap nodes); peer-to-peer connections are then end-to-end encrypted via Noise",
+      "endpoint": "Holepunch public DHT bootstrap (Hyperswarm defaults; no custom bootstrap configured)",
+      "protocol": "UDP (HyperDHT)",
+      "dataSent": "DHT routing records for the room topic; your IP is visible to peers you connect with (see SECURITY.md)",
+      "definedIn": "src/core/config/NetworkConfig.ts (hyperswarmBootstrap: [] = defaults)",
+      "aiInference": false
+    }
+  ],
+  "cloudAiApis": []
+}

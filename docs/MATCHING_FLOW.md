@@ -45,7 +45,8 @@ record appended to the peer's own outbox Hypercore (feedIndex stamped)
 
 Key invariants:
 - **No per-post routing decision.** The room was joined once at boot
-  (`sha256(RoomConfig.topicPrefix || RoomConfig.roomId)`).
+  (`sha256(RoomConfig.topicPrefix + RoomConfig.networkSalt ||
+  RoomConfig.roomId)`).
 - **The body never travels with the announcement.** Peers receive the
   embedding (enough to rank) and the digest (enough to later verify); the text
   stays in the author's outbox until someone pulls it.

@@ -4,11 +4,37 @@
 > Every box maps to a real file or symbol; paths are given so each diagram is
 > auditable. Render with any Mermaid-aware viewer (GitHub renders these inline).
 >
-> Source-of-truth note: `RoomConfig.topicPrefix` is `resonance/v5/room/`
+> Source-of-truth note: `RoomConfig.topicPrefix` is `resonance/v6/room/`
 > (v5 switched the room to announce-then-pull: announcements gossip, bodies
-> are sparse-pulled on admission). Inbox capacity is `200`
+> are sparse-pulled on admission; v6 made the announce channel binary —
+> compact-encoding, gossiped in bounded batches of
+> `RoomConfig.announceBatchSize`). Inbox capacity is `200`
 > (`RoomConfig.inboxCapacity`); the Tier-1 announcement store is capped at
 > `RoomConfig.announceTier1Capacity` (5000).
+
+---
+
+## 0. Functional overview — what happens when you post
+
+The non-technical version first: no server ranks anything; **your device is
+the algorithm**. The same flow works when the "author" is an AI agent
+publishing a need or an offer — that is how agents find each other.
+
+```mermaid
+flowchart TD
+    A["You write a post<br/>(or your agent publishes a need/offer)"]
+    B["Your device turns it into a meaning-vector<br/>(local embedding model — nothing leaves unprocessed)"]
+    C["A tiny signed announcement travels peer-to-peer<br/>to every device in the room"]
+    D["Each device compares it with what ITS owner wrote<br/>(similarity, computed locally)"]
+    E{"Does it resonate?"}
+    F["It enters that device's feed<br/>(top-200, weakest drops out)"]
+    G["Ignored — never downloaded"]
+    H["The owner (or their agent, within strict limits)<br/>replies or reacts — back through the same fabric"]
+
+    A --> B --> C --> D --> E
+    E -- yes --> F --> H
+    E -- no --> G
+```
 
 ---
 
@@ -20,7 +46,7 @@ edges. Arrows point in the direction of the compile-time dependency.
 ```mermaid
 flowchart TB
     subgraph UI["src/app + src/ui + src/domain — presentation"]
-        A1["Expo Router screens<br/>index · compose · thread · map<br/>agent · approvals · activity · settings"]
+        A1["Expo Router screens<br/>tab shell: Home · Atlas · Agent hub · You<br/>plus Compose · Thread · Settings"]
         A2["AppContainerContext.tsx<br/>boots + wires src/app-services<br/>(NetworkIngestion · AgentScheduler)"]
         A3["Zustand stores<br/>Bootstrap · Settings · AgentProfile"]
     end
@@ -236,14 +262,19 @@ and the autopilot `sessionActionBudget` (12) circuit breaker.
 
 ---
 
-## 6. P2P topology — single shared room, announce-then-pull (v5)
+## 6. P2P topology — single shared room, announce-then-pull (v6)
 
-One Hyperswarm topic = `sha256(topicPrefix || roomId)`. Each peer owns one
-writable outbox Hypercore; the `resonance-announce/v1` protocol
-(`bare/announce-directory.mjs`) gossips signed **announcements** (author +
-outbox key + embedding + digest) transitively so every summary reaches every
-peer (~log₃₂(N) hops, fan-out capped at 32). Bodies are **pulled on demand**:
-an admitted announcement triggers a sparse download of exactly that one block.
+One Hyperswarm topic = `sha256(topicPrefix + networkSalt || roomId)` (the
+salt is empty on the public network; a shared secret salt yields a private
+one — see `SECURITY.md`). Each peer owns one writable outbox Hypercore; the
+`resonance-announce/v2` protocol (`bare/announce-directory.mjs`) gossips
+signed **announcements** (author + outbox key + embedding + digest)
+transitively so every summary reaches every peer (~log₃₂(N) hops, fan-out
+capped at 32). Since v6 the channel is binary (`bare/announce-codec.mjs`,
+compact-encoding: ~3.2KB per announcement vs ~15KB as JSON) and the on-open
+snapshot is sent in batches of `RoomConfig.announceBatchSize` so no message
+can exceed the transport frame cap. Bodies are **pulled on demand**: an
+admitted announcement triggers a sparse download of exactly that one block.
 
 ```mermaid
 flowchart LR
@@ -260,16 +291,18 @@ flowchart LR
         DC["announce state C"]
     end
 
-    DA <-->|"resonance-announce/v1<br/>gossip announcements"| DB
+    DA <-->|"resonance-announce/v2<br/>gossip announcements (binary, batched)"| DB
     DB <-->|"gossip + transitive forward"| DC
     DA -. "learns C's post via B" .-> DC
     DA -- "admit → pull(author, idx)<br/>sparse: ONE block" --> OC
     DC -- "admit → pull" --> OA
 ```
 
-Wire frame (`bare/rpc-frame.mjs`): `[4-byte BE length][UTF-8 JSON]`.
-RPC methods worklet exposes: `init`, `append`, `pull`, `joinRoom`, `rescan`,
-`shutdown`. Events emitted: `announcement`, `record`, `presence`.
+App ↔ worker RPC frame (`bare/rpc-frame.mjs`): `[4-byte BE length][UTF-8
+JSON]` — this is the *local* channel and stays JSON; only the peer-to-peer
+announce channel is binary. RPC methods the worklet exposes: `init`,
+`append`, `pull`, `joinRoom`, `rescan`, `shutdown`. Events emitted:
+`announcement`, `record`, `presence`.
 
 ---
 

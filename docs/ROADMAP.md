@@ -46,8 +46,9 @@ falsification of the product thesis.
 - **Single-room model** (conf 9): replaced the LSH/bucket routing with
   one shared room + directory gossip; reverted embeddings to EmbeddingGemma-300M
   768-dim. History preserved in [`SEMANTIC_ROUTING.md`](SEMANTIC_ROUTING.md).
-- **Announce-then-pull (topic v5)**: replaced replicate-every-core with
-  lightweight announcement gossip (`resonance-announce/v1`) + on-demand sparse
+- **Announce-then-pull (topic v5, wire v6)**: replaced replicate-every-core
+  with lightweight announcement gossip (`resonance-announce/v2`, binary
+  compact-encoding with batched snapshots) + on-demand sparse
   single-block pulls; two-tier inbox (Tier-1 announcement summaries, cap 5000;
   Tier-2 bounded posts, cap 200); pulled bodies are verified and re-scored on
   the verified embedding. Validated bidirectionally desktop↔mobile. Flow in
