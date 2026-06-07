@@ -32,11 +32,26 @@ export type ProjectionMethod = 'pca-2' | 'radial-sim';
  * would under a manifold method. Upgrade path: swap the body of this
  * function with a UMAP call once available in the worklet.
  */
+/**
+ * Map a raw cosine similarity to a radial distance in [0, 1] for the
+ * radial-sim view, correcting for embedding anisotropy. Without the floor,
+ * gemma-768's high baseline cosine (~0.3-0.5 even for unrelated text) collapses
+ * every point toward the centre. We rescale `[floor, 1] → [0, 1]` so sim=1 is
+ * the centre (r=0) and sim≤floor is the rim (r=1). Shared by the projector and
+ * the map's reference rings so dots and ring labels line up.
+ */
+export function radiusForSimilarity(sim: number, floor: number): number {
+  const denom = 1 - floor;
+  const norm = denom > 0 ? (sim - floor) / denom : sim;
+  return clamp01(1 - clamp01(norm));
+}
+
 export function projectToPlane(
   anchor: ProjectionInput,
   peers: ReadonlyArray<ProjectionInput>,
   method: ProjectionMethod,
   powerIterations: number,
+  anisotropyFloor = 0,
 ): ProjectionResult {
   if (method !== 'pca-2' && method !== 'radial-sim') {
     throw new Error(`projectToPlane: unsupported method "${method}"`);
@@ -53,33 +68,10 @@ export function projectToPlane(
   const all: ReadonlyArray<ProjectionInput> = [anchor, ...peers];
   const n = all.length;
 
-  const mean = new Float32Array(dim);
-  for (const item of all) {
-    for (let i = 0; i < dim; i++) {
-      mean[i] += item.embedding[i];
-    }
-  }
-  for (let i = 0; i < dim; i++) {
-    mean[i] /= n;
-  }
-
-  const centered: Float32Array[] = all.map((item) => {
-    const c = new Float32Array(dim);
-    for (let i = 0; i < dim; i++) {
-      c[i] = item.embedding[i] - mean[i];
-    }
-    return c;
-  });
-
-  const axis1 = powerIteration(centered, dim, powerIterations, null);
-  const axis2 = powerIteration(centered, dim, powerIterations, axis1);
-
-  const xRaw = new Float32Array(n);
-  const yRaw = new Float32Array(n);
-  for (let k = 0; k < n; k++) {
-    xRaw[k] = dot(centered[k], axis1);
-    yRaw[k] = dot(centered[k], axis2);
-  }
+  const { xs: xRaw, ys: yRaw } = projectPca2(
+    all.map((item) => item.embedding),
+    powerIterations,
+  );
 
   if (method === 'pca-2') {
     const maxAbs = maxAbsBoth(xRaw, yRaw);
@@ -115,7 +107,9 @@ export function projectToPlane(
   for (let k = 1; k < n; k++) {
     const item = all[k];
     const sim = cosineOnUnit(anchor.embedding, item.embedding);
-    const r = clamp01((1 - sim) / 2);
+    // Anisotropy-corrected radius (see radiusForSimilarity). When floor=0 this
+    // reduces to the legacy `1 - sim` mapping.
+    const r = radiusForSimilarity(sim, anisotropyFloor);
     const dx = xRaw[k] - anchorX;
     const dy = yRaw[k] - anchorY;
     const norm = Math.sqrt(dx * dx + dy * dy);
@@ -128,6 +122,54 @@ export function projectToPlane(
     });
   }
   return { anchor: out[0], peers: out.slice(1) };
+}
+
+/**
+ * Raw 2-D PCA projection of a set of equally-dimensioned vectors onto their
+ * two leading principal directions (deflated power iteration). Centering
+ * makes it translation-invariant; deterministic for a fixed input. Returns
+ * the unscaled projected coordinates — callers rescale as they see fit
+ * (e.g. the topic atlas uses this for both its small-N fallback and to
+ * anchor the picture). `projectToPlane` builds on it.
+ */
+export function projectPca2(
+  vectors: ReadonlyArray<Float32Array>,
+  powerIterations: number,
+): { readonly xs: Float32Array; readonly ys: Float32Array } {
+  const n = vectors.length;
+  if (n === 0) {
+    return { xs: new Float32Array(0), ys: new Float32Array(0) };
+  }
+  const dim = vectors[0].length;
+
+  const mean = new Float32Array(dim);
+  for (const v of vectors) {
+    for (let i = 0; i < dim; i++) {
+      mean[i] += v[i];
+    }
+  }
+  for (let i = 0; i < dim; i++) {
+    mean[i] /= n;
+  }
+
+  const centered: Float32Array[] = vectors.map((v) => {
+    const c = new Float32Array(dim);
+    for (let i = 0; i < dim; i++) {
+      c[i] = v[i] - mean[i];
+    }
+    return c;
+  });
+
+  const axis1 = powerIteration(centered, dim, powerIterations, null);
+  const axis2 = powerIteration(centered, dim, powerIterations, axis1);
+
+  const xs = new Float32Array(n);
+  const ys = new Float32Array(n);
+  for (let k = 0; k < n; k++) {
+    xs[k] = dot(centered[k], axis1);
+    ys[k] = dot(centered[k], axis2);
+  }
+  return { xs, ys };
 }
 
 function clamp01(v: number): number {

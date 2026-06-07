@@ -10,7 +10,19 @@ function hfResolve(repo: string, commit: string, path: string): string {
   return `${HF_BASE}/${repo}/resolve/${commit}/${path}`;
 }
 
-// ─── EmbeddingGemma 300M (ggml-org/embeddinggemma-300M-GGUF) ────────────────
+// ─── EmbeddingGemma 300M Q8_0 (ggml-org/embeddinggemma-300M-GGUF) ────────────
+// 768-dim dense embedding model. The single-room model (conf 9) feeds it the
+// "clustering" prompt template (see ModelProfiles.embedding.promptTemplate)
+// and keeps the full 768-dim — see MatchingConfig.embeddingDim.
+//
+// NOTE: Qwen3-Embedding-0.6B (1024-dim, decoder-only) was evaluated as a
+// replacement. It needs `modelConfig: { pooling: 'last', attention: 'causal' }`
+// and works on the desktop QVAC build, but on Android the Adreno GPU path of
+// `embed-llamacpp` 0.16.0 segfaults loading the qwen3 arch. Forcing
+// `device: 'cpu'` loads it on Android too, but at ~7.6 s/embed (vs ~78 ms for
+// gemma on the GPU) with heavy memory pressure — too slow for the inbox.
+// See memory `reference-qwen3-embedding-android-gpu`. Revisit if QVAC fixes
+// the Adreno decoder-embedding path.
 const EMBEDDING_GEMMA_REPO = 'ggml-org/embeddinggemma-300M-GGUF';
 const EMBEDDING_GEMMA_COMMIT = 'main';
 

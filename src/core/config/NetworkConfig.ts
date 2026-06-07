@@ -2,18 +2,11 @@
  * Networking parameters. Default Hyperswarm bootstrap = empty array, which
  * means "use the Holepunch public DHT bootstrap nodes baked into the
  * library". An app can override this in dev to point to a local DHT.
+ *
+ * Room topology (single shared room, connection cap, topic prefix) lives in
+ * `RoomConfig`.
  */
 export const NetworkConfig = {
   /** Override Hyperswarm bootstrap nodes. Empty = use defaults. */
   bootstrap: [] as ReadonlyArray<{ host: string; port: number }>,
-
-  /**
-   * Topic namespace prefix. Hyperswarm topics are 32-byte values; we
-   * derive ours as `sha256(topicPrefix || bucketId)` so we never collide
-   * with another app sharing the public DHT.
-   */
-  topicPrefix: 'resonance/v1/bucket/',
-
-  /** Max concurrent peer connections per joined bucket. */
-  maxConnectionsPerBucket: 32,
 } as const;

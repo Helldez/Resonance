@@ -5,6 +5,7 @@ import { MatchingConfig } from '@core/config/MatchingConfig';
 import { ModelProfiles } from '@core/config/ModelProfiles';
 import { l2NormalizeInPlace } from '@core/matching/L2Normalize';
 import { loadWithFallback } from '@core/utils/LoadWithFallback';
+import { auditInference } from '../shared/InferenceAudit';
 
 export type EmbeddingProgressCallback = (p: ModelProgressUpdate) => void;
 
@@ -22,6 +23,17 @@ export class QvacEmbeddingService implements IEmbeddingService {
 
   private modelId: string | null = null;
   private loadingPromise: Promise<void> | null = null;
+  /**
+   * Serialises every `embed()`. The `embed-llamacpp` plugin allows one job per
+   * model and throws "Cannot set new job: a job is already set or being
+   * processed" if a second `embed()` is issued before the previous settles (its
+   * README is explicit that callers must await the prior call). Several callers
+   * share this one model — the agent's echo gate embeds a batch per reply, plus
+   * publish and the "About you" re-embed — so we chain them through this tail
+   * instead of letting them collide. Failures are swallowed from the chain so
+   * one rejected call does not poison the queue for the next.
+   */
+  private queueTail: Promise<unknown> = Promise.resolve();
 
   get isLoaded(): boolean {
     return this.modelId !== null;
@@ -60,10 +72,37 @@ export class QvacEmbeddingService implements IEmbeddingService {
     if (trimmed.length === 0) {
       throw new Error('QvacEmbeddingService.embed: empty text');
     }
-    const result = (await embed({ modelId, text: trimmed } as never)) as {
-      embedding: number[];
-    };
-    return postProcess(result.embedding, this.outputDim);
+    const prompt = applyPromptTemplate(
+      ModelProfiles.embedding.promptTemplate,
+      trimmed,
+    );
+    // Serialise the actual SDK call: the model rejects a second in-flight job.
+    return this.enqueue(async () => {
+      const startedAt = Date.now();
+      const result = (await embed({ modelId, text: prompt } as never)) as {
+        embedding: number[];
+      };
+      auditInference('embedding.embed', {
+        textChars: trimmed.length,
+        dim: this.outputDim,
+        ms: Date.now() - startedAt,
+      });
+      return postProcess(result.embedding, this.outputDim);
+    });
+  }
+
+  /**
+   * Append `task` to the serial embed queue and return its result. The tail is
+   * advanced to a settled (never-rejecting) promise so a failing task does not
+   * break the chain for subsequent callers.
+   */
+  private enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.queueTail.then(task, task);
+    this.queueTail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   private async ensureLoaded(): Promise<string> {
@@ -77,6 +116,12 @@ export class QvacEmbeddingService implements IEmbeddingService {
   }
 
   private async doLoad(onProgress?: EmbeddingProgressCallback): Promise<void> {
+    // NOTE: decoder-only embedding models (e.g. Qwen3-Embedding) need
+    // `modelConfig: ModelProfiles.embedding.loadConfig` ({ pooling: 'last',
+    // attention: 'causal', device: 'cpu' on Android — the Adreno GPU path
+    // segfaults). EmbeddingGemma is an encoder and loads on the GPU defaults,
+    // so nothing extra is passed.
+    const startedAt = Date.now();
     this.modelId = await loadWithFallback({
       primary: {
         modelSrc: ModelProfiles.embedding.url,
@@ -84,7 +129,26 @@ export class QvacEmbeddingService implements IEmbeddingService {
       },
       onProgress,
     });
+    auditInference('embedding.load', {
+      model: ModelProfiles.embedding.url,
+      loadMs: Date.now() - startedAt,
+    });
   }
+}
+
+/**
+ * Apply the model's instruction template (if any), substituting `{text}`
+ * with the input. EmbeddingGemma expects a task prompt; with no template
+ * configured the raw text is embedded unchanged.
+ */
+function applyPromptTemplate(
+  template: string | undefined,
+  text: string,
+): string {
+  if (template === undefined || template.length === 0) {
+    return text;
+  }
+  return template.replace('{text}', text);
 }
 
 function postProcess(raw: readonly number[], outputDim: number): Float32Array {

@@ -1,89 +1,93 @@
 # Resonance — Roadmap
 
-## Gate: Milestone 0 — Calibration (week 1)
+Milestones M1–M5 (the original 6-week MVP plan) are **substantially
+complete**: real on-device inference, Ed25519 identity, the P2P response
+loop, and polish are all wired and verified on two physical devices. Since
+then the project added an on-device **AI-agent layer**, **signed reactions**,
+and a **topic-atlas** map. The remaining gate is **M0 (calibration)**.
+
+For the live snapshot of what is wired vs. stubbed, see [`STATUS.md`](STATUS.md).
+
+## Gate: Milestone 0 — Calibration (open)
 
 **No app code.** Standalone Node.js script under `scripts/calibration/`.
 
-Pull ~200 real questions/needs from public sources (Reddit JSON exports
-on AskParents, AskScience, RelationshipAdvice, AskTech, etc.). For each
-post, run EmbeddingGemma (or a stand-in if not yet wired) and compute
-top-10 cosine neighbours. Human-rate whether the neighbours look like
-"people who would have something useful to add".
+Pull ~200 real questions/needs from public sources. For each, run
+EmbeddingGemma (768-dim, the same model the app uses) and compute the top-10
+cosine neighbours. Human-rate whether the neighbours look like "people who
+would have something useful to add".
 
-Outputs that update the codebase:
-- `MatchingConfig.inboxSimilarityThreshold` — set to whatever value
-  separates "useful" from "noise" at the 80th-percentile precision.
-- `MatchingConfig.lshBits` — set so the expected bucket population is
-  small enough to load but large enough to find matches.
+Output that updates the codebase: the similarity threshold above which the
+GOOD-rate is ≥ 80% calibrates `RoomConfig.inboxMinSimilarity` and the
+`MatchingConfig.thresholdPresets`. If signal-to-noise is bad, redesign the
+matching signal before going further. This gate is the cheapest possible
+falsification of the product thesis.
 
-If signal-to-noise is bad, redesign before going further. This gate is
-the cheapest possible falsification of the product thesis.
+> Routing is now a single shared room, so there are no LSH buckets to size —
+> the old `lshBits` tuning step is obsolete (see [`SEMANTIC_ROUTING.md`](SEMANTIC_ROUTING.md)).
 
-## Milestone 1 — Foundations (week 2)
+## Done — M1–M5 (MVP)
 
-- Bare worklet boots and answers `ping`.
-- `Ed25519Identity` round-trips through the worklet (`bare-crypto`).
-- `canonicalDigest` is wired (SHA-256 via worklet).
-- `ExpoModelRegistry` downloads a small test file with checksum verify.
-- Bootstrap screen drives the model download flow end-to-end with the
-  embedding model.
+- **M1 — Foundations**: Bare worklet boots; `Ed25519Identity` round-trips;
+  canonical SHA-256 digest wired; bootstrap drives model download to "Ready".
+- **M2 — Local primitives**: real 768-dim L2-normalised embeddings; real Qwen
+  output; personal Hypercore append/iterate; Compose runs `createPost`
+  end-to-end on a single device.
+- **M3 — P2P**: Hyperswarm + Corestore + directory gossip in the worker; the
+  single record handler scores and persists peer records; two physical Android
+  devices see each other's posts with similarity filtering.
+- **M4 — Response loop**: Thread screen + LLM-drafted, user-confirmed replies;
+  `PublishResponse` propagates back to the requester via the swarm.
+- **M5 — Polish**: threshold presets, dark theme, error handling on
+  download/peer failures, real-device testing.
 
-Exit criterion: bootstrap screen reaches "Ready" on a clean install.
+## Done — beyond the original MVP plan
 
-## Milestone 2 — Local primitives (week 3)
+- **Single-room model** (conf 9): replaced the LSH/bucket routing with
+  one shared room + directory gossip; reverted embeddings to EmbeddingGemma-300M
+  768-dim. History preserved in [`SEMANTIC_ROUTING.md`](SEMANTIC_ROUTING.md).
+- **Announce-then-pull (topic v5, wire v6)**: replaced replicate-every-core
+  with lightweight announcement gossip (`resonance-announce/v2`, binary
+  compact-encoding with batched snapshots) + on-demand sparse
+  single-block pulls; two-tier inbox (Tier-1 announcement summaries, cap 5000;
+  Tier-2 bounded posts, cap 200); pulled bodies are verified and re-scored on
+  the verified embedding. Validated bidirectionally desktop↔mobile. Flow in
+  [`MATCHING_FLOW.md`](MATCHING_FLOW.md).
+- **Android foreground service**: always-on replication while backgrounded
+  (was originally out of MVP scope).
+- **On-device AI agent**: triage → decide → governor → act, with
+  off/suggest/autopilot autonomy, activity log, and approval queue. Spec in
+  [`AGENTS_FLOW.md`](AGENTS_FLOW.md).
+- **Signed reactions**: a `ReactionBody` record kind (currently a single
+  `like`), one reaction per (author, target).
+- **Topic atlas**: UMAP/PCA 2-D map with spherical-k-means topic grouping and
+  optional LLM topic naming.
+- **Input-length DoS bounds**: `maxPostChars` / `maxResponseChars` enforced on
+  both authoring and ingestion.
+- **Experimental desktop peer**: Node/Electron node sharing the same core, for
+  two-device testing without a second phone (see [`DESKTOP.md`](DESKTOP.md)).
 
-- `QvacEmbeddingService.embed` returns a real 256-dim L2-normalised
-  vector.
-- `QvacLlmService.complete` returns real Qwen 3 output.
-- `BareWorkletMailbox` wraps a personal Hypercore feed; append + iterate
-  work locally.
-- Compose screen runs `createPost` end-to-end — but `network.publish`
-  remains a stub and `joinBucket` is local-only.
+## Next
 
-Exit criterion: a post round-trips text → embedding → bucket → own feed
-on a single device.
+- **Close M0**: run the calibration corpus and lock the similarity threshold.
+- **Model checksum verification**: fill `HttpModelSources.sha256` and verify
+  downloads.
+- **Multi-perspective synthesis**: aggregate N replies into a summary instead
+  of rendering them individually.
+- **At-rest key encryption**: migrate the identity seed to `expo-secure-store`
+  (Android Keystore). See [`../SECURITY.md`](../SECURITY.md).
 
-## Milestone 3 — P2P (week 4)
+## Later / research
 
-- Hyperswarm wired in the worklet.
-- `BareWorkletNetwork` actually joins/leaves buckets and emits
-  `onRecord` events from peer replication.
-- `SyncEngine` is mounted at app startup and feeds the inbox.
+- **Scaling**: HNSW local index for inbox scoring, time-decayed relevance,
+  affinity-based connection slots, and possible multi-room semantic
+  partitioning if a single room gets too dense.
+- **iOS** support.
+- **Reputation / web-of-trust**, authenticated handshakes, and private-set /
+  homomorphic similarity (embeddings currently travel in clear).
 
-Exit criterion: two physical Android devices in the same Wi-Fi see each
-other's posts in the same bucket, with similarity filtering applied.
+## Explicitly out of scope
 
-## Milestone 4 — Response loop (week 5)
-
-- Thread screen shows the post + draft response area.
-- `DraftResponse` produces a real Qwen draft using
-  `SettingsStore.receiverContext`.
-- `PublishResponse` writes the (user-edited) response to own feed and
-  propagates to the requester via the bucket swarm.
-- Requester sees responses appear under the original post (via
-  `IDatabase` projection + a thread query).
-
-Exit criterion: full request-reply between two devices, user-confirmed
-draft.
-
-## Milestone 5 — Polish (week 6)
-
-- Settings: real similarity threshold slider, calibrated default.
-- Error handling on download failures, checksum mismatches, lost peers.
-- Real-device testing on 2-3 mid-range Android phones.
-- README updated with a 60-second demo gif.
-
-## Explicitly out of scope for the MVP
-
-- iOS.
-- Mode A (auto-publish) actually firing — the toggle exists in settings
-  but the publishing path is gated off.
-- Foreground service for always-on P2P. App-open only.
-- Push notification relay (centralised wake-up).
-- Fuzzy PSI / homomorphic similarity. Embeddings are sent in clear.
-- Multi-perspective synthesis (the "summary of 5 replies" feature). MVP
-  shows responses individually.
-- Reputation, web-of-trust, helpful/unhelpful voting (the DB column
-  exists for forward-compat; no UI).
-- More than one swarm bucket joined simultaneously.
-- More than one embedding profile per user.
+- A server, accounts, analytics, or any cloud round-trip — ever.
+- Push-notification relay (centralised wake-up).
+- A "share to social" surface.

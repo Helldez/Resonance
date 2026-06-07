@@ -3,13 +3,13 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 import { StorageConfig } from '@core/config/StorageConfig';
-import type { SettingsState, ResponseMode } from './types';
+import type { SettingsState } from './types';
 
 interface SettingsStore extends SettingsState {
-  setResponseMode: (mode: ResponseMode) => void;
   setReceiverContext: (text: string) => void;
   setSimilarityThreshold: (value: number) => void;
   setDisplayName: (value: string) => void;
+  setOnboardingDone: (value: boolean) => void;
 }
 
 /**
@@ -21,23 +21,23 @@ interface SettingsStore extends SettingsState {
 export const useSettingsStore = create<SettingsStore>()(
   persist(
     (set) => ({
-      responseMode: 'draft-confirm',
       receiverContext: '',
       similarityThreshold: MatchingConfig.defaultInboxSimilarityThreshold,
       displayName: '',
-      setResponseMode: (responseMode) => set({ responseMode }),
+      onboardingDone: false,
       setReceiverContext: (receiverContext) => set({ receiverContext }),
       setSimilarityThreshold: (similarityThreshold) => set({ similarityThreshold }),
       setDisplayName: (displayName) => set({ displayName }),
+      setOnboardingDone: (onboardingDone) => set({ onboardingDone }),
     }),
     {
       name: StorageConfig.settingsKvKey,
       storage: createJSONStorage(() => AsyncStorage),
       partialize: (state) => ({
-        responseMode: state.responseMode,
         receiverContext: state.receiverContext,
         similarityThreshold: state.similarityThreshold,
         displayName: state.displayName,
+        onboardingDone: state.onboardingDone,
       }),
     },
   ),

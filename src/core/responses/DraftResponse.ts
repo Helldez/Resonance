@@ -1,31 +1,7 @@
 import type { ScoredPost } from '@core/domain/types';
 import type { ILlmService } from '@core/ports/ILlmService';
 import { MatchingConfig } from '@core/config/MatchingConfig';
-
-// Qwen3 in "thinking" mode emits <think>...</think> blocks before the
-// real answer. We strip them so the draft shown to the user contains only
-// the reply text. char-walk per AGENTS.md (no regex).
-const THINK_OPEN = '<think>';
-const THINK_CLOSE = '</think>';
-
-function stripThinkTags(s: string): string {
-  let out = '';
-  let i = 0;
-  while (i < s.length) {
-    if (s.startsWith(THINK_OPEN, i)) {
-      const close = s.indexOf(THINK_CLOSE, i + THINK_OPEN.length);
-      if (close === -1) {
-        // Unclosed think block — drop everything from here to end.
-        break;
-      }
-      i = close + THINK_CLOSE.length;
-      continue;
-    }
-    out += s[i];
-    i++;
-  }
-  return out.trim();
-}
+import { stripThinkTags } from '@core/llm/StripThink';
 
 export interface DraftResponseDeps {
   readonly llm: ILlmService;
@@ -53,6 +29,11 @@ export async function draftResponse(
   deps: DraftResponseDeps,
   input: DraftResponseInput,
 ): Promise<DraftResponseResult> {
+  // `/no_think` switches Qwen3 (and other thinking models) out of reasoning
+  // mode for this turn, so the small token budget goes into the reply itself
+  // rather than a <think> block — which could swallow the whole budget (or
+  // trip a stop sequence mid-think) and leave the user an empty draft.
+  // Harmless on models that don't recognise it. Same trick as StructuredLlm.
   const prompt = [
     MatchingConfig.prompts.draftResponseSystem,
     '',
@@ -64,6 +45,7 @@ export async function draftResponse(
     input.post.post.text.trim(),
     '---',
     'Your reply:',
+    '/no_think',
   ].join('\n');
 
   const raw = await deps.llm.complete(prompt, {

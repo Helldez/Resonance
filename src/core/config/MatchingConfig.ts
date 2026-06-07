@@ -8,64 +8,25 @@
  */
 export const MatchingConfig = {
   /**
-   * Embedding dimension. EmbeddingGemma's native dim is 768; we truncate
-   * to 256 via the Matryoshka head. The 768-vs-256 trade-off was tested
-   * empirically and 768 was *worse* on the two-device run — full-dim
-   * cosines clustered higher, not better separated. Reverted to 256.
-   * Calibration (Milestone 0) is the right way to set the right value;
-   * for now 256 is the project-wide convention.
-   */
-  embeddingDim: 256,
-
-  /**
-   * Bits in the LSH bucket id. With 8 bits we partition the embedding
-   * space into 256 coarse buckets. Each bucket becomes one Hyperswarm
-   * topic.
-   */
-  lshBits: 8,
-
-  /**
-   * Seed for the LSH random hyperplanes. The same seed across all peers
-   * MUST produce the same hyperplanes — otherwise peers route to
-   * inconsistent buckets. This is a network-wide constant; do not change
-   * post-launch without a coordinated migration.
-   */
-  lshSeed: 0xa57e_b3c1,
-
-  /**
-   * Number of independent LSH tables. Each peer announces in L topics
-   * (one per table). Two peers see each other if they collide in any
-   * table — recall jumps from ~20% (L=1) to ~83% (L=8) at cos_sim 0.85.
-   * See `docs/SEMANTIC_ROUTING.md` §4 (Tier 2).
+   * Embedding dimension. EmbeddingGemma-300M produces 768-dim dense
+   * vectors; the single-room model (conf 9) uses the full 768 with the
+   * "clustering" prompt template (see `ModelProfiles.embedding`). There is
+   * no Matryoshka truncation here — 768 is the project-wide convention.
    *
-   * Network-wide constant: changing L partitions the network. Coordinate
-   * with the topic prefix bump in `NetworkConfig.topicPrefix` if you
-   * have to change it.
+   * Network-wide constant: changing the dim or the model implies bumping
+   * `RoomConfig.topicPrefix` to isolate peers using incompatible embedding
+   * spaces. A mismatch also triggers `PostRepository.dropIfDimChanged`.
    */
-  lshTables: 8,
-
-  /**
-   * Seeds for the L tables — one independent hyperplane family each.
-   * Hard-coded so all peers compute the same partitions. Length MUST
-   * equal `lshTables`.
-   */
-  lshSeeds: [
-    0xa57e_b3c1,
-    0x13c5_9f02,
-    0x9e44_27ad,
-    0x5b86_d31e,
-    0x77a0_8e5b,
-    0xc2f9_4760,
-    0x18df_3a92,
-    0xeb31_b2c7,
-  ] as ReadonlyArray<number>,
+  embeddingDim: 768,
 
   /**
    * Default minimum cosine similarity for an incoming post to be surfaced
-   * in the inbox. 0 = show every replicated post (MVP default). Users
-   * raise it in Settings once they have enough peers to want filtering.
+   * in the inbox view. Conf 9 uses the "loose" 0.3 threshold; users can
+   * raise it in Settings. Note this is the user-facing *view* filter — the
+   * hard *admission* threshold for the bounded inbox is
+   * `RoomConfig.inboxMinSimilarity`.
    */
-  defaultInboxSimilarityThreshold: 0.0,
+  defaultInboxSimilarityThreshold: 0.3,
 
   /**
    * Preset choices exposed in the Settings UI for the similarity
@@ -80,18 +41,21 @@ export const MatchingConfig = {
   ] as ReadonlyArray<{ label: string; value: number; hint: string }>,
 
   /**
-   * Cap on inbox results per query. Prevents one chatty bucket from
-   * flooding the UI.
-   */
-  inboxMaxResults: 100,
-
-  /**
    * Interval at which the Inbox and Thread screens re-poll SQLite to
    * surface newly-replicated records. P2P records arrive asynchronously
    * via the network event handler — without this re-poll the UI would
    * only update on screen focus.
    */
   uiRefreshIntervalMs: 3000,
+
+  /**
+   * Debounce before re-embedding the "About you" interest profile after the
+   * user edits it. The Settings field updates the store per keystroke;
+   * embedding on every character wastes an inference call each time (and the
+   * stress test showed ~10 re-embeds for one sentence). Embed once the user
+   * pauses typing.
+   */
+  interestProfileDebounceMs: 600,
 
   /**
    * Hard cap on how many responses a single peer can post under a given
@@ -101,36 +65,12 @@ export const MatchingConfig = {
   maxResponsesPerPeerPerPost: 1,
 
   /**
-   * Used as the user's interest text when "About you" is empty. Drives
-   * both the LSH bucket and (until the user has posted anything) the
-   * fallback similarity computation in `ScoreIncomingPost`.
-   */
-  fallbackInterestText:
-    'general interest in technology, life, and meaningful conversations',
-
-  /**
    * Filtering model: each incoming remote post is scored as the
    * MAX cosine similarity against the current user's own posts. With
    * zero own posts (cold start) we fall back to similarity against the
    * embedding of the user's "About you" text.
    */
   similarityAggregation: 'max-vs-own-posts' as 'max-vs-own-posts',
-
-  /**
-   * Minimum number of own posts before the bucket membership switches
-   * from "About-you driven" to "centroid of recent own posts" driven.
-   * Below this threshold the bucket is determined by `receiverContext`
-   * (or fallback) so a brand-new user still joins a sensible bucket.
-   */
-  postDrivenMinOwnPosts: 3,
-
-  /**
-   * Rolling window of own posts used to compute the centroid that drives
-   * bucket membership. Older posts beyond this window are ignored, so
-   * the bucket follows the user's recent interests rather than ancient
-   * history.
-   */
-  postDrivenWindow: 10,
 
   /**
    * Hard cap on how many remote posts the semantic map will fetch and
@@ -181,6 +121,33 @@ export const MatchingConfig = {
    */
   mapLabelTopK: 5,
   mapLabelMinSimilarity: 0.3,
+
+  /**
+   * Reference rings drawn on the radial-similarity map. Values are cosine
+   * similarities; the map projects them to radii via `(1 - sim) / 2`.
+   * Kept aligned with `thresholdPresets` so the same vocabulary appears
+   * in Settings (chip labels) and on the map (ring labels). Must be sorted
+   * descending. The ring whose value equals the active inbox threshold is
+   * highlighted at render time — see `ThemeConfig.map.referenceRingActive*`.
+   */
+  mapReferenceRings: {
+    similarities: [0.85, 0.7, 0.5, 0.3] as ReadonlyArray<number>,
+  },
+
+  /**
+   * Anisotropy floor for the radial map. EmbeddingGemma's vectors are
+   * anisotropic: even unrelated texts share a high baseline cosine (~0.3-0.5),
+   * never near 0. Mapping radius as a raw `(1 - sim)/2` therefore crams every
+   * point into the centre and wastes the outer rings. We instead rescale
+   * cosine from `[floor, 1]` onto `[0, 1]` before computing the radius, so the
+   * full disc is used and the rings spread out. The same transform is applied
+   * to the reference-ring radii so labels stay aligned with the dots.
+   *
+   * `floor` is the empirical cosine below which two gemma-768 texts are
+   * effectively unrelated; calibrate with `npm run calibrate`. Points at or
+   * below the floor sit on the rim.
+   */
+  mapRadialAnisotropyFloor: 0.3,
 
   /**
    * Prompts used by the response draft pipeline. Kept here, not at call

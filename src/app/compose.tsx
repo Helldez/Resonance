@@ -1,18 +1,30 @@
 import { useState } from 'react';
-import { View } from 'react-native';
-import { TextInput, Button, useTheme, HelperText } from 'react-native-paper';
+import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useRequireContainer, appendOwnEmbedding } from '@ui/AppContainerContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRequireContainer } from '@ui/AppContainerContext';
+import { useSettingsStore } from '@domain/SettingsStore';
+import { appendOwnEmbedding, rescoreInboxAgainstOwnPosts } from '@services/NetworkIngestion';
 import { createPost } from '@core/posts/CreatePost';
 import { addressOf } from '@core/utils/AddressOf';
+import { RoomConfig } from '@core/config/RoomConfig';
+import { DesignTokens as T } from '@core/config/DesignTokens';
+import { Avatar, Button, IconButton, Text, TextField } from '@ui/design-system';
 
+/**
+ * X-style compose: cancel left, accent Post pill right, avatar + large
+ * borderless input, character counter against the room's signed limit.
+ */
 export default function ComposeScreen() {
   const container = useRequireContainer();
+  const displayName = useSettingsStore((s) => s.displayName);
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
-  const theme = useTheme();
+  const insets = useSafeAreaInsets();
+
+  const remaining = RoomConfig.maxPostChars - text.length;
 
   const submit = async (): Promise<void> => {
     setSubmitting(true);
@@ -27,30 +39,45 @@ export default function ComposeScreen() {
           clock: container.clock,
           self: container.self,
         },
-        {
-          text,
-          // Stamp the post with our current DHT noise key so anyone who
-          // receives the post can dial us back directly later, even if
-          // we drift to a different LSH bucket. See SEMANTIC_ROUTING.md §11.
-          authorNoiseKey: container.p2p.localNoiseKey ?? undefined,
-        },
+        { text },
       );
+      const ownAddress = addressOf(record.author, record.feedIndex);
       if (record.body.kind === 'post') {
         await container.posts.upsert(
-          addressOf(record.author, record.feedIndex),
+          ownAddress,
           record.author,
           record.feedIndex,
           record.body,
           null,
+          null,
         );
         // Push into the in-memory cache so future incoming posts are scored
         // against THIS post too, without waiting for an app restart.
-        appendOwnEmbedding(record.body.embedding);
+        appendOwnEmbedding(ownAddress, record.body.embedding);
       }
-      router.replace({
-        pathname: '/map',
-        params: { anchor: addressOf(record.author, record.feedIndex) },
-      });
+      // Navigate immediately to the feed. The two passes below are O(inbox) and
+      // O(replicated history) and used to block the compose screen for seconds
+      // as the corpus grew — they now run in the background. The Inbox re-polls
+      // SQLite on a timer, so their results surface without a navigation event.
+      router.replace('/');
+      if (record.body.kind === 'post') {
+        void (async (): Promise<void> => {
+          try {
+            // Re-score the existing inbox against the now-larger set of own
+            // posts so already-received remote posts can be grouped under this
+            // new post (and cold-start scores get rewritten on one metric).
+            await rescoreInboxAgainstOwnPosts(container);
+            // Replay the full replicated history so posts dropped at admission
+            // (e.g. before "About you" was set) are re-evaluated against this
+            // new post and pulled in if they now match.
+            await container.network.rescan();
+          } catch (e) {
+            console.warn(
+              `[rn] post-publish rescore/rescan failed: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+        })();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -59,30 +86,61 @@ export default function ComposeScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.background, padding: 12 }}>
-      <TextInput
-        mode="outlined"
-        multiline
-        numberOfLines={8}
-        value={text}
-        onChangeText={setText}
-        placeholder="A thought, a need, a topic — anything you'd want a stranger with a similar question to see."
-      />
-      {error !== null && <HelperText type="error">{error}</HelperText>}
-      <Button
-        mode="contained"
-        onPress={() => {
-          void submit();
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: T.color.bg }}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      {/* Header: just the cancel — the action lives under the editor. */}
+      <View
+        style={{
+          paddingTop: insets.top,
+          flexDirection: 'row',
+          alignItems: 'center',
+          paddingHorizontal: T.space.sm,
+          height: T.size.topBarHeight + insets.top,
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: T.color.border,
         }}
-        loading={submitting}
-        disabled={submitting || text.trim().length === 0}
-        style={{ marginTop: 12 }}
       >
-        Post
-      </Button>
-      <Button onPress={() => router.back()} style={{ marginTop: 4 }}>
-        Cancel
-      </Button>
-    </View>
+        <IconButton icon="x" accessibilityLabel="Cancel" onPress={() => router.back()} />
+      </View>
+
+      <View style={{ flexDirection: 'row', padding: T.space.lg, gap: T.space.md }}>
+        <Avatar peerId={container.self} label={displayName} />
+        <View style={{ flex: 1 }}>
+          <TextField
+            value={text}
+            onChangeText={setText}
+            placeholder="A thought, a need, a topic — anything you'd want a stranger with a similar question to see."
+            multiline
+            numberOfLines={6}
+            bare
+            large
+            autoFocus
+            error={error}
+          />
+        </View>
+      </View>
+
+      {/* Counter + a full-width Post right under the editor. */}
+      <View style={{ paddingHorizontal: T.space.lg, gap: T.space.sm }}>
+        <Text
+          variant="small"
+          color={remaining < 0 ? T.color.danger : T.color.textMuted}
+          style={{ textAlign: 'right' }}
+        >
+          {String(remaining)}
+        </Text>
+        <Button
+          label="Post"
+          full
+          loading={submitting}
+          disabled={submitting || text.trim().length === 0 || remaining < 0}
+          onPress={() => {
+            void submit();
+          }}
+        />
+      </View>
+    </KeyboardAvoidingView>
   );
 }

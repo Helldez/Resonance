@@ -6,21 +6,29 @@
 ## What this project is
 
 Resonance is a **local-first P2P social network**. A user writes a thought,
-need or topic. The text is embedded on-device, broadcast through a semantic
-bucket on Hyperswarm, picked up by peers whose interest profile is close in
-embedding space, and answered by their on-device LLM (either as a draft they
-confirm, or — opt-in — auto-published on their behalf). Answers come back
-through the same P2P fabric and are aggregated on the requester's device.
+need or topic. The text is embedded on-device and published into a **single
+shared room** on Hyperswarm. The room runs an **announce-then-pull** protocol
+(v6): every peer gossips a lightweight signed **announcement** (author +
+embedding + digest) for each record it authors; every other peer receives every
+announcement, ranks it locally against its own posts (cosine similarity), and
+**pulls the full body only for the records that win a slot** in its bounded
+inbox (sparse Hypercore download of exactly one block). Ranking is therefore
+global — every post's embedding is scored — while download, signature
+verification and storage are paid only for the bounded set a node actually
+keeps. Posts the receiver finds relevant are answered by their on-device LLM
+(a draft they confirm, or — opt-in — auto-published). Answers come back through
+the same P2P fabric and are aggregated on the requester's device.
 
 Companion to [JarvisQ](https://github.com/Helldez/JarvisQ) and
 [JarvisDocs](https://github.com/Helldez/JarvisDocs). Same stack
 (Tether QVAC SDK + Bare worklet + Expo), different product surface.
 
-Android is the only first-class target for the MVP. A **desktop peer**
-(Node CLI + Electron shell) exists under `src/platform/desktop/` so
-contributors can run a second Resonance node on a development machine
-and exercise the P2P matching path end-to-end without provisioning a
-second phone. See `docs/DESKTOP.md` for the runbook. iOS later.
+Android is the only first-class target for the MVP. An **experimental
+desktop peer** (Node CLI + Electron shell) exists under
+`src/platform/desktop/` so contributors can run a second Resonance node on a
+development machine and exercise the P2P matching path end-to-end without
+provisioning a second phone. It is a development/testing aid, not a shipped
+product surface. See `docs/DESKTOP.md` for the runbook. iOS later.
 
 ## Project posture (non-negotiable)
 
@@ -47,13 +55,18 @@ agent on its behalf (commits, PRs, READMEs, issues, social posts).
 - **No hardcoded constants at call sites.** Add them to a config file under
   `src/core/config/`. Tunables for matching/similarity/prompts go in
   `MatchingConfig.ts`; model URLs in `HttpModelSources.ts`; model entries in
-  `ModelProfiles.ts`; networking parameters in `NetworkConfig.ts`; storage
-  paths in `StorageConfig.ts`.
+  `ModelProfiles.ts`; the single room (id, topic prefix, connection cap,
+  inbox capacity/threshold) in `RoomConfig.ts`; Hyperswarm bootstrap in
+  `NetworkConfig.ts`; storage paths in `StorageConfig.ts`.
 - **Hexagonal boundaries.** `src/core/**` never imports Expo, React Native,
   Node, Bare or any platform-specific module directly. It only imports from
   `@core/ports/*`. Platform code lives under `src/platform/<target>/` —
-  currently `mobile/` (Expo + react-native-bare-kit) and `desktop/`
-  (Node + Electron + standalone `bare` runtime).
+  `shared/` (the target-agnostic P2P worker, network/mailbox adapters and
+  container wiring), `mobile/` (Expo + react-native-bare-kit transport and
+  adapters) and `desktop/` (Node + Electron + standalone `bare` runtime).
+  Composition glue that orchestrates core + data + platform without React
+  lives in `src/app-services/` (alias `@services`); it may import everything,
+  nothing imports it except the UI.
 - **One responsibility per file.** Use cases, parsers, repositories and
   services each live in their own file.
 - **No backwards-compat shims.** If something is unused, delete it.
@@ -61,26 +74,80 @@ agent on its behalf (commits, PRs, READMEs, issues, social posts).
 
 ## Matching conventions
 
-- Embeddings are **L2-normalised at ingest**, **256-dim** (Matryoshka
-  truncation from EmbeddingGemma's native 768). Cosine similarity is
-  therefore computed as a plain dot product.
-- Vectors stored as little-endian `Float32Array` BLOBs in SQLite.
-- Coarse routing uses **LSH (signed random hyperplanes)** to map a vector to
-  an N-bit bucket id. The bucket id is the Hyperswarm topic. Parameters live
-  in `MatchingConfig.ts`.
-- The fine-grained similarity threshold is applied **on the receiving peer's
-  device** against the receiver's own interest profile. It is a local
-  decision, never imposed by the network.
+> The end-to-end runtime flow (publish → room → gossip → receive → score →
+> bounded inbox) is documented in [`docs/MATCHING_FLOW.md`](docs/MATCHING_FLOW.md).
+> Read it before changing anything in `src/core/matching/`,
+> `src/core/inbox/`, `src/core/posts/CreatePost.ts`, or the record handler in
+> `src/app-services/NetworkIngestion.ts`.
+
+- Embeddings come from **EmbeddingGemma-300M** (GGUF Q8_0). Native dim **768**,
+  used in full and L2-normalised at ingest. Every text is prefixed with the
+  `task: clustering | query: {text}` template (`ModelProfiles.embedding.
+  promptTemplate`) before embedding. Cosine similarity is a plain dot product
+  on the L2-normalised vectors.
+- Vectors stored as little-endian `Float32Array` BLOBs in SQLite. On boot,
+  `PostRepository.dropIfDimChanged` drops any post whose stored embedding
+  byte-length is incompatible with the active model — handles model swaps
+  without leaking stale vectors into matching.
+- **Routing is a single shared room, announce-then-pull (v6)**. There is
+  **no LSH, no buckets, no DHT routing table, no sticky peers**. Every node
+  joins one Hyperswarm topic (`sha256(RoomConfig.topicPrefix +
+  RoomConfig.networkSalt || RoomConfig.roomId)` — the salt is empty on the
+  public network; a shared secret salt yields a private test network, see
+  `SECURITY.md`); signed **announcements** (author + outbox key + full
+  float32 embedding + digest) gossip transitively over the
+  `resonance-announce/v2` protocol (`bare/announce-directory.mjs`) as
+  compact-encoding binary (`bare/announce-codec.mjs`), batched at
+  `RoomConfig.announceBatchSize` per message so the on-open snapshot never
+  exceeds the transport's frame cap — and every announcement reaches every
+  peer in ~log₃₂(N) hops. Full record bodies are
+  NOT replicated wholesale: a peer opens an author's outbox core only on
+  demand and sparse-downloads exactly the admitted block (`pull` RPC in
+  `bare/p2p.mjs`). Connection fan-out is capped at
+  `RoomConfig.maxConnections` (32).
+- **Publishing**: embed → sign → append to the peer's own outbox Hypercore →
+  the worker derives and gossips the announcement. On boot the worker
+  re-announces its existing outbox (announcements are in-memory; the outbox is
+  durable).
+- **Receiving / two-tier inbox**: every incoming announcement is scored as the
+  MAX cosine against the user's own posts (cold-start fallback: the "About
+  you" embedding) by `src/core/inbox/IngestAnnouncement.ts`, recorded in the
+  Tier-1 summary store (`announcements` table, capped at
+  `RoomConfig.announceTier1Capacity`), and passed through the bounded top-K
+  admission rule in `src/core/inbox/InboxAdmission.ts` — drop below
+  `RoomConfig.inboxMinSimilarity`, admit while under
+  `RoomConfig.inboxCapacity`, else replace the weakest if the newcomer scores
+  higher. Winners are pulled; the pulled body is digest+signature verified and
+  **re-scored on its VERIFIED embedding** (`src/core/inbox/IngestPulledPost.ts`)
+  before it is committed to the Tier-2 `posts` inbox — a lying announcement
+  cannot get a mismatched post stored. Non-post records (responses, reactions)
+  carry no embedding and are always pulled.
+- **Untrusted input is bounded before any expensive work**: text length and
+  embedding dimension are validated at ingest
+  (`src/core/validation/ValidateRecordBody.ts`, limits in `RoomConfig`).
+- The fine-grained view threshold is applied **on the receiving peer's device**
+  against the receiver's own interest profile — a local decision, never imposed
+  by the network. The presets in `MatchingConfig.thresholdPresets` are the same
+  vocabulary the map's radial reference rings use.
+- The network is versioned via `RoomConfig.topicPrefix` (currently
+  `resonance/v6/room/`). Bumping it isolates peers using incompatible embedding
+  spaces, topologies or wire protocols. Versioning partitions, it does not
+  protect: any committed prefix is derivable from public source. Privacy of a
+  network comes only from a non-empty `RoomConfig.networkSalt`
+  (env `EXPO_PUBLIC_NETWORK_SALT`, gitignored `.env`).
 
 ## P2P conventions
 
 - Identity is an Ed25519 keypair. Public key = peer id. Private key never
   leaves the device, stored via the platform's secure key-value store.
-- Each peer owns one **personal Hypercore append-only feed** containing
-  signed `Post` and `Response` records.
-- Posts are addressed by `<peerPublicKey>:<feedIndex>`. Responses point at
-  the post they answer by that address.
-- Replication uses Hyperswarm + Hypercore. No relays in the MVP.
+- Each peer owns one **personal Hypercore append-only feed** (the "outbox")
+  containing signed `Post`, `Response` and `Reaction` records.
+- Posts are addressed by `<peerPublicKey>:<feedIndex>`. Responses and
+  reactions point at the record they answer by that address.
+- Transport is Hyperswarm + Hypercore, but replication is **announce-then-pull
+  (v6)**: only announcements are flooded; bodies are sparse-pulled per block
+  on admission. No node replicates another node's whole feed, and no relays
+  in the MVP.
 - The Bare worklet at `qvac/worker.entry.mjs` owns all P2P + AI state. The
   React Native side is a typed RPC client.
 
@@ -114,13 +181,30 @@ npm run desktop:peer
 ## File map for orientation
 
 - Entry: `src/app/_layout.tsx` → `src/app/index.tsx`
-- Bootstrap: `src/platform/mobile/bootstrap.ts` → `AppContainer`
-- Inference: `src/core/inference/EmbeddingService.ts`,
-  `src/core/inference/LlmService.ts`
-- Matching: `src/core/matching/` (LSH bucket → cosine similarity →
-  L2 normalisation)
-- Use cases: `src/core/{posts,responses,identity}/`
-- Network sync: `src/core/net/SyncEngine.ts`
+- Bootstrap: `src/platform/mobile/bootstrap.ts` → `src/core/bootstrap/AppContainer.ts`
+- Inference: the ports `src/core/ports/IEmbeddingService.ts` and
+  `src/core/ports/ILlmService.ts`, implemented by the platform adapters
+  `src/platform/{mobile,desktop}/QvacEmbeddingService.ts` and
+  `QvacLlmService.ts`. `src/core/**` only ever sees the port.
+- Matching: `src/core/matching/` (cosine similarity, L2 normalisation, 2-D map
+  projection) + `src/core/inbox/` (bounded top-K admission, announcement
+  ingest/re-rank: `IngestAnnouncement`, `IngestPulledPost`,
+  `RerankAnnouncements`, `ScoreAgainstOwn`)
+- Untrusted-input bounds: `src/core/validation/ValidateRecordBody.ts`
+- P2P worker: `bare/p2p.mjs` (announce-then-pull) +
+  `bare/announce-directory.mjs` (pure gossip state machine)
+- Topic atlas: `src/core/topics/` (spherical k-means + UMAP/PCA projection),
+  rendered by `src/ui/TopicAtlasView.tsx`
+- Use cases: `src/core/{posts,responses,reactions,identity}/`
+- Local-AI agent: `src/core/agent/` (loop, governor, triage, decide, profile,
+  prompts) + `src/core/llm/StructuredLlm.ts` — runtime flow documented in
+  [`docs/AGENTS_FLOW.md`](docs/AGENTS_FLOW.md)
+- Record handling / network glue: the single record handler in
+  `src/app-services/NetworkIngestion.ts` (wired to the network by
+  `src/ui/AppContainerContext.tsx`) and the shared `IPeerNetwork`/`IMailbox`
+  adapters under `src/platform/shared/` (per-target transports in
+  `src/platform/{mobile,desktop}/`). There is no `SyncEngine` — the legacy
+  indirection was removed.
 - Storage: `src/data/*Repository.ts` over `src/platform/mobile/ExpoSqliteDatabase.ts`
 - Worklet: `qvac/worker.entry.mjs`
 - Roadmap: `docs/ROADMAP.md`
@@ -131,7 +215,12 @@ npm run desktop:peer
 - Don't add a server. Don't add analytics. Don't add a sign-in. Don't add a
   "share to social" button.
 - Don't introduce a global state library beyond the existing Zustand stores.
-- Don't add a UI library beyond `react-native-paper`.
-- Don't bring matching, LSH or similarity logic out of `src/core/matching/`.
+- Don't add a UI component library. The UI is the in-repo design system
+  (`src/ui/design-system/`, built on RN primitives + `react-native-svg`),
+  driven exclusively by `src/core/config/DesignTokens.ts`. New visual
+  constants go in the tokens; new glyphs go in `design-system/Icon.tsx`.
+  `react-native-paper` was removed — don't reintroduce it.
+- Don't bring matching or similarity logic out of `src/core/matching/` /
+  `src/core/inbox/`.
 - Don't put network code outside the Bare worklet or the
   `IPeerNetwork` adapter — the rest of the app sees a port, not Hyperswarm.

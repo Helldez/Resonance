@@ -9,6 +9,7 @@ import type { IIdentity } from '@core/ports/IIdentity';
 import type { IMailbox } from '@core/ports/IMailbox';
 import type { IPeerNetwork } from '@core/ports/IPeerNetwork';
 import { canonicalDigest, signRecord } from '@core/utils/CanonicalRecord';
+import { RoomConfig } from '@core/config/RoomConfig';
 
 export interface PublishResponseDeps {
   readonly mailbox: IMailbox;
@@ -30,6 +31,9 @@ export async function publishResponse(
   const trimmed = input.text.trim();
   if (trimmed.length === 0) {
     throw new Error('publishResponse: empty text');
+  }
+  if (trimmed.length > RoomConfig.maxResponseChars) {
+    throw new Error(`publishResponse: text exceeds ${RoomConfig.maxResponseChars} chars`);
   }
 
   const body: ResponseBody = {

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 160" role="img" aria-labelledby="t">
+  <title id="t">Resonance</title>
+  <!-- Horizontal lockup: mark + wordmark. For README / web headers. -->
+  <defs>
+    <linearGradient id="res-g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9D85FF"/>
+      <stop offset="1" stop-color="#6B4DFF"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(8 8) scale(0.6)">
+    <g fill="none" stroke="url(#res-g)" stroke-width="28" stroke-linecap="round">
+      <path d="M99.29 42.73A80 80 0 0 1 199.7 126.97"/>
+      <path d="M140.71 197.27A80 80 0 0 1 40.3 113.03"/>
+    </g>
+    <circle cx="120" cy="120" r="28" fill="url(#res-g)"/>
+  </g>
+  <text x="172" y="102" font-family="Inter, 'Segoe UI', -apple-system, Roboto, sans-serif"
+        font-size="64" font-weight="700" letter-spacing="-1.5" fill="#E7E9EA">Resonance</text>
+</svg>

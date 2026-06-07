@@ -39,3 +39,13 @@ tmp/
 android/local.properties
 tmp-screenshot*.png
 tmp-release-build*.log
+
+# Claude Code workspace (local agent state, never published)
+.claude/
+
+# Local scratch / debug captures (device logs, screenshots, paste buffers)
+.inst*.txt
+.elec_copy.txt
+map-*.png
+scratch/
+.ui-shots/

@@ -24,6 +24,22 @@ export function interpolateColor(lowHex: string, highHex: string, t: number): st
   return `rgb(${r},${g},${b})`;
 }
 
+/**
+ * Stable, well-spread colour for a peer, derived purely from their id hash.
+ * Used on the semantic map so posts visually cluster by author — the
+ * on-device analog of the simulator colouring points by corpus cluster
+ * (which does not exist with real, un-labelled posts). Saturation/lightness
+ * are fixed; only the hue varies, so colours stay legible on a dark map.
+ */
+export function colorForAuthor(peerId: string): string {
+  let hash = 0;
+  for (let i = 0; i < peerId.length; i++) {
+    hash = (hash * 31 + peerId.charCodeAt(i)) | 0;
+  }
+  const hue = ((hash % 360) + 360) % 360;
+  return `hsl(${hue}, 70%, 62%)`;
+}
+
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const cleaned = hex.charAt(0) === '#' ? hex.slice(1) : hex;
   const r = parseInt(cleaned.slice(0, 2), 16);

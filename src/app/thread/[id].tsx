@@ -1,386 +1,249 @@
-import { useCallback, useEffect, useState } from 'react';
-import { View, ScrollView, Alert, Pressable, RefreshControl } from 'react-native';
+import { useState } from 'react';
 import {
-  Text,
-  Card,
-  Button,
-  TextInput,
-  ActivityIndicator,
-  HelperText,
-  useTheme,
-} from 'react-native-paper';
-import { useLocalSearchParams, useFocusEffect, useRouter } from 'expo-router';
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
+import { useLocalSearchParams } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireContainer } from '@ui/AppContainerContext';
 import { useSettingsStore } from '@domain/SettingsStore';
-import { draftResponse } from '@core/responses/DraftResponse';
-import { publishResponse } from '@core/responses/PublishResponse';
-import type { RecordAddress, ScoredPost } from '@core/domain/types';
-import { cosineOnUnit } from '@core/matching/CosineSimilarity';
-import { addressOf } from '@core/utils/AddressOf';
-import { MatchingConfig } from '@core/config/MatchingConfig';
+import { useThread } from '@ui/thread/useThread';
+import { confirmDestructive } from '@ui/confirmDestructive';
+import { formatRelative } from '@ui/format/relativeTime';
+import { formatAuthor, shortPeer } from '@domain/AuthorFormatting';
+import { DesignTokens as T } from '@core/config/DesignTokens';
+import { EMPTY_REACTION_COUNTS } from '@ui/reactionCounts';
+import {
+  ActionBar,
+  Avatar,
+  Button,
+  IconButton,
+  Row,
+  Skeleton,
+  Text,
+  TextField,
+  TopBar,
+} from '@ui/design-system';
 
-interface ThreadPost {
-  readonly address: string;
-  readonly author: string;
-  readonly text: string;
-  readonly createdAt: number;
-  readonly embedding: Uint8Array | null;
-}
-
-interface ThreadResponse {
-  readonly address: string;
-  readonly author: string;
-  readonly text: string;
-  readonly createdAt: number;
-}
-
+/**
+ * X-style conversation: the root post rendered large, replies as indented
+ * timeline rows, and a sticky reply composer at the bottom (with the
+ * on-demand AI draft). Data + actions live in useThread.
+ */
 export default function ThreadScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const container = useRequireContainer();
-  const router = useRouter();
-  const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const receiverContext = useSettingsStore((s) => s.receiverContext);
+  const displayName = useSettingsStore((s) => s.displayName);
+  const thread = useThread(container, id);
 
-  const [post, setPost] = useState<ThreadPost | null>(null);
-  const [responses, setResponses] = useState<ThreadResponse[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [draft, setDraft] = useState('');
   const [drafting, setDrafting] = useState(false);
   const [publishing, setPublishing] = useState(false);
-  const [composing, setComposing] = useState(false);
-  const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async (): Promise<void> => {
-    const postRows = await container.database.query<{
-      address: string;
-      author: string;
-      text: string;
-      created_at: number;
-      embedding: Uint8Array | null;
-    }>(
-      'SELECT address, author, text, created_at, embedding FROM posts WHERE address = ? LIMIT 1',
-      [id],
-    );
-    if (postRows.length > 0) {
-      const r = postRows[0];
-      setPost({
-        address: r.address,
-        author: r.author,
-        text: r.text,
-        createdAt: r.created_at,
-        embedding: r.embedding,
-      });
-    }
-    const respRows = await container.database.query<{
-      address: string;
-      author: string;
-      text: string;
-      created_at: number;
-    }>(
-      'SELECT address, author, text, created_at FROM responses WHERE in_reply_to = ? ORDER BY created_at ASC',
-      [id],
-    );
-    setResponses(
-      respRows.map((r) => ({
-        address: r.address,
-        author: r.author,
-        text: r.text,
-        createdAt: r.created_at,
-      })),
-    );
-    setLoading(false);
-  }, [container, id]);
+  const { post, responses, reactions } = thread;
+  const alreadyReplied = responses.some((r) => r.author === container.self);
+  const canReply = post !== null && post.author !== container.self && !alreadyReplied;
 
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  useFocusEffect(
-    useCallback(() => {
-      void load();
-      const id = setInterval(() => {
-        void load();
-      }, MatchingConfig.uiRefreshIntervalMs);
-      return () => {
-        clearInterval(id);
-      };
-    }, [load]),
-  );
-
-  const generateDraft = async (): Promise<void> => {
-    if (post === null || post.embedding === null) {
-      setError('Post has no embedding stored locally; cannot draft.');
-      return;
-    }
+  const generate = (): void => {
     setDrafting(true);
     setError(null);
-    try {
-      const embedding = new Float32Array(
-        post.embedding.buffer,
-        post.embedding.byteOffset,
-        post.embedding.byteLength / Float32Array.BYTES_PER_ELEMENT,
-      );
-      const scored: ScoredPost = {
-        address: post.address as RecordAddress,
-        author: post.author as ScoredPost['author'],
-        post: {
-          kind: 'post',
-          text: post.text,
-          embedding,
-          bucket: '' as ScoredPost['post']['bucket'],
-          createdAt: post.createdAt,
-        },
-        similarity: cosineOnUnit(embedding, embedding),
-      };
-
-      const { draftText } = await draftResponse(
-        { llm: container.llm },
-        { post: scored, receiverContext },
-      );
-      setDraft(draftText);
-      setComposing(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setDrafting(false);
-    }
+    void (async () => {
+      try {
+        setDraft(await thread.draftWithAi(receiverContext));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setDrafting(false);
+      }
+    })();
   };
 
-  const publish = async (): Promise<void> => {
-    if (post === null) {
-      return;
-    }
+  const publish = (): void => {
     setPublishing(true);
     setError(null);
-    try {
-      const existing = await container.responses.countByAuthorAndPost(
-        container.self,
-        post.address as RecordAddress,
-      );
-      if (existing >= MatchingConfig.maxResponsesPerPeerPerPost) {
-        setError(
-          'You already responded to this post. Long-press your existing response to delete it before publishing a new one.',
-        );
-        return;
+    void (async () => {
+      try {
+        await thread.publishReply(draft);
+        setDraft('');
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setPublishing(false);
       }
-      const record = await publishResponse(
-        {
-          mailbox: container.mailbox,
-          network: container.network,
-          identity: container.identity,
-          clock: container.clock,
-          self: container.self,
-        },
-        { text: draft, inReplyTo: post.address as RecordAddress },
-      );
-      if (record.body.kind === 'response') {
-        await container.responses.upsert(
-          addressOf(record.author, record.feedIndex),
-          record.author,
-          record.feedIndex,
-          record.body,
-        );
-      }
-      setDraft('');
-      setComposing(false);
-      await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setPublishing(false);
-    }
+    })();
   };
 
-  if (loading) {
-    return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator />
-      </View>
-    );
-  }
+  const authorLabel = (author: string): string =>
+    author === container.self
+      ? formatAuthor({ self: container.self, peer: container.self, selfDisplayName: displayName })
+      : shortPeer(author);
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: theme.colors.background }}
-      contentContainerStyle={{ padding: 12 }}
-      refreshControl={
-        <RefreshControl
-          refreshing={false}
-          onRefresh={() => {
-            void load();
-          }}
-          tintColor={theme.colors.primary}
-        />
-      }
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: T.color.bg }}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      {post !== null ? (
-        <Card>
-          <Card.Content>
-            <Text variant="bodyMedium">{post.text}</Text>
-            <Text style={{ marginTop: 8, opacity: 0.6, fontSize: 12 }}>
-              {shortPeer(post.author)} · {new Date(post.createdAt).toLocaleString()}
+      <TopBar title="Post" back />
+
+      <ScrollView contentContainerStyle={{ paddingBottom: T.space.xxl }}>
+        {thread.loading && post === null ? (
+          <View style={{ padding: T.space.lg, gap: T.space.md }}>
+            <Skeleton height={T.size.avatar} width={T.size.avatar} round />
+            <Skeleton />
+            <Skeleton width="70%" />
+          </View>
+        ) : post === null ? (
+          <Text variant="muted" style={{ padding: T.space.lg }}>
+            Post not found in local database.
+          </Text>
+        ) : (
+          <View
+            style={{
+              paddingHorizontal: T.space.lg,
+              paddingVertical: T.space.md,
+              borderBottomWidth: StyleSheet.hairlineWidth,
+              borderBottomColor: T.color.border,
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: T.space.md }}>
+              <Avatar
+                peerId={post.author}
+                label={post.author === container.self ? displayName : undefined}
+              />
+              <View style={{ flex: 1 }}>
+                <Text variant="bodyBold" numberOfLines={1}>
+                  {authorLabel(post.author)}
+                </Text>
+                <Text variant="caption">{formatRelative(post.createdAt)}</Text>
+              </View>
+            </View>
+            {/* The root post reads large — it is the subject of the screen. */}
+            <Text
+              variant="body"
+              style={{
+                marginTop: T.space.md,
+                fontSize: T.font.size.lg,
+                lineHeight: T.font.lineHeight.xl,
+              }}
+            >
+              {post.text}
             </Text>
-            {post.author === container.self && (
-              <Button
-                mode="text"
-                icon="graph"
-                style={{ marginTop: 4, alignSelf: 'flex-start' }}
-                onPress={() =>
-                  router.push({ pathname: '/map', params: { anchor: post.address } })
-                }
-              >
-                View on map
-              </Button>
-            )}
-          </Card.Content>
-        </Card>
-      ) : (
-        <Text>Post not found in local database.</Text>
-      )}
+            <ActionBar
+              likeCount={reactions.get(post.address)?.counts.like ?? EMPTY_REACTION_COUNTS.like}
+              liked={reactions.get(post.address)?.mine === 'like'}
+              onLike={() => void thread.reactTo(post.address, 'like')}
+              commentCount={responses.length}
+            />
+          </View>
+        )}
 
-      <Text variant="titleSmall" style={{ marginTop: 16 }}>
-        Responses ({responses.length})
-      </Text>
+        {responses.map((r) => {
+          const askDelete = (): void => {
+            confirmDestructive('Delete this response?', 'Removes from your local DB only.', () => {
+              void thread.deleteResponse(r.address);
+            });
+          };
+          return (
+            <Row
+              key={r.address}
+              inset
+              onLongPress={askDelete}
+              left={
+                <Avatar
+                  peerId={r.author}
+                  size={T.size.avatarSmall + T.space.sm}
+                  label={r.author === container.self ? displayName : undefined}
+                />
+              }
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: T.space.sm }}>
+                <Text variant="bodyBold" numberOfLines={1} style={{ flexShrink: 1 }}>
+                  {authorLabel(r.author)}
+                </Text>
+                <Text variant="caption">{formatRelative(r.createdAt)}</Text>
+                <View style={{ flex: 1 }} />
+                <IconButton
+                  icon="trash"
+                  size={T.size.iconSmall}
+                  color={T.color.textMuted}
+                  accessibilityLabel="Delete this response"
+                  onPress={askDelete}
+                />
+              </View>
+              <Text variant="body">{r.text}</Text>
+              <ActionBar
+                likeCount={reactions.get(r.address)?.counts.like ?? 0}
+                liked={reactions.get(r.address)?.mine === 'like'}
+                onLike={() => void thread.reactTo(r.address, 'like')}
+              />
+            </Row>
+          );
+        })}
 
-      {responses.map((r) => (
-        <Pressable
-          key={r.address}
-          onLongPress={() => {
-            Alert.alert('Delete this response?', 'Removes from your local DB only.', [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Delete',
-                style: 'destructive',
-                onPress: () => {
-                  void (async () => {
-                    await container.responses.delete(r.address as RecordAddress);
-                    await load();
-                  })();
-                },
-              },
-            ]);
+        {!thread.loading && responses.length === 0 && (
+          <Text variant="muted" style={{ padding: T.space.lg }}>
+            No replies yet.
+          </Text>
+        )}
+      </ScrollView>
+
+      {/* Sticky reply composer. One reply per peer per post (product rule). */}
+      {post !== null && post.author !== container.self && (
+        <View
+          style={{
+            borderTopWidth: StyleSheet.hairlineWidth,
+            borderTopColor: T.color.border,
+            paddingHorizontal: T.space.lg,
+            paddingTop: T.space.sm,
+            paddingBottom: insets.bottom + T.space.sm,
+            gap: T.space.sm,
           }}
         >
-          <Card style={{ marginTop: 8 }}>
-            <Card.Content>
-              <Text>{r.text}</Text>
-              <Text style={{ marginTop: 4, opacity: 0.6, fontSize: 12 }}>
-                {shortPeer(r.author)} · long-press to delete
-              </Text>
-            </Card.Content>
-          </Card>
-        </Pressable>
-      ))}
-
-      {responses.length === 0 && (
-        <Text style={{ marginTop: 8, opacity: 0.6 }}>No responses yet.</Text>
-      )}
-
-      {post !== null && post.author !== container.self && (
-        <View style={{ marginTop: 24 }}>
-          {responses.some((r) => r.author === container.self) ? (
-            <HelperText type="info">
-              You already responded to this post. Long-press your response above
-              to delete it before writing a new one.
-            </HelperText>
-          ) : !composing ? (
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              <Button
-                mode="contained"
-                icon="pencil"
-                onPress={() => {
-                  setDraft('');
-                  setError(null);
-                  setComposing(true);
-                }}
-                disabled={drafting || publishing}
-                style={{ flex: 1 }}
-              >
-                Write reply
-              </Button>
-              <Button
-                mode="outlined"
-                icon="robot-outline"
-                onPress={() => {
-                  void generateDraft();
-                }}
-                loading={drafting}
-                disabled={drafting || publishing}
-                style={{ flex: 1 }}
-              >
-                Draft with AI
-              </Button>
-            </View>
+          {alreadyReplied ? (
+            <Text variant="small">
+              You already replied. Delete your reply above to write a new one.
+            </Text>
           ) : (
             <>
-              <TextInput
-                mode="outlined"
-                multiline
-                numberOfLines={6}
+              <TextField
                 value={draft}
                 onChangeText={setDraft}
-                placeholder="Write what you'd add — first person, specific, no greetings."
-                autoFocus
+                placeholder="Post your reply — first person, specific, no greetings."
+                multiline
+                numberOfLines={2}
+                bare
+                error={error}
               />
-              {error !== null && <HelperText type="error">{error}</HelperText>}
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  marginTop: 8,
-                  flexWrap: 'wrap',
-                  rowGap: 8,
-                }}
-              >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: T.space.sm }}>
                 <Button
-                  mode="text"
-                  onPress={() => {
-                    setComposing(false);
-                    setDraft('');
-                    setError(null);
-                  }}
-                  disabled={publishing}
-                  compact
-                >
-                  Cancel
-                </Button>
+                  label={draft.trim().length === 0 ? 'Draft with AI' : 'Rewrite with AI'}
+                  variant="secondary"
+                  small
+                  icon="robot"
+                  loading={drafting}
+                  disabled={drafting || publishing || !canReply}
+                  onPress={generate}
+                />
                 <View style={{ flex: 1 }} />
                 <Button
-                  mode="outlined"
-                  icon="robot-outline"
-                  onPress={() => {
-                    void generateDraft();
-                  }}
-                  loading={drafting}
-                  disabled={drafting || publishing}
-                  compact
-                  style={{ marginRight: 8 }}
-                >
-                  {draft.trim().length === 0 ? 'AI' : 'Rewrite'}
-                </Button>
-                <Button
-                  mode="contained"
+                  label="Reply"
+                  small
                   icon="send"
-                  onPress={() => {
-                    void publish();
-                  }}
                   loading={publishing}
-                  disabled={publishing || draft.trim().length === 0}
-                >
-                  Publish
-                </Button>
+                  disabled={publishing || drafting || draft.trim().length === 0}
+                  onPress={publish}
+                />
               </View>
             </>
           )}
         </View>
       )}
-    </ScrollView>
+    </KeyboardAvoidingView>
   );
-}
-
-function shortPeer(peer: string): string {
-  if (peer.length <= 12) {
-    return peer;
-  }
-  return `${peer.slice(0, 6)}…${peer.slice(-4)}`;
 }

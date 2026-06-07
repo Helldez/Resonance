@@ -19,10 +19,7 @@ export interface InboxState {
   readonly items: ReadonlyArray<ScoredPost>;
 }
 
-export type ResponseMode = 'draft-confirm' | 'auto-publish';
-
 export interface SettingsState {
-  readonly responseMode: ResponseMode;
   readonly receiverContext: string;
   readonly similarityThreshold: number;
   /**
@@ -32,4 +29,6 @@ export interface SettingsState {
    * in Phase 1.
    */
   readonly displayName: string;
+  /** True once the first-run onboarding flow has been completed (or skipped). */
+  readonly onboardingDone: boolean;
 }

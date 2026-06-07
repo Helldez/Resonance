@@ -19,6 +19,17 @@ export class PostRepository {
   constructor(private readonly db: IDatabase) {}
 
   async createSchema(): Promise<void> {
+    // Legacy migration: the pre-single-room schema had a `bucket TEXT NOT
+    // NULL` column. Inserts now omit `bucket`, which would violate that
+    // constraint on an existing DB, so drop the old table. The single-room
+    // switch is a v3 network reset (and an embedding-dim change), so stored
+    // posts are discarded anyway — see `dropIfDimChanged`.
+    const cols = await this.db.query<{ name: string }>(
+      'PRAGMA table_info(posts)',
+    );
+    if (cols.some((c) => c.name === 'bucket')) {
+      await this.db.exec('DROP TABLE IF EXISTS posts');
+    }
     await this.db.exec(`
       CREATE TABLE IF NOT EXISTS posts (
         address TEXT PRIMARY KEY,
@@ -26,13 +37,55 @@ export class PostRepository {
         feed_index INTEGER NOT NULL,
         text TEXT NOT NULL,
         embedding BLOB NOT NULL,
-        bucket TEXT NOT NULL,
         created_at INTEGER NOT NULL,
-        similarity REAL
+        similarity REAL,
+        matched_own_address TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at);
-      CREATE INDEX IF NOT EXISTS idx_posts_bucket ON posts(bucket);
+      CREATE INDEX IF NOT EXISTS idx_posts_similarity ON posts(similarity);
     `);
+
+    // Migration: `matched_own_address` records which OWN post a remote post
+    // scored its MAX cosine against, so the inbox can group each remote post
+    // under the user's most-affine post. Added after the initial single-room
+    // schema, so an existing table needs the column appended in place.
+    const after = await this.db.query<{ name: string }>(
+      'PRAGMA table_info(posts)',
+    );
+    if (!after.some((c) => c.name === 'matched_own_address')) {
+      await this.db.exec(
+        'ALTER TABLE posts ADD COLUMN matched_own_address TEXT',
+      );
+    }
+  }
+
+  /**
+   * Drop every stored post if any existing embedding blob has a byte length
+   * incompatible with `currentDim`. Used to handle an embedding-model swap
+   * (e.g. EmbeddingGemma 256-dim → bge-m3 1024-dim): the old vectors live
+   * in a different semantic space and would silently degrade matching.
+   *
+   * Returns the number of rows removed. A no-op when the dim matches or the
+   * table is empty.
+   */
+  async dropIfDimChanged(currentDim: number): Promise<number> {
+    const probe = await this.db.query<{ embedding: Uint8Array }>(
+      'SELECT embedding FROM posts LIMIT 1',
+    );
+    if (probe.length === 0) {
+      return 0;
+    }
+    const expectedBytes = currentDim * Float32Array.BYTES_PER_ELEMENT;
+    const actualBytes = probe[0].embedding?.byteLength ?? -1;
+    if (actualBytes === expectedBytes) {
+      return 0;
+    }
+    const countRows = await this.db.query<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM posts',
+    );
+    const removed = countRows[0]?.n ?? 0;
+    await this.db.exec('DELETE FROM posts');
+    return removed;
   }
 
   async upsert(
@@ -41,10 +94,11 @@ export class PostRepository {
     feedIndex: number,
     post: PostBody,
     similarity: number | null,
+    matchedOwnAddress: RecordAddress | null = null,
   ): Promise<void> {
     await this.db.exec(
       `INSERT OR REPLACE INTO posts
-        (address, author, feed_index, text, embedding, bucket, created_at, similarity)
+        (address, author, feed_index, text, embedding, created_at, similarity, matched_own_address)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         address,
@@ -52,10 +106,29 @@ export class PostRepository {
         feedIndex,
         post.text,
         floatToBlob(post.embedding),
-        post.bucket,
         post.createdAt,
         similarity,
+        matchedOwnAddress,
       ],
+    );
+  }
+
+  /**
+   * Update the score of an already-stored remote post. Used by the inbox
+   * re-scoring pass that runs after the user publishes a post: every remote
+   * post is re-compared against the (now larger) set of own posts so its
+   * `similarity` and `matched_own_address` stay consistent with the current
+   * posting history. Touches only the score columns — embedding/text/etc.
+   * are left untouched.
+   */
+  async updateScore(
+    address: RecordAddress,
+    similarity: number | null,
+    matchedOwnAddress: RecordAddress | null,
+  ): Promise<void> {
+    await this.db.exec(
+      'UPDATE posts SET similarity = ?, matched_own_address = ? WHERE address = ?',
+      [similarity, matchedOwnAddress, address],
     );
   }
 
@@ -66,6 +139,70 @@ export class PostRepository {
    */
   async delete(address: RecordAddress): Promise<void> {
     await this.db.exec('DELETE FROM posts WHERE address = ?', [address]);
+  }
+
+  /**
+   * Trim the remote inbox back to `capacity`, evicting the weakest first
+   * (null-similarity rows go first — they were never comparably scored).
+   * Boot-time self-heal: a concurrent ingest burst in a previous session
+   * could over-admit past the cap before the serialized queue existed, and
+   * a capacity downgrade in config would otherwise leave the excess in
+   * place forever. Returns the evicted addresses so the caller can reset
+   * their Tier-1 `pulled` flags (an evicted body is no longer held).
+   */
+  async enforceRemoteCapacity(self: PeerId, capacity: number): Promise<RecordAddress[]> {
+    const before = await this.countRemotePosts(self);
+    if (before <= capacity) {
+      return [];
+    }
+    const victims = await this.db.query<{ address: string }>(
+      `SELECT address FROM posts WHERE author != ?
+       ORDER BY (similarity IS NULL) DESC, similarity ASC
+       LIMIT ?`,
+      [self, before - capacity],
+    );
+    for (const v of victims) {
+      await this.db.exec('DELETE FROM posts WHERE address = ?', [v.address]);
+    }
+    return victims.map((v) => v.address as RecordAddress);
+  }
+
+  /**
+   * Number of remote (non-self) posts currently held — the size of the
+   * bounded inbox, used by the conf-9 admission rule. Own posts do not
+   * count against the inbox budget.
+   */
+  async countRemotePosts(self: PeerId): Promise<number> {
+    const rows = await this.db.query<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM posts WHERE author != ?',
+      [self],
+    );
+    return rows[0]?.n ?? 0;
+  }
+
+  /**
+   * The weakest remote post in the inbox (lowest scored similarity), or
+   * `null` when there is none. The candidate for eviction when the inbox
+   * is full and a higher-scoring post arrives. Rows with a null similarity
+   * are ignored — they were admitted without a comparable score.
+   */
+  async minSimilarityRemotePost(
+    self: PeerId,
+  ): Promise<{ address: RecordAddress; similarity: number } | null> {
+    const rows = await this.db.query<{ address: string; similarity: number }>(
+      `SELECT address, similarity FROM posts
+       WHERE author != ? AND similarity IS NOT NULL
+       ORDER BY similarity ASC
+       LIMIT 1`,
+      [self],
+    );
+    if (rows.length === 0) {
+      return null;
+    }
+    return {
+      address: rows[0].address as RecordAddress,
+      similarity: rows[0].similarity,
+    };
   }
 
   /**
@@ -90,6 +227,55 @@ export class PostRepository {
         continue;
       }
       out.push(new Float32Array(blob.buffer, blob.byteOffset, expectedDim));
+    }
+    return out;
+  }
+
+  /**
+   * Like `getOwnEmbeddings`, but each embedding carries the address of the
+   * post it came from. The receiver-side scorer needs the address so it can
+   * record WHICH own post a remote post matched against (`matched_own_address`),
+   * which drives the grouped inbox view.
+   */
+  async getOwnEmbeddingsWithAddress(
+    self: PeerId,
+    expectedDim: number,
+  ): Promise<Array<{ address: RecordAddress; embedding: Float32Array }>> {
+    const rows = await this.db.query<{ address: string; embedding: Uint8Array }>(
+      'SELECT address, embedding FROM posts WHERE author = ?',
+      [self],
+    );
+    const out: Array<{ address: RecordAddress; embedding: Float32Array }> = [];
+    for (const row of rows) {
+      const embedding = decodeEmbedding(row.embedding, expectedDim);
+      if (embedding === null) {
+        continue;
+      }
+      out.push({ address: row.address as RecordAddress, embedding });
+    }
+    return out;
+  }
+
+  /**
+   * Remote (non-self) posts with their embeddings decoded. Used by the inbox
+   * re-scoring pass to recompute each post's similarity against the user's
+   * own posts after a new post is published.
+   */
+  async getRemoteEmbeddings(
+    self: PeerId,
+    expectedDim: number,
+  ): Promise<Array<{ address: RecordAddress; embedding: Float32Array }>> {
+    const rows = await this.db.query<{ address: string; embedding: Uint8Array }>(
+      'SELECT address, embedding FROM posts WHERE author != ?',
+      [self],
+    );
+    const out: Array<{ address: RecordAddress; embedding: Float32Array }> = [];
+    for (const row of rows) {
+      const embedding = decodeEmbedding(row.embedding, expectedDim);
+      if (embedding === null) {
+        continue;
+      }
+      out.push({ address: row.address as RecordAddress, embedding });
     }
     return out;
   }
@@ -143,7 +329,32 @@ export class PostRepository {
     self: PeerId,
     limit: number,
     expectedDim: number,
+    opts: {
+      includeSelf?: boolean;
+      excludeAddress?: RecordAddress;
+      minSimilarity?: number;
+    } = {},
   ): Promise<MapPostRow[]> {
+    // The per-post map plots peers only (`author != self`). The global "my
+    // posts" map (`includeSelf`) plots everyone, omitting just the anchor so
+    // it is not duplicated.
+    //
+    // When `minSimilarity` is set the map honours the same view filter as the
+    // Inbox: drop posts below the threshold, but always keep own posts (stored
+    // with a null similarity) so the user's personal history never disappears
+    // from the "my posts" map.
+    const hasMin = typeof opts.minSimilarity === 'number';
+    const simPredicate = hasMin ? ' AND (similarity IS NULL OR similarity >= ?)' : '';
+    const lead = opts.includeSelf ? (opts.excludeAddress ?? '') : self;
+    const leadColumn = opts.includeSelf ? 'address' : 'author';
+    const params: ReadonlyArray<unknown> = hasMin
+      ? [lead, opts.minSimilarity, limit]
+      : [lead, limit];
+    const sql = `SELECT address, author, text, embedding, created_at, similarity
+                FROM posts
+                WHERE ${leadColumn} != ?${simPredicate}
+                ORDER BY created_at DESC
+                LIMIT ?`;
     const rows = await this.db.query<{
       address: string;
       author: string;
@@ -151,14 +362,7 @@ export class PostRepository {
       embedding: Uint8Array;
       created_at: number;
       similarity: number | null;
-    }>(
-      `SELECT address, author, text, embedding, created_at, similarity
-       FROM posts
-       WHERE author != ?
-       ORDER BY created_at DESC
-       LIMIT ?`,
-      [self, limit],
-    );
+    }>(sql, params);
     const out: MapPostRow[] = [];
     for (const row of rows) {
       const embedding = decodeEmbedding(row.embedding, expectedDim);

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="t d">
+  <title id="t">Resonance mark</title>
+  <desc id="d">A solid point radiating two opposing arcs, rotated for motion.</desc>
+  <!--
+    Master geometry (keep in sync with src/ui/design-system/Icon.tsx and
+    android ic_launcher_foreground.xml):
+      center (120,120) · dot r=28 · arcs R=80, stroke 28, round caps,
+      110° sweeps starting at -105° and 75° (i.e. rotated -15° off-axis).
+  -->
+  <defs>
+    <linearGradient id="res-g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9D85FF"/>
+      <stop offset="1" stop-color="#6B4DFF"/>
+    </linearGradient>
+  </defs>
+  <g fill="none" stroke="url(#res-g)" stroke-width="28" stroke-linecap="round">
+    <path d="M99.29 42.73A80 80 0 0 1 199.7 126.97"/>
+    <path d="M140.71 197.27A80 80 0 0 1 40.3 113.03"/>
+  </g>
+  <circle cx="120" cy="120" r="28" fill="url(#res-g)"/>
+</svg>

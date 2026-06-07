@@ -16,12 +16,16 @@ import type {
   PlatformContainer,
   PlatformEmbeddingService,
   PlatformLlmService,
-  PlatformP2p,
 } from '@platform/PlatformContainer';
-import type { BucketId, PeerId, SignedRecord } from '@core/domain/types';
+import type { Announcement, PeerId, SignedRecord } from '@core/domain/types';
 import { PostRepository } from '@data/PostRepository';
+import { AnnouncementRepository } from '@data/AnnouncementRepository';
 import { ResponseRepository } from '@data/ResponseRepository';
+import { ReactionRepository } from '@data/ReactionRepository';
 import { PeerRepository } from '@data/PeerRepository';
+import { AgentActivityRepository } from '@data/AgentActivityRepository';
+import { PendingActionRepository } from '@data/PendingActionRepository';
+import { AgentLogRepository } from '@data/AgentLogRepository';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 import type { IpcBridge } from './IpcBridge';
 import { requireBridge } from './IpcBridge';
@@ -56,11 +60,15 @@ export async function bootstrapRemote(): Promise<PlatformContainer> {
   const llm = new RemoteLlmService(bridge);
   const network = new RemoteNetwork(bridge);
   const mailbox = new RemoteMailbox(bridge);
-  const p2p = new RemoteP2p(bridge);
 
   // Repositories are pure SQL — they happily wrap a remote IDatabase.
   const posts = new PostRepository(database);
+  const announcements = new AnnouncementRepository(database);
   const responses = new ResponseRepository(database);
+  const reactions = new ReactionRepository(database);
+  const agentActivity = new AgentActivityRepository(database);
+  const pending = new PendingActionRepository(database);
+  const agentLog = new AgentLogRepository(database);
   const peers = new PeerRepository(database);
 
   return {
@@ -76,11 +84,15 @@ export async function bootstrapRemote(): Promise<PlatformContainer> {
     network,
     mailbox,
     posts,
+    announcements,
     responses,
+    reactions,
+    agentActivity,
+    pending,
+    agentLog,
     peers,
     embedderConcrete: embedder,
     llmConcrete: llm,
-    p2p,
   };
 }
 
@@ -291,6 +303,10 @@ class RemoteLlmService implements PlatformLlmService, ILlmService {
     return (await this.bridge.call('llm', 'complete', [prompt, options])) as string;
   }
 
+  cancelGeneration(): void {
+    void this.bridge.call('llm', 'cancelGeneration', []);
+  }
+
   async completeStream(
     prompt: string,
     options: LlmGenerateOptions,
@@ -322,9 +338,9 @@ class RemoteLlmService implements PlatformLlmService, ILlmService {
 // ---------- Network ----------------------------------------------------------
 
 class RemoteNetwork implements IPeerNetwork {
-  private joined: BucketId[] = [];
   private recordHandlers: Array<(r: SignedRecord) => void> = [];
-  private presenceHandlers: Array<(p: PeerId, b: BucketId, present: boolean) => void> = [];
+  private announcementHandlers: Array<(a: Announcement) => void> = [];
+  private presenceHandlers: Array<(p: PeerId, present: boolean) => void> = [];
 
   constructor(private readonly bridge: IpcBridge) {
     bridge.on('network/record', (payload) => {
@@ -333,16 +349,18 @@ class RemoteNetwork implements IPeerNetwork {
         h(record);
       }
     });
-    bridge.on('network/presence', (payload) => {
-      const evt = payload as { peerId: PeerId; bucket: BucketId; present: boolean };
-      for (const h of this.presenceHandlers) {
-        h(evt.peerId, evt.bucket, evt.present);
+    bridge.on('network/announcement', (payload) => {
+      const announcement = payload as Announcement;
+      for (const h of this.announcementHandlers) {
+        h(announcement);
       }
     });
-  }
-
-  get joinedBuckets(): ReadonlyArray<BucketId> {
-    return this.joined;
+    bridge.on('network/presence', (payload) => {
+      const evt = payload as { peerId: PeerId; present: boolean };
+      for (const h of this.presenceHandlers) {
+        h(evt.peerId, evt.present);
+      }
+    });
   }
 
   async initialize(): Promise<void> {
@@ -352,27 +370,22 @@ class RemoteNetwork implements IPeerNetwork {
   async shutdown(): Promise<void> {
     this.recordHandlers = [];
     this.presenceHandlers = [];
-    this.joined = [];
   }
 
-  async joinBucket(bucket: BucketId): Promise<void> {
-    if (this.joined.includes(bucket)) {
-      return;
-    }
-    await this.bridge.call('network', 'joinBucket', [bucket]);
-    this.joined.push(bucket);
-  }
-
-  async leaveBucket(bucket: BucketId): Promise<void> {
-    if (!this.joined.includes(bucket)) {
-      return;
-    }
-    await this.bridge.call('network', 'leaveBucket', [bucket]);
-    this.joined = this.joined.filter((b) => b !== bucket);
+  async joinRoom(): Promise<void> {
+    await this.bridge.call('network', 'joinRoom', []);
   }
 
   async publish(_record: SignedRecord): Promise<void> {
     // No-op: Hypercore replication propagates after mailbox.append.
+  }
+
+  async rescan(): Promise<void> {
+    await this.bridge.call('network', 'rescan', []);
+  }
+
+  async requestPull(author: PeerId, feedIndex: number): Promise<void> {
+    await this.bridge.call('network', 'requestPull', [author, feedIndex]);
   }
 
   onRecord(handler: (record: SignedRecord) => void): () => void {
@@ -382,9 +395,14 @@ class RemoteNetwork implements IPeerNetwork {
     };
   }
 
-  onPeerPresence(
-    handler: (peer: PeerId, bucket: BucketId, present: boolean) => void,
-  ): () => void {
+  onAnnouncement(handler: (a: Announcement) => void): () => void {
+    this.announcementHandlers.push(handler);
+    return () => {
+      this.announcementHandlers = this.announcementHandlers.filter((h) => h !== handler);
+    };
+  }
+
+  onPeerPresence(handler: (peer: PeerId, present: boolean) => void): () => void {
     this.presenceHandlers.push(handler);
     return () => {
       this.presenceHandlers = this.presenceHandlers.filter((h) => h !== handler);
@@ -407,42 +425,3 @@ class RemoteMailbox implements IMailbox {
   }
 }
 
-// ---------- P2P --------------------------------------------------------------
-
-class RemoteP2p implements PlatformP2p {
-  private noiseKey: string | null = null;
-  private peerNoiseHandlers: Array<(peerId: string, noiseKey: string) => void> = [];
-
-  constructor(private readonly bridge: IpcBridge) {
-    void this.refreshNoiseKey();
-    bridge.on('p2p/peerNoise', (payload) => {
-      const evt = payload as { peerId: string; noiseKey: string };
-      for (const h of this.peerNoiseHandlers) {
-        h(evt.peerId, evt.noiseKey);
-      }
-    });
-  }
-
-  get localNoiseKey(): string | null {
-    return this.noiseKey;
-  }
-
-  async joinPeer(noiseKey: string): Promise<void> {
-    await this.bridge.call('p2p', 'joinPeer', [noiseKey]);
-  }
-
-  onPeerNoise(handler: (peerId: string, noiseKey: string) => void): () => void {
-    this.peerNoiseHandlers.push(handler);
-    return () => {
-      this.peerNoiseHandlers = this.peerNoiseHandlers.filter((h) => h !== handler);
-    };
-  }
-
-  private async refreshNoiseKey(): Promise<void> {
-    try {
-      this.noiseKey = (await this.bridge.call('p2p', 'localNoiseKey', [])) as string | null;
-    } catch {
-      this.noiseKey = null;
-    }
-  }
-}
