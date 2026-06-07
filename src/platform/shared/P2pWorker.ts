@@ -107,6 +107,7 @@ export class P2pWorker {
       storagePath: this.options.storagePath,
       maxConnections: RoomConfig.maxConnections,
       pullTimeoutMs: RoomConfig.pullTimeoutMs,
+      announceBatchSize: RoomConfig.announceBatchSize,
     });
 
     this.transport = this.options.transport;

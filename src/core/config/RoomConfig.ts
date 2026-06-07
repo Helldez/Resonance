@@ -40,8 +40,16 @@ export const RoomConfig = {
    *             keys, and peers pull only the records they admit (sparse) rather
    *             than replicating every core. The room protocol is incompatible
    *             with v4 peers, so the prefix bump isolates them.
+   *   v5 → v6 — announce gossip wire format: JSON-text announcements replaced
+   *             by compact-encoding binary (a 768-dim announcement shrinks
+   *             ~15KB → ~3.2KB) and the on-open snapshot is sent in bounded
+   *             batches (`announceBatchSize`) instead of one message. At 1063
+   *             announcements the single-message snapshot was ~15.6MB — above
+   *             the transport's frame cap — so every connection died at open.
+   *             The announce channel protocol bumps to `resonance-announce/v2`;
+   *             the prefix bump isolates v5 peers.
    */
-  topicPrefix: 'resonance/v5/room/',
+  topicPrefix: 'resonance/v6/room/',
 
   /**
    * Maximum concurrent Hyperswarm connections per node. Mirrors the conf-9
@@ -95,6 +103,15 @@ export const RoomConfig = {
    * evicted first.
    */
   announceTier1Capacity: 5000,
+
+  /**
+   * Maximum announcements per gossip message. The on-open snapshot grows with
+   * the room's history; as a single message it eventually exceeds the
+   * transport's max frame size and the connection is destroyed at open
+   * (observed at 1063 announcements). Batching bounds every message to
+   * roughly `announceBatchSize × ~3.2KB` regardless of network size.
+   */
+  announceBatchSize: 100,
 
   /**
    * How long a single sparse block pull waits before giving up (ms). After an

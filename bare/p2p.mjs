@@ -7,12 +7,16 @@
  *      feed of signed posts, responses and reactions.
  *   3. Run Hyperswarm with a connection cap, and join ONE shared 32-byte room
  *      topic (derived from the room id) as both client and server.
- *   4. On every connection, multiplex a "resonance-announce/v1" protocol over
+ *   4. On every connection, multiplex a "resonance-announce/v2" protocol over
  *      the Noise stream (Protomux). Peers exchange and gossip lightweight
  *      ANNOUNCEMENTS (author + outbox key + embedding + digest) — NOT full
  *      records, and NOT whole cores. A newly-learned announcement is emitted up
  *      to RN and forwarded to every other connection, so it reaches every peer
- *      transitively (~log₃₂(N) hops).
+ *      transitively (~log₃₂(N) hops). Announcements travel as compact-encoding
+ *      binary, in batches of at most `announceBatchSize` per message — the
+ *      on-open snapshot grows with the room's history, and a single oversized
+ *      message (observed: 1063 announcements ≈ 15.6MB as JSON) blows the
+ *      transport's frame cap and kills the connection at open.
  *   5. When RN admits an announcement it calls `pull`; only then do we open the
  *      author's outbox core in sparse mode and download EXACTLY that one block,
  *      then stream the full record up to RN to be verified and stored.
@@ -23,7 +27,7 @@
  * Wire protocol with the RN side: see ./rpc-frame.mjs.
  *
  * Commands accepted from RN:
- *   - 'init'      { storagePath, maxConnections, pullTimeoutMs } -> { outboxKey, noiseKey }
+ *   - 'init'      { storagePath, maxConnections, pullTimeoutMs, announceBatchSize } -> { outboxKey, noiseKey }
  *   - 'append'    { record }                      -> { feedIndex }
  *   - 'pull'      { author, feedIndex }            -> { ok: boolean }
  *   - 'joinRoom'  { roomId, topicSeed }           -> { ok: true }
@@ -39,18 +43,19 @@
 import Corestore from 'corestore'
 import Hyperswarm from 'hyperswarm'
 import Protomux from 'protomux'
-import c from 'compact-encoding'
 import b4a from 'b4a'
 import crypto from 'bare-crypto'
 import fs from 'bare-fs'
 
 import { FramedRpc } from './rpc-frame.mjs'
 import { createAnnounceState } from './announce-directory.mjs'
+import { announcementBatch } from './announce-codec.mjs'
 
 const { IPC } = BareKit
 
 const DEFAULT_MAX_CONNECTIONS = 32
 const DEFAULT_PULL_TIMEOUT_MS = 8000
+const DEFAULT_ANNOUNCE_BATCH_SIZE = 100
 
 let store = null
 let outbox = null
@@ -58,6 +63,7 @@ let swarm = null
 let announceDir = null
 let roomDiscovery = null
 let pullTimeoutMs = DEFAULT_PULL_TIMEOUT_MS
+let announceBatchSize = DEFAULT_ANNOUNCE_BATCH_SIZE
 const openedCores = new Map() // hex(outboxKey) -> core (opened on demand for pulls)
 const joinedDiscovery = new Set() // hex(discoveryKey) we have a swarm lookup for
 let rpc
@@ -117,13 +123,22 @@ function onConnection(conn, info) {
   // The announce channel gossips a *list* of announcements. On open each side
   // sends the full set it knows; afterwards only freshly-learned ones are
   // forwarded (the receiver's `learn` dedup prevents loops). Announcements are
-  // JSON strings — variable-size (embedding) and trivial to evolve.
+  // compact-encoding binary, and every send is capped at `announceBatchSize`
+  // per message: the snapshot grows with the room's history, and one oversized
+  // frame kills the connection at open (the v1 JSON snapshot did exactly that
+  // at 1063 announcements ≈ 15.6MB).
+  const sendBatched = (anns) => {
+    for (let i = 0; i < anns.length; i += announceBatchSize) {
+      annMsg.send(anns.slice(i, i + announceBatchSize))
+    }
+  }
+
   const channel = mux.createChannel({
-    protocol: 'resonance-announce/v1',
+    protocol: 'resonance-announce/v2',
     onopen: () => {
       const snapshot = announceDir.snapshot()
       if (snapshot.length > 0) {
-        annMsg.send(snapshot.map((a) => JSON.stringify(a)))
+        sendBatched(snapshot)
       }
       console.log(`[p2p] announce open, sent ${snapshot.length} announcements`)
     },
@@ -136,24 +151,17 @@ function onConnection(conn, info) {
   })
 
   const entry = {
-    sendAnns: (anns) => {
-      annMsg.send(anns.map((a) => JSON.stringify(a)))
-    },
+    sendAnns: sendBatched,
   }
   const unregister = announceDir.register(entry)
 
   const annMsg = channel.addMessage({
-    encoding: c.array(c.string),
-    onmessage: (items) => {
-      const parsed = []
-      for (const s of items) {
-        try {
-          parsed.push(JSON.parse(s))
-        } catch (err) {
-          // ignore a malformed announcement rather than dropping the batch
-        }
-      }
-      const fresh = announceDir.learn(parsed)
+    encoding: announcementBatch,
+    onmessage: (batch) => {
+      // A batch that fails to decode never reaches here — Protomux drops the
+      // message/channel. Per-item validation (dims, signatures) stays on the
+      // RN side, which treats every announcement as untrusted anyway.
+      const fresh = announceDir.learn(batch)
       for (const a of fresh) {
         rpc.emit('announcement', { announcement: a })
       }
@@ -195,7 +203,7 @@ async function persistSwarmKeyPair(storagePath, kp) {
   await fs.promises.writeFile(path, json, 'utf8')
 }
 
-async function initialize({ storagePath, maxConnections, pullTimeoutMs: pt }) {
+async function initialize({ storagePath, maxConnections, pullTimeoutMs: pt, announceBatchSize: abs }) {
   if (store !== null) {
     return {
       outboxKey: bytesToHex(outbox.key),
@@ -210,6 +218,9 @@ async function initialize({ storagePath, maxConnections, pullTimeoutMs: pt }) {
   announceDir = createAnnounceState()
   if (typeof pt === 'number' && pt > 0) {
     pullTimeoutMs = pt
+  }
+  if (typeof abs === 'number' && abs > 0) {
+    announceBatchSize = abs
   }
 
   // Re-announce our own existing outbox records. Announcements are in-memory
