@@ -33,8 +33,6 @@ function Gate() {
   const container = useAppContainer();
   const stage = useBootstrapStore((s) => s.stage);
   const onboardingDone = useSettingsStore((s) => s.onboardingDone);
-  const receiverContext = useSettingsStore((s) => s.receiverContext);
-  const displayName = useSettingsStore((s) => s.displayName);
   // Hydration-safe: the static web export renders the Splash, so the FIRST
   // client render must match it unconditionally (reading hasHydrated() during
   // render races zustand's async rehydrate and caused React #418 on desktop).
@@ -42,22 +40,33 @@ function Gate() {
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    if (useSettingsStore.persist.hasHydrated()) {
+    const markHydrated = (): void => {
+      // Installs that predate the onboarding flag have settings already
+      // filled in — migrate them to onboardingDone ONCE, at hydration.
+      // This check must NOT live in render: evaluated live, the first
+      // character typed into the onboarding name field flipped it and
+      // unmounted the whole flow mid-typing.
+      const s = useSettingsStore.getState();
+      if (
+        !s.onboardingDone &&
+        (s.receiverContext.trim().length > 0 || s.displayName.trim().length > 0)
+      ) {
+        s.setOnboardingDone(true);
+      }
       setHydrated(true);
+    };
+    if (useSettingsStore.persist.hasHydrated()) {
+      markHydrated();
       return;
     }
-    return useSettingsStore.persist.onFinishHydration(() => setHydrated(true));
+    return useSettingsStore.persist.onFinishHydration(markHydrated);
   }, []);
 
   if (!hydrated) {
     return <Splash />;
   }
 
-  // Installs that predate the onboarding flag have settings already filled
-  // in — never show them the first-run flow.
-  const done =
-    onboardingDone || receiverContext.trim().length > 0 || displayName.trim().length > 0;
-  if (!done) {
+  if (!onboardingDone) {
     return <OnboardingFlow />;
   }
 

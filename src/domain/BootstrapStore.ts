@@ -10,7 +10,10 @@ type BootstrapStore = BootstrapState & {
 
 export const useBootstrapStore = create<BootstrapStore>((set) => ({
   stage: 'idle',
-  setStage: (stage) => set({ stage }),
+  // Entering a new stage invalidates any previous stage's byte progress —
+  // without the reset, the Splash rendered the finished embedding-model
+  // download bar under the next step's label ("Connecting to the network").
+  setStage: (stage) => set({ stage, progressBytes: undefined, totalBytes: undefined }),
   setProgress: (progressBytes, totalBytes) => set({ progressBytes, totalBytes }),
   setError: (error) => set({ stage: 'error', error }),
   setSelf: (self) => set({ self }),
