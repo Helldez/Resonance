@@ -35,12 +35,19 @@ function Gate() {
   const onboardingDone = useSettingsStore((s) => s.onboardingDone);
   const receiverContext = useSettingsStore((s) => s.receiverContext);
   const displayName = useSettingsStore((s) => s.displayName);
-  const [hydrated, setHydrated] = useState(useSettingsStore.persist.hasHydrated());
+  // Hydration-safe: the static web export renders the Splash, so the FIRST
+  // client render must match it unconditionally (reading hasHydrated() during
+  // render races zustand's async rehydrate and caused React #418 on desktop).
+  // The effect then flips to the real state after mount.
+  const [hydrated, setHydrated] = useState(false);
 
-  useEffect(
-    () => useSettingsStore.persist.onFinishHydration(() => setHydrated(true)),
-    [],
-  );
+  useEffect(() => {
+    if (useSettingsStore.persist.hasHydrated()) {
+      setHydrated(true);
+      return;
+    }
+    return useSettingsStore.persist.onFinishHydration(() => setHydrated(true));
+  }, []);
 
   if (!hydrated) {
     return <Splash />;
