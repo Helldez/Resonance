@@ -86,6 +86,8 @@ export const DesignTokens = {
 
   /** Shared component dimensions. */
   size: {
+    /** Max content column width on wide (desktop/web) windows — X-style. */
+    contentMaxWidth: 600,
     avatar: 40,
     avatarSmall: 24,
     avatarLarge: 64,

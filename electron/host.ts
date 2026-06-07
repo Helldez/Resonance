@@ -200,7 +200,12 @@ function createWindow(): void {
   const win = new BrowserWindow({
     width: 1180,
     height: 820,
-    backgroundColor: '#0e0f12',
+    title: 'Resonance',
+    // The default Electron menu bar (File/Edit/View) is a white strip that
+    // clashes with the pure-black UI. Auto-hide keeps keyboard shortcuts
+    // (incl. Ctrl+Shift+I for DevTools) reachable via Alt.
+    autoHideMenuBar: true,
+    backgroundColor: '#000000',
     webPreferences: {
       preload: process.env.RESONANCE_NO_PRELOAD === '1' ? undefined : join(__dirname, 'preload.cjs'),
       contextIsolation: true,

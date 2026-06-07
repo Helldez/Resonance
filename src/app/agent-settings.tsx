@@ -5,6 +5,7 @@ import { useAgentProfileStore } from '@domain/AgentProfileStore';
 import { AgentConfig } from '@core/config/AgentConfig';
 import { DesignTokens as T } from '@core/config/DesignTokens';
 import {
+  ContentColumn,
   IconButton,
   ListGroup,
   ListRow,
@@ -51,6 +52,7 @@ export default function AgentSettingsScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: T.color.bg }}>
       <TopBar title="Agent settings" back />
+      <ContentColumn>
       <ScrollView
         contentContainerStyle={{ paddingBottom: insets.bottom + T.space.xxl }}
         keyboardShouldPersistTaps="handled"
@@ -210,6 +212,7 @@ export default function AgentSettingsScreen() {
           />
         </ListGroup>
       </ScrollView>
+      </ContentColumn>
     </View>
   );
 }

@@ -29,7 +29,6 @@ export function TabBar(props: {
   return (
     <View
       style={{
-        flexDirection: 'row',
         backgroundColor: T.color.bg,
         borderTopWidth: StyleSheet.hairlineWidth,
         borderTopColor: T.color.border,
@@ -37,6 +36,15 @@ export function TabBar(props: {
         height: T.size.tabBarHeight + insets.bottom,
       }}
     >
+      <View
+        style={{
+          flexDirection: 'row',
+          width: '100%',
+          maxWidth: T.size.contentMaxWidth,
+          alignSelf: 'center',
+          flex: 1,
+        }}
+      >
       {props.routes.map((name, i) => {
         const meta = TAB_META[name];
         if (meta === undefined) {
@@ -80,6 +88,7 @@ export function TabBar(props: {
           </Pressable>
         );
       })}
+      </View>
     </View>
   );
 }

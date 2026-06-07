@@ -52,7 +52,13 @@ export function OnboardingFlow() {
     >
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ flexGrow: 1, padding: T.space.xxl }}
+        contentContainerStyle={{
+          flexGrow: 1,
+          padding: T.space.xxl,
+          width: '100%',
+          maxWidth: T.size.contentMaxWidth,
+          alignSelf: 'center',
+        }}
         keyboardShouldPersistTaps="handled"
       >
         {step === 0 && <StepWelcome onNext={next} />}

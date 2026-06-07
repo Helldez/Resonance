@@ -1,6 +1,12 @@
-import { TextInput, View } from 'react-native';
+import { Platform, TextInput, View, type TextStyle } from 'react-native';
 import { DesignTokens as T } from '@core/config/DesignTokens';
 import { Text } from './Text';
+
+// react-native-web renders TextInput as <textarea>/<input>, which gets the
+// browser's default focus ring (a colored outline on desktop). Our fields
+// carry their own focus affordances, so kill it on web.
+const NO_WEB_OUTLINE =
+  Platform.OS === 'web' ? ({ outlineStyle: 'none' } as unknown as TextStyle) : null;
 
 /**
  * Token-driven text input. `bare` renders without a border — the X compose
@@ -33,22 +39,27 @@ export function TextField(props: {
         autoFocus={props.autoFocus}
         onSubmitEditing={props.onSubmitEditing}
         accessibilityLabel={props.accessibilityLabel ?? props.placeholder}
-        style={{
-          color: T.color.text,
-          fontSize,
-          lineHeight: props.large === true ? T.font.lineHeight.xl : T.font.lineHeight.base,
-          textAlignVertical: props.multiline === true ? 'top' : 'center',
-          ...(props.bare === true
-            ? { paddingVertical: T.space.sm }
-            : {
-                borderWidth: 1,
-                borderColor: props.error != null ? T.color.danger : T.color.border,
-                borderRadius: T.radius.md,
-                paddingHorizontal: T.space.md,
-                paddingVertical: T.space.sm + T.space.xxs,
-              }),
-          ...(props.multiline === true ? { minHeight: (props.numberOfLines ?? 4) * T.font.lineHeight.base + T.space.lg } : {}),
-        }}
+        style={[
+          {
+            color: T.color.text,
+            fontSize,
+            lineHeight: props.large === true ? T.font.lineHeight.xl : T.font.lineHeight.base,
+            textAlignVertical: props.multiline === true ? 'top' : 'center',
+            ...(props.bare === true
+              ? { paddingVertical: T.space.sm }
+              : {
+                  borderWidth: 1,
+                  borderColor: props.error != null ? T.color.danger : T.color.border,
+                  borderRadius: T.radius.md,
+                  paddingHorizontal: T.space.md,
+                  paddingVertical: T.space.sm + T.space.xxs,
+                }),
+            ...(props.multiline === true
+              ? { minHeight: (props.numberOfLines ?? 4) * T.font.lineHeight.base + T.space.lg }
+              : {}),
+          },
+          NO_WEB_OUTLINE,
+        ]}
       />
       {props.error != null && (
         <Text variant="small" color={T.color.danger} style={{ marginTop: T.space.xs }}>

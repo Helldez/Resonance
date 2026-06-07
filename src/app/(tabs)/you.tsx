@@ -7,6 +7,7 @@ import { DesignTokens as T } from '@core/config/DesignTokens';
 import { formatRelative } from '@ui/format/relativeTime';
 import {
   Avatar,
+  ContentColumn,
   EmptyState,
   IconButton,
   ListGroup,
@@ -66,6 +67,7 @@ export default function YouScreen() {
           />
         }
       />
+      <ContentColumn>
       <FlatList
         data={posts}
         keyExtractor={(p) => p.address}
@@ -122,6 +124,7 @@ export default function YouScreen() {
           </Row>
         )}
       />
+      </ContentColumn>
     </View>
   );
 }

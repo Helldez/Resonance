@@ -9,7 +9,7 @@ import { createPost } from '@core/posts/CreatePost';
 import { addressOf } from '@core/utils/AddressOf';
 import { RoomConfig } from '@core/config/RoomConfig';
 import { DesignTokens as T } from '@core/config/DesignTokens';
-import { Avatar, Button, IconButton, Text, TextField } from '@ui/design-system';
+import { Avatar, Button, ContentColumn, IconButton, Text, TextField } from '@ui/design-system';
 
 /**
  * X-style compose: cancel left, accent Post pill right, avatar + large
@@ -93,50 +93,60 @@ export default function ComposeScreen() {
       <View
         style={{
           paddingTop: insets.top,
-          flexDirection: 'row',
-          alignItems: 'center',
-          paddingHorizontal: T.space.sm,
-          height: T.size.topBarHeight + insets.top,
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: T.color.border,
         }}
       >
-        <IconButton icon="x" accessibilityLabel="Cancel" onPress={() => router.back()} />
-        <View style={{ flex: 1 }} />
-        <Text
-          variant="small"
-          color={remaining < 0 ? T.color.danger : T.color.textMuted}
-          style={{ marginRight: T.space.md }}
-        >
-          {String(remaining)}
-        </Text>
-        <Button
-          label="Post"
-          small
-          loading={submitting}
-          disabled={submitting || text.trim().length === 0 || remaining < 0}
-          onPress={() => {
-            void submit();
+        <View
+          style={{
+            width: '100%',
+            maxWidth: T.size.contentMaxWidth,
+            alignSelf: 'center',
+            flexDirection: 'row',
+            alignItems: 'center',
+            paddingHorizontal: T.space.sm,
+            height: T.size.topBarHeight,
           }}
-        />
-      </View>
-
-      <View style={{ flexDirection: 'row', padding: T.space.lg, gap: T.space.md, flex: 1 }}>
-        <Avatar peerId={container.self} label={displayName} />
-        <View style={{ flex: 1 }}>
-          <TextField
-            value={text}
-            onChangeText={setText}
-            placeholder="A thought, a need, a topic — anything you'd want a stranger with a similar question to see."
-            multiline
-            numberOfLines={6}
-            bare
-            large
-            autoFocus
-            error={error}
+        >
+          <IconButton icon="x" accessibilityLabel="Cancel" onPress={() => router.back()} />
+          <View style={{ flex: 1 }} />
+          <Text
+            variant="small"
+            color={remaining < 0 ? T.color.danger : T.color.textMuted}
+            style={{ marginRight: T.space.md }}
+          >
+            {String(remaining)}
+          </Text>
+          <Button
+            label="Post"
+            small
+            loading={submitting}
+            disabled={submitting || text.trim().length === 0 || remaining < 0}
+            onPress={() => {
+              void submit();
+            }}
           />
         </View>
       </View>
+
+      <ContentColumn>
+        <View style={{ flexDirection: 'row', padding: T.space.lg, gap: T.space.md, flex: 1 }}>
+          <Avatar peerId={container.self} label={displayName} />
+          <View style={{ flex: 1 }}>
+            <TextField
+              value={text}
+              onChangeText={setText}
+              placeholder="A thought, a need, a topic — anything you'd want a stranger with a similar question to see."
+              multiline
+              numberOfLines={6}
+              bare
+              large
+              autoFocus
+              error={error}
+            />
+          </View>
+        </View>
+      </ContentColumn>
     </KeyboardAvoidingView>
   );
 }
