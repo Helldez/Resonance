@@ -41,8 +41,9 @@ agent on its behalf (commits, PRs, READMEs, issues, social posts).
 2. **All code, identifiers, UI strings and comments are in English.** Italian
    appears only in the user-facing in-app i18n table (none yet) and in
    conversational answers when the user writes Italian.
-3. **No "hire me" framing in any public output.** This is a craft showcase,
-   not a job application. Stick to product/engineering language.
+3. **Product/engineering language only in public output.** No self-promotion,
+   no calls to action, no audience-chasing framing — in READMEs, commits,
+   issues or posts. The work speaks in its own register.
 4. **Show, don't tell.** Anywhere the README or a comment might say "we care
    about X", replace it with an artifact that demonstrates X.
 

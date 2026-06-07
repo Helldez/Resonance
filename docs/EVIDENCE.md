@@ -23,6 +23,12 @@ Every line is `[inference-audit] {…json…}` with `evt` and `at` (epoch ms):
 
 ## Capturing a demo run
 
+Start from a **fresh install** (or clear the app's data) on every device in
+the demo: the bounded top-200 inbox lives in the local SQLite and survives
+network-version bumps, so a device used for development still holds its old
+test posts. A clean install guarantees the recorded feed contains only what
+the demo itself produces.
+
 **Android** (app logs land in logcat under the `ReactNativeJS` tag):
 
 ```powershell

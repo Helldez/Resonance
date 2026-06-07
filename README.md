@@ -294,16 +294,15 @@ Honesty over polish — what is *not* solved yet:
 
 ## Prior work & hackathon timeline
 
-Resonance predates the QVAC Hackathon: the routing experiments (LSH
-buckets → single room), the calibration harness, and the first
-identity/signing layer were built earlier — that history is preserved in
-this repository and in `docs/SEMANTIC_ROUTING.md`. Work completed **during
-the hackathon period (June 1–21, 2026)** includes: the announce-then-pull
-room protocol (v5) and its binary batched wire format (v6), the on-device
-AI agent layer (triage → decide → governor, autonomy dial, approval queue),
-signed reactions, the X-style tab-shell UI, the desktop test peer, the
-stress-test campaign (400-post floods) and the resulting ingestion fixes,
-and this documentation set.
+Resonance was started **for this hackathon**: the first commit is May 26,
+2026 — the day after the QVAC Hackathon's pre-registration opened (May 25).
+Per the rules, everything that predates the official build period is
+disclosed below; the full git history is public and is the authoritative
+record.
+
+| Pre-hackathon scaffold (May 26–31) | Built during the hackathon (June 1–21) |
+|---|---|
+| MVP skeleton (Expo + hexagonal core), Ed25519 identity & signing, first single-device post flow, first P2P room (Hyperswarm + Corestore), early LSH-bucket routing experiments — later discarded, history preserved in [`docs/SEMANTIC_ROUTING.md`](docs/SEMANTIC_ROUTING.md) | Announce-then-pull room protocol (v5) and its binary batched wire format (v6); the entire on-device AI agent layer (deterministic triage banding, governor, autonomy dial, approval queue); signed reactions; the tab-shell UI and design system; the desktop test peer; the 400/1000-post stress-test campaigns and the resulting ingestion fixes; capability-based private networks (`networkSalt`); the evidence/disclosure artifacts and this documentation set |
 
 ## License
 
