@@ -10,7 +10,8 @@ import {
 } from 'react-native-paper';
 import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRequireContainer, appendOwnEmbedding, rescoreInboxAgainstOwnPosts } from '@ui/AppContainerContext';
+import { useRequireContainer } from '@ui/AppContainerContext';
+import { appendOwnEmbedding, rescoreInboxAgainstOwnPosts } from '@services/NetworkIngestion';
 import type { PendingAction } from '@data/PendingActionRepository';
 import type { ReactionType, RecordAddress } from '@core/domain/types';
 import { createPost } from '@core/posts/CreatePost';

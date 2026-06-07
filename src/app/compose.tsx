@@ -3,11 +3,8 @@ import { View } from 'react-native';
 import { TextInput, Button, useTheme, HelperText } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import {
-  useRequireContainer,
-  appendOwnEmbedding,
-  rescoreInboxAgainstOwnPosts,
-} from '@ui/AppContainerContext';
+import { useRequireContainer } from '@ui/AppContainerContext';
+import { appendOwnEmbedding, rescoreInboxAgainstOwnPosts } from '@services/NetworkIngestion';
 import { createPost } from '@core/posts/CreatePost';
 import { addressOf } from '@core/utils/AddressOf';
 

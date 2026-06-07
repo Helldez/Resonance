@@ -12,6 +12,7 @@ module.exports = function (api) {
             '@domain': './src/domain',
             '@platform': './src/platform',
             '@ui': './src/ui',
+            '@services': './src/app-services',
           },
         },
       ],

@@ -13,6 +13,13 @@ export const AgentConfig = {
   tickIntervalMs: 45_000,
 
   /**
+   * Delay before the first tick after the scheduler starts (ms). Short, so an
+   * enabled agent acts soon after boot instead of waiting a full interval —
+   * but not immediate, to let the post-boot work (rescan, rescore) settle.
+   */
+  firstTickDelayMs: 5_000,
+
+  /**
    * Hard cap on how many inbox candidates a single tick will even look at.
    * Bounds the LLM work per wake-up regardless of how full the inbox is.
    */
