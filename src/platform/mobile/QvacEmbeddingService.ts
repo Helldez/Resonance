@@ -5,6 +5,7 @@ import { MatchingConfig } from '@core/config/MatchingConfig';
 import { ModelProfiles } from '@core/config/ModelProfiles';
 import { l2NormalizeInPlace } from '@core/matching/L2Normalize';
 import { loadWithFallback } from '@core/utils/LoadWithFallback';
+import { auditInference } from '../shared/InferenceAudit';
 
 export type EmbeddingProgressCallback = (p: ModelProgressUpdate) => void;
 
@@ -77,9 +78,15 @@ export class QvacEmbeddingService implements IEmbeddingService {
     );
     // Serialise the actual SDK call: the model rejects a second in-flight job.
     return this.enqueue(async () => {
+      const startedAt = Date.now();
       const result = (await embed({ modelId, text: prompt } as never)) as {
         embedding: number[];
       };
+      auditInference('embedding.embed', {
+        textChars: trimmed.length,
+        dim: this.outputDim,
+        ms: Date.now() - startedAt,
+      });
       return postProcess(result.embedding, this.outputDim);
     });
   }
@@ -114,12 +121,17 @@ export class QvacEmbeddingService implements IEmbeddingService {
     // attention: 'causal', device: 'cpu' on Android — the Adreno GPU path
     // segfaults). EmbeddingGemma is an encoder and loads on the GPU defaults,
     // so nothing extra is passed.
+    const startedAt = Date.now();
     this.modelId = await loadWithFallback({
       primary: {
         modelSrc: ModelProfiles.embedding.url,
         modelType: 'llamacpp-embedding',
       },
       onProgress,
+    });
+    auditInference('embedding.load', {
+      model: ModelProfiles.embedding.url,
+      loadMs: Date.now() - startedAt,
     });
   }
 }

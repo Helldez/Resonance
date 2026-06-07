@@ -11,11 +11,24 @@
  * All conf-9 knobs live here so nothing is hard-coded in the worker or the
  * UI. Changing `topicPrefix` or `roomId` partitions the network.
  */
+/**
+ * Optional capability secret mixed into the topic derivation (see
+ * `networkSalt` below). Read from the `EXPO_PUBLIC_NETWORK_SALT` env var:
+ * Expo inlines `EXPO_PUBLIC_*` values from `.env` (gitignored) at bundle
+ * time; the desktop peer and Node scripts read the same variable from the
+ * process environment. Empty (the default for anyone cloning the repo)
+ * means the public network.
+ */
+const envNetworkSalt: string =
+  typeof process !== 'undefined' && process.env
+    ? (process.env.EXPO_PUBLIC_NETWORK_SALT ?? '')
+    : '';
+
 export const RoomConfig = {
   /**
    * The one shared room. The Hyperswarm topic is derived as
-   * `sha256(topicPrefix || roomId)`; every peer computes the same value and
-   * therefore lands in the same swarm.
+   * `sha256(topicPrefix || networkSalt || roomId)`; every peer computes the
+   * same value and therefore lands in the same swarm.
    */
   roomId: 'global',
 
@@ -50,6 +63,20 @@ export const RoomConfig = {
    *             the prefix bump isolates v5 peers.
    */
   topicPrefix: 'resonance/v6/room/',
+
+  /**
+   * Capability-based network partition. The topic seed sent to the worker is
+   * `topicPrefix + networkSalt`, so a non-empty salt yields a topic that is
+   * NOT derivable from the public source code — only peers that share the
+   * same out-of-band secret land in the same swarm. This is how a private
+   * dev/test network is isolated from the public one (the committed
+   * `topicPrefix` is readable by anyone, so versioning alone partitions but
+   * never protects). Empty string ⇒ the public network. Set via
+   * `EXPO_PUBLIC_NETWORK_SALT` in `.env` (see `.env.example`); use a
+   * high-entropy value (e.g. 32 random bytes hex) — a guessable salt is
+   * brute-forceable offline.
+   */
+  networkSalt: envNetworkSalt,
 
   /**
    * Maximum concurrent Hyperswarm connections per node. Mirrors the conf-9

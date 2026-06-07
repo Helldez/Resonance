@@ -144,7 +144,9 @@ export class P2pWorker {
     const rpc = this.requireRpc();
     await rpc.request<OkResult>('joinRoom', {
       roomId: RoomConfig.roomId,
-      topicSeed: RoomConfig.topicPrefix,
+      // Topic = sha256(topicSeed || roomId). A non-empty networkSalt makes
+      // the seed underivable from public source — private test networks.
+      topicSeed: RoomConfig.topicPrefix + RoomConfig.networkSalt,
     });
   }
 

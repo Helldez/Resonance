@@ -165,8 +165,9 @@ async function main(): Promise<void> {
   const join = handle.transport.requests.find((r) => r.method === 'joinRoom');
   assert.ok(join !== undefined);
   check(
-    'joinRoom sends roomId + topicSeed from RoomConfig',
-    join.params?.roomId === RoomConfig.roomId && join.params?.topicSeed === RoomConfig.topicPrefix,
+    'joinRoom sends roomId + topicSeed (prefix + networkSalt) from RoomConfig',
+    join.params?.roomId === RoomConfig.roomId &&
+      join.params?.topicSeed === RoomConfig.topicPrefix + RoomConfig.networkSalt,
   );
 
   await worker.requestPull(AUTHOR, 9);
