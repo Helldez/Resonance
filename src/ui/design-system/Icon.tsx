@@ -150,12 +150,17 @@ const GLYPHS: Record<IconName, ReactElement> = {
       <Line x1={12} y1={3} x2={12} y2={15} />
     </>
   ),
-  /** The Resonance mark: a point radiating two arcs. */
+  /**
+   * The Resonance mark: a solid point radiating two arcs. Refined brand
+   * geometry — 110° sweeps rotated -15° so the endpoints clear the axes
+   * (motion, not a static compass), heavier brand-weight stroke, filled
+   * core. Keep in sync with `assets/brand/resonance-mark.svg`.
+   */
   resonance: (
     <>
-      <Circle cx={12} cy={12} r={2.5} />
-      <Path d="M12 4a8 8 0 0 1 8 8" />
-      <Path d="M12 20a8 8 0 0 1-8-8" />
+      <Path d="M9.93 4.27A8 8 0 0 1 19.97 12.7" strokeWidth={2.6} />
+      <Path d="M14.07 19.73A8 8 0 0 1 4.03 11.3" strokeWidth={2.6} />
+      <Circle cx={12} cy={12} r={2.8} fill="currentColor" strokeWidth={0} />
     </>
   ),
 };
@@ -170,7 +175,8 @@ export function Icon(props: {
   const size = props.size ?? T.size.icon;
   const color = props.color ?? T.color.text;
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24">
+    // `color` feeds `currentColor` (the resonance mark's filled core).
+    <Svg width={size} height={size} viewBox="0 0 24 24" color={color}>
       <G
         stroke={color}
         strokeWidth={1.75}
