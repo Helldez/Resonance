@@ -48,3 +48,4 @@ tmp-release-build*.log
 .elec_copy.txt
 map-*.png
 scratch/
+.ui-shots/
