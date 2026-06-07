@@ -19,10 +19,7 @@ export interface InboxState {
   readonly items: ReadonlyArray<ScoredPost>;
 }
 
-export type ResponseMode = 'draft-confirm' | 'auto-publish';
-
 export interface SettingsState {
-  readonly responseMode: ResponseMode;
   readonly receiverContext: string;
   readonly similarityThreshold: number;
   /**
