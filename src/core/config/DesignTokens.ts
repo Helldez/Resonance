@@ -86,6 +86,8 @@ export const DesignTokens = {
 
   /** Shared component dimensions. */
   size: {
+    /** Max content width for screens that cap themselves on desktop (compose). */
+    contentMaxWidth: 600,
     avatar: 40,
     avatarSmall: 24,
     avatarLarge: 64,
