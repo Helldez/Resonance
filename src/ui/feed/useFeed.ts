@@ -4,7 +4,7 @@ import type { PlatformContainer } from '@platform/PlatformContainer';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 import { RoomConfig } from '@core/config/RoomConfig';
 import type { RecordAddress, ReactionType } from '@core/domain/types';
-import { EMPTY_REACTION_COUNTS, type ReactionCounts } from '@ui/components/ReactionRow';
+import { EMPTY_REACTION_COUNTS, type ReactionCounts } from '@ui/reactionCounts';
 import type { FeedRow } from './groupFeed';
 
 export interface ReactionState {

@@ -15,7 +15,7 @@ import { confirmDestructive } from '@ui/confirmDestructive';
 import { formatRelative } from '@ui/format/relativeTime';
 import { formatAuthor, shortPeer } from '@domain/AuthorFormatting';
 import { DesignTokens as T } from '@core/config/DesignTokens';
-import { EMPTY_REACTION_COUNTS } from '@ui/components/ReactionRow';
+import { EMPTY_REACTION_COUNTS } from '@ui/reactionCounts';
 import {
   ActionBar,
   Avatar,

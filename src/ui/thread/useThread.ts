@@ -8,7 +8,7 @@ import { publishReaction } from '@core/reactions/PublishReaction';
 import { cosineOnUnit } from '@core/matching/CosineSimilarity';
 import { addressOf } from '@core/utils/AddressOf';
 import { MatchingConfig } from '@core/config/MatchingConfig';
-import { EMPTY_REACTION_COUNTS, type ReactionCounts } from '@ui/components/ReactionRow';
+import { EMPTY_REACTION_COUNTS, type ReactionCounts } from '@ui/reactionCounts';
 
 export interface ThreadPost {
   readonly address: string;
