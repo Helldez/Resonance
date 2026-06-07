@@ -15,6 +15,12 @@ export interface ReactionState {
 export interface FeedData {
   readonly rows: FeedRow[];
   readonly hiddenCount: number;
+  /**
+   * Tier-1 post announcements seen so far. Lets the empty state explain
+   * WHY the feed is empty ("X seen on the network, none close enough")
+   * instead of looking dead.
+   */
+  readonly seenCount: number;
   readonly refreshing: boolean;
   readonly reactions: ReadonlyMap<string, ReactionState>;
   readonly commentCounts: ReadonlyMap<string, number>;
@@ -31,6 +37,7 @@ export interface FeedData {
 export function useFeed(container: PlatformContainer, threshold: number): FeedData {
   const [rows, setRows] = useState<FeedRow[]>([]);
   const [hiddenCount, setHiddenCount] = useState(0);
+  const [seenCount, setSeenCount] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [reactions, setReactions] = useState<Map<string, ReactionState>>(new Map());
   const [commentCounts, setCommentCounts] = useState<Map<string, number>>(new Map());
@@ -63,6 +70,12 @@ export function useFeed(container: PlatformContainer, threshold: number): FeedDa
       [container.self, threshold],
     );
     setHiddenCount(hidden[0]?.n ?? 0);
+
+    const seen = await container.database.query<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM announcements WHERE kind = 'post' AND author != ?",
+      [container.self],
+    );
+    setSeenCount(seen[0]?.n ?? 0);
 
     // Batch-load reaction counts + my reaction + comment counts for every
     // visible post, in three queries (no N+1 per card).
@@ -130,5 +143,5 @@ export function useFeed(container: PlatformContainer, threshold: number): FeedDa
     }
   }, [reload]);
 
-  return { rows, hiddenCount, refreshing, reactions, commentCounts, reload, onPullRefresh };
+  return { rows, hiddenCount, seenCount, refreshing, reactions, commentCounts, reload, onPullRefresh };
 }

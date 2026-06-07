@@ -1,35 +1,40 @@
 import { useCallback, useMemo, useState } from 'react';
-import { View, FlatList, Pressable, RefreshControl } from 'react-native';
-import {
-  Text,
-  IconButton,
-  Icon,
-  Card,
-  Surface,
-  Button,
-  useTheme,
-} from 'react-native-paper';
-import { Link, useRouter } from 'expo-router';
+import { FlatList, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireContainer } from '@ui/AppContainerContext';
 import { useSettingsStore } from '@domain/SettingsStore';
-import { ThemeConfig } from '@core/config/ThemeConfig';
+import { useAgentProfileStore } from '@domain/AgentProfileStore';
+import { DesignTokens as T } from '@core/config/DesignTokens';
 import { formatAuthor, shortPeer } from '@domain/AuthorFormatting';
-import { clamp01, interpolateColor } from '@ui/colorMath';
 import { groupFeed, type FeedRow } from '@ui/feed/groupFeed';
 import { useFeed } from '@ui/feed/useFeed';
 import { useReactions } from '@ui/feed/useReactions';
 import { formatRelative } from '@ui/format/relativeTime';
-import { ReactionRow, EMPTY_REACTION_COUNTS } from '@ui/components/ReactionRow';
+import {
+  ActionBar,
+  Avatar,
+  Button,
+  EmptyState,
+  Icon,
+  Row,
+  Text,
+} from '@ui/design-system';
 
+/**
+ * Home — the X-style timeline. The user's own posts anchor their matched
+ * resonances (collapsed behind an inline expander); unmatched remotes land
+ * under "Based on your interests". Empty states explain themselves with the
+ * Tier-1 numbers instead of dead-ending.
+ */
 export default function FeedScreen() {
   const container = useRequireContainer();
   const router = useRouter();
-  const theme = useTheme();
   const insets = useSafeAreaInsets();
   const threshold = useSettingsStore((s) => s.similarityThreshold);
   const receiverContext = useSettingsStore((s) => s.receiverContext);
   const displayName = useSettingsStore((s) => s.displayName);
+  const agentProfile = useAgentProfileStore((s) => s.profile);
 
   // Addresses of own posts whose resonances are expanded. Collapsed by default
   // — the user taps the "N resonances" row to reveal the matched remote posts.
@@ -47,7 +52,7 @@ export default function FeedScreen() {
     });
   }, []);
 
-  const { rows, hiddenCount, refreshing, reactions, commentCounts, reload, onPullRefresh } =
+  const { rows, hiddenCount, seenCount, refreshing, reactions, commentCounts, reload, onPullRefresh } =
     useFeed(container, threshold);
   const { reactTo, askDelete } = useReactions(container, reactions, reload);
 
@@ -57,208 +62,73 @@ export default function FeedScreen() {
   );
 
   const aboutEmpty = receiverContext.trim().length === 0;
+  const hasOwnPosts = rows.some((r) => r.author === container.self);
 
-  const renderPostCard = (item: FeedRow) => {
+  const openThread = (address: string): void => {
+    router.push({ pathname: '/thread/[id]', params: { id: address } });
+  };
+
+  const renderPost = (item: FeedRow, inset: boolean) => {
     const isOwn = item.author === container.self;
-    const sim = item.similarity;
     const authorLabel = isOwn
-      ? formatAuthor({
-          self: container.self,
-          peer: container.self,
-          selfDisplayName: displayName,
-        })
+      ? formatAuthor({ self: container.self, peer: container.self, selfDisplayName: displayName })
       : shortPeer(item.author);
-    const dotColor = isOwn
-      ? ThemeConfig.map.selfStarColor
-      : sim !== null
-        ? interpolateColor(
-            ThemeConfig.map.peerStarColorLow,
-            ThemeConfig.map.peerStarColorHigh,
-            clamp01((sim + 1) / 2),
-          )
-        : ThemeConfig.map.peerStarColorLow;
-    const openThread = (): void => {
-      router.push({ pathname: '/thread/[id]', params: { id: item.address } });
-    };
     return (
-      <Card mode="contained" style={{ marginBottom: 10, backgroundColor: theme.colors.surface }}>
-        <Card.Content>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-            <View
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: 5,
-                backgroundColor: dotColor,
-                marginRight: 8,
-              }}
-            />
-            <Text variant="labelMedium" style={{ color: theme.colors.onSurface }}>
-              {authorLabel}
-            </Text>
-            <Text
-              variant="bodySmall"
-              style={{ marginLeft: 8, color: theme.colors.onSurfaceVariant }}
-            >
-              {formatRelative(item.createdAt)}
-            </Text>
-            <View style={{ flex: 1 }} />
-            {!isOwn && sim !== null && (
-              <Surface
-                elevation={0}
-                style={{
-                  paddingHorizontal: 8,
-                  paddingVertical: 2,
-                  borderRadius: 10,
-                  backgroundColor: theme.colors.surfaceVariant,
-                }}
-              >
-                <Text variant="labelSmall" style={{ color: theme.colors.onSurfaceVariant }}>
-                  {`sim ${sim.toFixed(2)}`}
-                </Text>
-              </Surface>
-            )}
-            <IconButton
-              icon="delete-outline"
-              size={18}
-              accessibilityLabel={isOwn ? 'Delete this post' : 'Hide this post from inbox'}
-              style={{ margin: 0 }}
-              onPress={() => askDelete(item.address, isOwn)}
-            />
-          </View>
-          <Pressable onPress={openThread} onLongPress={() => askDelete(item.address, isOwn)}>
-            <Text style={{ color: theme.colors.onSurface }} numberOfLines={4}>
-              {item.text}
-            </Text>
-          </Pressable>
-          <ReactionRow
-            counts={reactions.get(item.address)?.counts ?? EMPTY_REACTION_COUNTS}
-            mine={reactions.get(item.address)?.mine ?? null}
-            commentCount={commentCounts.get(item.address) ?? 0}
-            onReact={(t) => {
-              void reactTo(item.address, t);
-            }}
-            onComment={openThread}
+      <Row
+        inset={inset}
+        left={
+          <Avatar
+            peerId={item.author}
+            label={isOwn ? displayName : undefined}
+            size={inset ? T.size.avatarSmall + T.space.sm : T.size.avatar}
           />
-        </Card.Content>
-      </Card>
+        }
+        onPress={() => openThread(item.address)}
+        onLongPress={() => askDelete(item.address, isOwn)}
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: T.space.sm }}>
+          <Text variant="bodyBold" numberOfLines={1} style={{ flexShrink: 1 }}>
+            {authorLabel}
+          </Text>
+          <Text variant="small">{formatRelative(item.createdAt)}</Text>
+          <View style={{ flex: 1 }} />
+          {!isOwn && item.similarity !== null && (
+            <Text variant="caption" color={T.color.accent}>
+              {`${Math.round(item.similarity * 100)}% match`}
+            </Text>
+          )}
+        </View>
+        <Text variant="body" numberOfLines={4} style={{ marginTop: T.space.xxs }}>
+          {item.text}
+        </Text>
+        <ActionBar
+          likeCount={reactions.get(item.address)?.counts.like ?? 0}
+          liked={reactions.get(item.address)?.mine === 'like'}
+          onLike={() => void reactTo(item.address, 'like')}
+          commentCount={commentCounts.get(item.address) ?? 0}
+          onComment={() => openThread(item.address)}
+        />
+      </Row>
     );
   };
 
-  // A remote card nested under its matched own post: a vertical connector
-  // line on the left makes the "belongs to the post above" relationship clear.
-  const renderNested = (item: FeedRow) => (
-    <View style={{ flexDirection: 'row', marginLeft: 8 }}>
+  return (
+    <View style={{ flex: 1, backgroundColor: T.color.bg }}>
+      {/* Home header: the mark, like X's logo bar. */}
       <View
         style={{
-          width: 2,
-          backgroundColor: theme.colors.outlineVariant ?? theme.colors.outline,
-          borderRadius: 1,
-          marginRight: 10,
-          marginBottom: 10,
-        }}
-      />
-      <View style={{ flex: 1 }}>{renderPostCard(item)}</View>
-    </View>
-  );
-
-  return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
-      <Surface
-        elevation={0}
-        style={{
-          flexDirection: 'row',
+          paddingTop: insets.top,
+          height: T.size.topBarHeight + insets.top,
           alignItems: 'center',
-          paddingHorizontal: 12,
-          paddingVertical: 8,
-          backgroundColor: theme.colors.surface,
-          borderBottomColor: theme.colors.outline,
-          borderBottomWidth: 1,
+          justifyContent: 'center',
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: T.color.border,
         }}
       >
-        <Link href="/compose" asChild>
-          <Button mode="contained" icon="plus" compact>
-            Post
-          </Button>
-        </Link>
-        <View style={{ flex: 1 }} />
-        <Link href="/agent" asChild>
-          <IconButton icon="robot-outline" mode="contained-tonal" accessibilityLabel="My agent" />
-        </Link>
-        <Link href="/atlas" asChild>
-          <IconButton icon="graph" mode="contained-tonal" accessibilityLabel="Semantic map" />
-        </Link>
-        <Link href="/settings" asChild>
-          <IconButton icon="cog" mode="contained-tonal" accessibilityLabel="Settings" />
-        </Link>
-      </Surface>
+        <Icon name="resonance" size={T.size.iconLarge} color={T.color.accent} />
+      </View>
 
       <FlatList
-        ListHeaderComponent={
-          <View style={{ paddingHorizontal: 12, paddingTop: 12 }}>
-            {aboutEmpty && (
-              <Card
-                mode="contained"
-                style={{
-                  marginBottom: 12,
-                  backgroundColor: theme.colors.surfaceVariant,
-                }}
-              >
-                <Card.Content>
-                  <Text variant="titleSmall" style={{ color: theme.colors.onSurface }}>
-                    Tell us what you care about
-                  </Text>
-                  <Text
-                    variant="bodySmall"
-                    style={{ color: theme.colors.onSurfaceVariant, marginTop: 4 }}
-                  >
-                    Everyone shares one room. Your "About you" ranks incoming
-                    posts before you've written anything, so your inbox starts
-                    with the things closest to you.
-                  </Text>
-                  <Link href="/settings" asChild>
-                    <Button
-                      mode="contained-tonal"
-                      style={{ marginTop: 8, alignSelf: 'flex-start' }}
-                    >
-                      Set About you
-                    </Button>
-                  </Link>
-                </Card.Content>
-              </Card>
-            )}
-
-            {hiddenCount > 0 && (
-              <Text
-                style={{
-                  opacity: 0.6,
-                  fontSize: 12,
-                  marginBottom: 8,
-                  color: theme.colors.onSurfaceVariant,
-                }}
-              >
-                {hiddenCount === 1
-                  ? '1 post hidden by your similarity threshold. Lower it in Settings to see it.'
-                  : `${hiddenCount} posts hidden by your similarity threshold. Lower it in Settings to see them.`}
-              </Text>
-            )}
-
-            {rows.length === 0 && (
-              <Text
-                style={{
-                  opacity: 0.6,
-                  marginTop: 24,
-                  textAlign: 'center',
-                  color: theme.colors.onSurfaceVariant,
-                }}
-              >
-                No posts yet. Tap "Post" to write your first one — it will be
-                embedded on-device and broadcast to everyone in the room.
-              </Text>
-            )}
-          </View>
-        }
-        contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: insets.bottom + 24 }}
         data={items}
         refreshControl={
           <RefreshControl
@@ -266,11 +136,91 @@ export default function FeedScreen() {
             onRefresh={() => {
               void onPullRefresh();
             }}
-            tintColor={theme.colors.primary}
+            tintColor={T.color.accent}
           />
         }
         keyExtractor={(it) =>
           it.kind === 'orphan-header' ? 'orphan-header' : `${it.kind}-${it.row.address}`
+        }
+        ListHeaderComponent={
+          <View>
+            {aboutEmpty && rows.length > 0 && (
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: T.space.md,
+                  paddingHorizontal: T.space.lg,
+                  paddingVertical: T.space.md,
+                  borderBottomWidth: StyleSheet.hairlineWidth,
+                  borderBottomColor: T.color.border,
+                }}
+              >
+                <Icon name="user" size={T.size.icon} color={T.color.accent} />
+                <Text variant="small" style={{ flex: 1 }}>
+                  Set “About you” so your inbox starts with the things closest
+                  to you.
+                </Text>
+                <Button
+                  label="Set it"
+                  small
+                  variant="secondary"
+                  onPress={() => router.push('/settings')}
+                />
+              </View>
+            )}
+            {hiddenCount > 0 && (
+              <Pressable onPress={() => router.push('/settings')}>
+                <Text
+                  variant="caption"
+                  style={{ paddingHorizontal: T.space.lg, paddingVertical: T.space.sm }}
+                >
+                  {hiddenCount === 1
+                    ? '1 post hidden by your similarity threshold — tap to adjust.'
+                    : `${hiddenCount} posts hidden by your similarity threshold — tap to adjust.`}
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        }
+        ListEmptyComponent={
+          aboutEmpty && !hasOwnPosts ? (
+            <View>
+              <EmptyState
+                icon="resonance"
+                title="Your feed builds itself from what you write"
+                body="There is no follow button. Write a post — or describe yourself — and the posts that resonate with it find you."
+                actionLabel="Write your first post"
+                onAction={() => router.push('/compose')}
+              />
+              <View style={{ alignItems: 'center' }}>
+                <Button
+                  label="Or set “About you”"
+                  variant="ghost"
+                  onPress={() => router.push('/settings')}
+                />
+              </View>
+            </View>
+          ) : (
+            <View>
+              <EmptyState
+                icon="search"
+                title="Listening to the network…"
+                body={
+                  seenCount > 0
+                    ? `${seenCount} ${seenCount === 1 ? 'post' : 'posts'} seen so far — none close enough to your interests yet. Lower the threshold, or explore the Atlas.`
+                    : 'No announcements received yet. Leave the app open while peers connect.'
+                }
+                actionLabel={seenCount > 0 ? 'Adjust threshold' : undefined}
+                onAction={seenCount > 0 ? () => router.push('/settings') : undefined}
+              />
+              {agentProfile.enabled && agentProfile.autonomy !== 'off' && (
+                <View style={{ alignItems: 'center', marginTop: T.space.sm }}>
+                  <Text variant="caption">Your agent is reading for you — check the ⚡ tab.</Text>
+                </View>
+              )}
+            </View>
+          )
         }
         renderItem={({ item }) => {
           switch (item.kind) {
@@ -278,39 +228,34 @@ export default function FeedScreen() {
               const isExpanded = expanded.has(item.row.address);
               return (
                 <View>
-                  {renderPostCard(item.row)}
+                  {renderPost(item.row, false)}
                   {item.childCount > 0 && (
                     <Pressable
                       onPress={() => toggleExpanded(item.row.address)}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        marginLeft: 12,
-                        marginTop: -4,
-                        marginBottom: 8,
-                        paddingVertical: 4,
-                      }}
                       accessibilityRole="button"
                       accessibilityLabel={
                         isExpanded
                           ? `Hide ${item.childCount} resonances`
                           : `Show ${item.childCount} resonances`
                       }
+                      style={({ pressed }) => ({
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: T.space.xs,
+                        paddingHorizontal: T.space.lg + T.size.avatar + T.space.md,
+                        paddingVertical: T.space.sm,
+                        borderBottomWidth: StyleSheet.hairlineWidth,
+                        borderBottomColor: T.color.border,
+                        backgroundColor: pressed ? T.color.bgPressed : 'transparent',
+                      })}
                     >
-                      <View style={{ marginRight: 4 }}>
-                        <Icon
-                          source={isExpanded ? 'chevron-down' : 'chevron-right'}
-                          size={18}
-                          color={theme.colors.primary}
-                        />
-                      </View>
-                      <Text
-                        variant="labelSmall"
-                        style={{ color: theme.colors.primary }}
-                      >
-                        {item.childCount === 1
-                          ? '1 resonance'
-                          : `${item.childCount} resonances`}
+                      <Icon
+                        name={isExpanded ? 'chevron-down' : 'chevron-right'}
+                        size={T.size.iconSmall}
+                        color={T.color.accent}
+                      />
+                      <Text variant="label" color={T.color.accent}>
+                        {item.childCount === 1 ? 'Show 1 resonance' : `Show ${item.childCount} resonances`}
                       </Text>
                     </Pressable>
                   )}
@@ -318,29 +263,54 @@ export default function FeedScreen() {
               );
             }
             case 'child':
-              return renderNested(item.row);
+              return renderPost(item.row, true);
             case 'orphan-header':
               return (
-                <View style={{ marginTop: 8, marginBottom: 8 }}>
-                  <Text variant="labelLarge" style={{ color: theme.colors.onSurface }}>
-                    Based on your interests
-                  </Text>
-                  <Text
-                    variant="bodySmall"
-                    style={{ color: theme.colors.onSurfaceVariant, marginTop: 2 }}
-                  >
-                    Posts close to your "About you" — they don't yet match one of
-                    your own posts. Write a post on the topic to anchor them.
+                <View
+                  style={{
+                    paddingHorizontal: T.space.lg,
+                    paddingTop: T.space.lg,
+                    paddingBottom: T.space.sm,
+                    borderBottomWidth: StyleSheet.hairlineWidth,
+                    borderBottomColor: T.color.border,
+                  }}
+                >
+                  <Text variant="heading">Based on your interests</Text>
+                  <Text variant="small" style={{ marginTop: T.space.xxs }}>
+                    Close to your “About you” — write a post on the topic to
+                    anchor them.
                   </Text>
                 </View>
               );
             case 'orphan':
-              return renderPostCard(item.row);
+              return renderPost(item.row, false);
             default:
               return null;
           }
         }}
+        contentContainerStyle={{ paddingBottom: insets.bottom + T.size.touchTarget + T.space.xxxl }}
       />
+
+      {/* Compose FAB, X-style: accent circle above the tab bar. */}
+      <Pressable
+        onPress={() => router.push('/compose')}
+        accessibilityRole="button"
+        accessibilityLabel="Write a post"
+        style={({ pressed }) => ({
+          position: 'absolute',
+          right: T.space.lg,
+          bottom: insets.bottom + T.space.lg,
+          width: 56,
+          height: 56,
+          borderRadius: T.radius.pill,
+          backgroundColor: T.color.accent,
+          alignItems: 'center',
+          justifyContent: 'center',
+          opacity: pressed ? 0.85 : 1,
+        })}
+      >
+        <Icon name="plus" size={T.size.iconLarge} color={T.color.accentText} />
+      </Pressable>
     </View>
   );
 }
