@@ -85,8 +85,10 @@ history lives in [`SEMANTIC_ROUTING.md`](SEMANTIC_ROUTING.md).
   kill-switch, and a per-session circuit breaker (`sessionActionBudget = 12`).
 - Structured LLM I/O (`src/core/llm/StructuredLlm.ts`): `/no_think`, strip
   `<think>`, extract balanced JSON, one retry, else do_nothing.
-- Screens: **Agent** (profile + dial), **Activity** (why-it-acted/why-not log),
-  **Approvals** (suggest-mode queue). Full spec in [`AGENTS_FLOW.md`](AGENTS_FLOW.md).
+- One **Agent hub** tab (`src/app/(tabs)/agent.tsx`) hosts all of it: the
+  autonomy dial, the suggest-mode approval queue inline (with badge), and the
+  filterable why-it-acted/why-not activity log. Full spec in
+  [`AGENTS_FLOW.md`](AGENTS_FLOW.md).
 
 ### Topic atlas (semantic map)
 - `src/app/(tabs)/atlas.tsx` + `src/ui/TopicAtlasView.tsx`: a 2-D atlas of the posts the

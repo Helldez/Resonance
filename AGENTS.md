@@ -180,7 +180,9 @@ npm run desktop:peer
 
 ## File map for orientation
 
-- Entry: `src/app/_layout.tsx` → `src/app/index.tsx`
+- Entry: `src/app/_layout.tsx` → `src/app/(tabs)/_layout.tsx` (tab shell:
+  Home `index` · `atlas` · `agent` · `you`) + `compose`, `thread/[id]`,
+  `settings`, `agent-settings`
 - Bootstrap: `src/platform/mobile/bootstrap.ts` → `src/core/bootstrap/AppContainer.ts`
 - Inference: the ports `src/core/ports/IEmbeddingService.ts` and
   `src/core/ports/ILlmService.ts`, implemented by the platform adapters

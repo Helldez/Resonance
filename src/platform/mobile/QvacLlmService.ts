@@ -3,7 +3,7 @@ import type { ModelProgressUpdate } from '@qvac/sdk';
 import type { ILlmService, LlmGenerateOptions } from '@core/ports/ILlmService';
 import { LlmConfig } from '@core/config/LlmConfig';
 import { ModelProfiles } from '@core/config/ModelProfiles';
-import { loadWithFallback } from '@core/utils/LoadWithFallback';
+import { loadWithFallback } from '../shared/LoadWithFallback';
 import { auditInference } from '../shared/InferenceAudit';
 
 /** Sentinel returned by the watchdog race when no token arrived in time. */

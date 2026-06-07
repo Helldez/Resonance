@@ -496,9 +496,12 @@ GATE      enabled? autonomy != off? LLM loaded? kill-switch off?
 PRE-CHECK if autopilot AND all three daily caps are full
             -> log "resting until tomorrow" and return WITHOUT calling the LLM
 PERCEIVE  listCandidates(max 6) — recent inbox posts not yet handled, newest first
+          (reply threads first, max 4, so a busy feed can't starve conversations)
 for each candidate:
-   TRIAGE   assessRelevance (LLM->JSON) score 0..1; < 0.55 -> terminal skip
-   DECIDE   decideAction (LLM->JSON): react (DEFAULT) / respond / do_nothing
+   TRIAGE   engagementBand(similarity, thresholds) — DETERMINISTIC, no LLM:
+            < reactMin (0.80) -> terminal skip
+            >= reactMin       -> react (a "like", no LLM call at all)
+            >= respondMin (0.87) -> respond (the LLM only DRAFTS the text)
    BUILD    ProposedAction { post | respond | react | none }
    GOVERN   evaluateAction -> allow | queue | reject(terminal?)
    ACT      allow -> publish via the same use-cases a human uses
@@ -517,8 +520,9 @@ Key behaviors (and the memory-note phrases they implement):
   validation rejects a `respond` with empty text or a `react` with no valid reaction
   (→ `do_nothing`), biasing toward cheap acknowledgements over noisy replies.
 - **"Recency order"** — candidates come `ORDER BY created_at DESC`.
-- **"Why-not logging"** — every branch logs a reason, so the Activity screen explains
-  *why nothing happened* ("relevance 40% below 55%", "blocked: daily comment cap").
+- **"Why-not logging"** — every branch logs a reason, so the Agent hub's activity log
+  explains *why nothing happened* ("Skipping — affinity 0.74 below the reaction
+  floor", "Daily comment cap reached — deferred without drafting").
 
 ### 4.4 The governor (the only thing that can authorize a write)
 

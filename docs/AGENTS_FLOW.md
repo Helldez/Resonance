@@ -107,8 +107,9 @@ persisted** (panic control that resets to off on restart).
 | Key | Value | Role |
 |---|---|---|
 | `tickIntervalMs` | `45_000` | agent wakes every 45 s (+ a 5 s kick at mount) |
-| `maxCandidatesPerTick` | `6` | max inbox posts examined per tick |
-| `triageScoreThreshold` | `0.55` | min relevance (0–1) to advance triage → decide |
+| `maxCandidatesPerTick` | `6` | max fresh inbox posts examined per tick |
+| `maxReplyCandidatesPerTick` | `4` | max reply threads followed up per tick (processed before fresh posts) |
+| *(triage)* | profile `thresholds` | triage is **deterministic similarity banding** (`engagementBand`), not an LLM call: below `reactMinSimilarity` (default 0.80) → skip; at/above → react; at/above `respondMinSimilarity` (0.87) → respond. The LLM is only invoked to *draft* the respond-band text |
 | `dedupOverlapThreshold` | `0.6` | Jaccard word overlap above which text is a dup |
 | `dedupHistorySize` | `40` | recent agent outputs kept for dedup |
 | `routingTemperature` / `routingMaxTokens` | `0.1` / `320` | triage + decide JSON calls |

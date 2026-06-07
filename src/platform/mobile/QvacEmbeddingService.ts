@@ -4,7 +4,7 @@ import type { IEmbeddingService } from '@core/ports/IEmbeddingService';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 import { ModelProfiles } from '@core/config/ModelProfiles';
 import { l2NormalizeInPlace } from '@core/matching/L2Normalize';
-import { loadWithFallback } from '@core/utils/LoadWithFallback';
+import { loadWithFallback } from '../shared/LoadWithFallback';
 import { auditInference } from '../shared/InferenceAudit';
 
 export type EmbeddingProgressCallback = (p: ModelProgressUpdate) => void;

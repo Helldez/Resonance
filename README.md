@@ -196,6 +196,30 @@ before public release.
 - DHT identity: Hyperswarm noise keypair (persisted across restarts for a
   stable presence in the room)
 
+## How the QVAC SDK and Holepunch are used (and swapped)
+
+All inference goes through [@qvac/sdk](https://qvac.tether.io/dev/sdk/) —
+there is no other AI runtime in the app:
+
+| Capability | SDK surface | Where |
+|---|---|---|
+| Embeddings (768-dim, every post in and out) | `loadModel` (`llamacpp-embedding`) + `embed` | `src/platform/{mobile,desktop}/QvacEmbeddingService.ts` |
+| LLM (agent triage drafts, replies, topic naming) | `loadModel` (`llm`) + streaming `completion` with GBNF-enforced JSON schema, `cancel`, `unloadModel` | `src/platform/{mobile,desktop}/QvacLlmService.ts` |
+| Model download w/ progress + stall watchdog | `loadModel` wrapper | `src/platform/shared/LoadWithFallback.ts` |
+
+The P2P layer is the Holepunch stack (Hyperswarm / Hypercore / Corestore /
+Protomux), confined to **one file**: `bare/p2p.mjs`, running in a Bare
+worklet (mobile) or a Bare subprocess (desktop).
+
+Both dependencies sit behind seams, so upgrading is cheap by design:
+
+- **QVAC**: the core only sees the `IEmbeddingService` / `ILlmService` ports;
+  `@qvac/sdk` appears in two adapter classes per target. Upgrading = bump the
+  version, `npx qvac bundle sdk`, re-run the test suite.
+- **Holepunch**: the app only sees the framed RPC defined in
+  `src/platform/shared/P2pWorker.ts`; swarm/corestore code never leaves
+  `bare/p2p.mjs`. Upgrading = bump the version, `npm run build:bare`.
+
 ## Build and run
 
 USB-attached Android device, Node ≥ 20:
