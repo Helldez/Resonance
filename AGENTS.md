@@ -61,8 +61,12 @@ agent on its behalf (commits, PRs, READMEs, issues, social posts).
 - **Hexagonal boundaries.** `src/core/**` never imports Expo, React Native,
   Node, Bare or any platform-specific module directly. It only imports from
   `@core/ports/*`. Platform code lives under `src/platform/<target>/` —
-  currently `mobile/` (Expo + react-native-bare-kit) and `desktop/`
-  (Node + Electron + standalone `bare` runtime).
+  `shared/` (the target-agnostic P2P worker, network/mailbox adapters and
+  container wiring), `mobile/` (Expo + react-native-bare-kit transport and
+  adapters) and `desktop/` (Node + Electron + standalone `bare` runtime).
+  Composition glue that orchestrates core + data + platform without React
+  lives in `src/app-services/` (alias `@services`); it may import everything,
+  nothing imports it except the UI.
 - **One responsibility per file.** Use cases, parsers, repositories and
   services each live in their own file.
 - **No backwards-compat shims.** If something is unused, delete it.
@@ -74,7 +78,7 @@ agent on its behalf (commits, PRs, READMEs, issues, social posts).
 > bounded inbox) is documented in [`docs/MATCHING_FLOW.md`](docs/MATCHING_FLOW.md).
 > Read it before changing anything in `src/core/matching/`,
 > `src/core/inbox/`, `src/core/posts/CreatePost.ts`, or the record handler in
-> `src/ui/AppContainerContext.tsx`.
+> `src/app-services/NetworkIngestion.ts`.
 
 - Embeddings come from **EmbeddingGemma-300M** (GGUF Q8_0). Native dim **768**,
   used in full and L2-normalised at ingest. Every text is prefixed with the
@@ -188,8 +192,10 @@ npm run desktop:peer
   prompts) + `src/core/llm/StructuredLlm.ts` — runtime flow documented in
   [`docs/AGENTS_FLOW.md`](docs/AGENTS_FLOW.md)
 - Record handling / network glue: the single record handler in
-  `src/ui/AppContainerContext.tsx` and the `IPeerNetwork` adapters under
-  `src/platform/{mobile,desktop}/`. There is no `SyncEngine` — the legacy
+  `src/app-services/NetworkIngestion.ts` (wired to the network by
+  `src/ui/AppContainerContext.tsx`) and the shared `IPeerNetwork`/`IMailbox`
+  adapters under `src/platform/shared/` (per-target transports in
+  `src/platform/{mobile,desktop}/`). There is no `SyncEngine` — the legacy
   indirection was removed.
 - Storage: `src/data/*Repository.ts` over `src/platform/mobile/ExpoSqliteDatabase.ts`
 - Worklet: `qvac/worker.entry.mjs`

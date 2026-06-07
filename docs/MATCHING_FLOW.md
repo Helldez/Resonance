@@ -73,7 +73,7 @@ worker re-emits its full known set, and ingestion is idempotent.
 
 Source: `bare/announce-directory.mjs` (pure state machine),
 `bare/p2p.mjs` (`onConnection`), `src/ui/AppContainerContext.tsx` (handler
-registration + backlog drain).
+registration + backlog drain) → `src/app-services/NetworkIngestion.ts`.
 
 ---
 
@@ -107,7 +107,7 @@ similarity = MAX cosine vs the user's own post embeddings
   pulled: they are tiny and thread-relevant.
 
 Source: `src/core/inbox/IngestAnnouncement.ts`,
-`src/core/inbox/ScoreAgainstOwn.ts`, `src/ui/AppContainerContext.tsx`
+`src/core/inbox/ScoreAgainstOwn.ts`, `src/app-services/NetworkIngestion.ts`
 (`handleAnnouncement`).
 
 ### Pull — fetch exactly one block (only for winners)
@@ -148,7 +148,7 @@ Responses and reactions skip scoring and land directly in their thread
 projections (`responses` / `reactions` tables, with their per-author product
 rules).
 
-Source: `src/ui/AppContainerContext.tsx` (`persistRecord`),
+Source: `src/app-services/NetworkIngestion.ts` (`persistRecord`),
 `src/core/inbox/IngestPulledPost.ts`,
 `src/core/validation/ValidateRecordBody.ts`.
 

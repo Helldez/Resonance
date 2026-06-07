@@ -115,7 +115,7 @@ relevant to prioritising F2.
 `text` and the `embedding` array were length-unbounded. **Mitigations applied:**
 `RoomConfig.maxPostChars` / `maxResponseChars` are enforced on the authoring side
 (`CreatePost`, `PublishResponse`) and at ingest (`validateRecordBody`, called in
-`AppContainerContext.persistRecord` before the digest/signature work); a
+`NetworkIngestion.persistRecord` before the digest/signature work); a
 wrong-dimension embedding is dropped at ingest. **Residual:** a giant embedding
 array can still be allocated during `JSON.parse` inside the worker before the
 RN-side length check; a hard wire-level cap belongs to the Phase-1 codec rework.

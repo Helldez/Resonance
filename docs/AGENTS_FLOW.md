@@ -27,7 +27,7 @@ shown live in-app. The LLM only ever *proposes*; deterministic code *decides*.
  AgentProfile (form, persisted)
         │  normalizeProfile()
         ▼
-   ┌──────────────── runOnce() timer · AppContainerContext.tsx ────────────────┐
+   ┌──────────────── runOnce() timer · AgentScheduler.ts ──────────────────────┐
    │ gate: enabled? autonomy≠off? llm loaded? kill? session-budget left?        │
    │   ▼                                                                        │
    │ runAgentTick(deps) · AgentLoop.ts                                          │
@@ -121,10 +121,12 @@ persisted** (panic control that resets to off on restart).
 
 ---
 
-## 3. The tick orchestrator (`AppContainerContext.tsx` → `runOnce`)
+## 3. The tick orchestrator (`src/app-services/AgentScheduler.ts` → `runOnce`)
 
-A `useEffect` keyed on the ready container starts a `setInterval` at
-`AgentConfig.tickIntervalMs` plus a 5 s `setTimeout` kick. `runOnce`:
+A `useEffect` in `AppContainerContext.tsx` arms the scheduler once the
+container is ready; the scheduler runs a `setInterval` at
+`AgentConfig.tickIntervalMs` plus an `AgentConfig.firstTickDelayMs` kick.
+`runOnce`:
 
 1. **Re-entrancy guard** (`running`) and `cancelled` check.
 2. Reads the latest profile via `useAgentProfileStore.getState()` →
@@ -343,10 +345,9 @@ export type RecordBody = PostBody | ResponseBody | ReactionBody;
 
 - **Canonical form** (`CanonicalRecord.ts`, signed/verified):
   `{kind, inReplyTo, reaction, createdAt}` → SHA-256 → Ed25519.
-- **Wire codec** lives in `src/platform/mobile/P2pWorklet.ts` and
-  `src/platform/desktop/DesktopP2pWorker.ts` (`WireReactionBody`, both
-  directions). The Bare worker treats records as opaque JSON → **no bundle
-  rebuild** for a new kind.
+- **Wire codec** lives in `src/platform/shared/WireCodec.ts`
+  (`WireReactionBody`, both directions, shared by both targets). The Bare
+  worker treats records as opaque JSON → **no bundle rebuild** for a new kind.
 - **Network version**: `RoomConfig.topicPrefix` bumped **v3 → v4** for this wire
   change (agent provenance fields are deferred to a later v5 bump).
 - **Repository** (`ReactionRepository.ts`): table `reactions(address, author,
@@ -357,8 +358,8 @@ export type RecordBody = PostBody | ResponseBody | ReactionBody;
 - **Use cases**: `PublishReaction` (sign → append → publish, twin of
   `PublishResponse`); local `clear` for un-react. The agent's `react` action and
   the UI `ReactionRow` both go through these.
-- **persistRecord** (`AppContainerContext.tsx`) handles `kind==='reaction'` →
-  `reactions.applyFromRecord`.
+- **persistRecord** (`src/app-services/NetworkIngestion.ts`) handles
+  `kind==='reaction'` → `reactions.applyFromRecord`.
 - **UI**: `src/ui/components/ReactionRow.tsx` (a single like → thumb-up icon)
   shown in feed and thread, with batch counts + the user's own reaction
   highlighted.

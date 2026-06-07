@@ -22,10 +22,11 @@ adapter layer differs:
 | `IIdentity` | `mobile/Ed25519Identity` | `desktop/Ed25519Identity` *(re-export, pure JS)* |
 | `IEmbeddingService` | `mobile/QvacEmbeddingService` | `desktop/QvacEmbeddingService` *(re-export)* |
 | `ILlmService` | `mobile/QvacLlmService` | `desktop/QvacLlmService` *(re-export)* |
-| `IMailbox` | `mobile/BareWorkletMailbox` | `desktop/DesktopMailbox` |
-| `IPeerNetwork` | `mobile/BareWorkletNetwork` | `desktop/DesktopNetwork` |
+| `IMailbox` | `shared/P2pMailbox` (both targets) | (same) |
+| `IPeerNetwork` | `shared/P2pNetwork` (both targets) | (same) |
 
-The desktop P2P worker (`desktop/DesktopP2pWorker`) spawns the **same**
+The P2P worker adapter is shared too (`shared/P2pWorker`, with the
+channel injected via `desktop/SubprocessTransport`): it spawns the **same**
 `bare/p2p.mjs` logic, but via the standalone `bare` binary in a Node
 child process. The wire format is the binary framed RPC defined in
 `bare/rpc-frame.mjs` — identical on both targets. The desktop entry
@@ -110,7 +111,7 @@ tested under web before they can be relied on.
 - **`@qvac/sdk` under Node**: the desktop QVAC services re-export the
   mobile adapters under the assumption that `@qvac/sdk` resolves its
   Bare worker through the same standalone runtime used by
-  `DesktopP2pWorker`. The first `npm run desktop:peer` invocation that
+  the shared `P2pWorker`. The first `npm run desktop:peer` invocation that
   actually calls `embedder.embed(...)` will validate this assumption.
 - **SQLite in Electron**: the desktop adapter uses Node's built-in
   `node:sqlite`, so there is **no native addon to rebuild** for Electron's

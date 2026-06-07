@@ -41,7 +41,8 @@ history lives in [`SEMANTIC_ROUTING.md`](SEMANTIC_ROUTING.md).
   downloaded (proven by `scripts/spike/sparse-pull.spike.ts`). Download,
   signature verification and body storage are paid only for the bounded
   admitted set; the announcement stream is the only O(N) cost.
-- **Two handlers** in `src/ui/AppContainerContext.tsx`: `handleAnnouncement`
+- **Two handlers** in `src/app-services/NetworkIngestion.ts` (wired by
+  `src/ui/AppContainerContext.tsx`): `handleAnnouncement`
   (score → Tier-1 → pull if admitted) and `persistRecord` (length-check,
   digest+signature verify, re-score on the VERIFIED embedding, commit). A
   boot-time `rescan()` drains announcements that arrived before the handlers

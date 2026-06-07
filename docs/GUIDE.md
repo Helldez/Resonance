@@ -195,8 +195,8 @@ for the enforced boundaries.
 | `IFileSystem` | read/write app data | `ExpoFileSystem` | `NodeFileSystem` (bare-fs) |
 | `IClock` | `now()` | system clock | system clock |
 | `ILogger` | structured logging | console | console |
-| `IMailbox` | append to my Hypercore | `BareWorkletMailbox` | `DesktopMailbox` |
-| `IPeerNetwork` | join room, publish, receive, presence | `BareWorkletNetwork` | `DesktopNetwork` |
+| `IMailbox` | append to my Hypercore | `shared/P2pMailbox` (both targets) | (same) |
+| `IPeerNetwork` | join room, publish, receive, presence | `shared/P2pNetwork` (both targets) | (same) |
 
 > Note on the desktop SQLite adapter: it uses Node's **built-in `node:sqlite`** rather
 > than a native addon — this fixed a breakage under Node 24 (no native build step).
@@ -279,7 +279,9 @@ boundary* differ:
    ----------------                         -----------------------
    React Native (Hermes)                    Node process
         |                                        |
-   P2pWorklet.ts                            DesktopP2pWorker.ts
+        +--------- shared/P2pWorker.ts ----------+
+        |    (one adapter, transport injected)   |
+   WorkletTransport.ts                      SubprocessTransport.ts
         |  BareKit.IPC                            |  loopback TCP (127.0.0.1:port)
         v                                        v   (BARE_IPC_PORT env var)
    react-native-bare-kit                    BareSubprocess.ts -> `bare` binary
@@ -292,7 +294,8 @@ boundary* differ:
 Both sides speak the **same framed-RPC protocol** defined in `bare/rpc-frame.mjs`:
 a 4-byte length prefix followed by a UTF-8 JSON payload. Requests are
 `{id, method, params}`; replies are `{id, ok, result|error}`; pushes are
-`{event, payload}`. The RN-side client is `src/platform/mobile/FramedRpcClient.ts`.
+`{event, payload}`. The app-side client is `src/platform/shared/FramedRpcClient.ts`,
+wrapping any `RpcTransport` (`src/platform/shared/RpcTransport.ts`).
 
 The worker exposes a tiny command surface:
 
@@ -407,8 +410,8 @@ Signing is **canonical** (`src/core/utils/CanonicalRecord.ts`): the body is seri
 with a stable key order, embeddings are encoded as base64 of the little-endian float
 bytes, hashed with SHA-256, and the *digest* is signed with Ed25519. On the wire, inside
 a Hypercore block, records are JSON with the embedding stored as a plain `number[]` and
-digest/signature hex-encoded. The wire ↔ domain translation lives in `P2pWorklet.ts`
-(mobile) and `DesktopP2pWorker.ts` (desktop).
+digest/signature hex-encoded. The wire ↔ domain translation lives in
+`src/platform/shared/WireCodec.ts`, shared by both targets.
 
 ### 3.7 Identity, keys & provenance
 
@@ -468,8 +471,9 @@ the profile so editing feels natural but execution stays safe:
 ### 4.3 The tick loop
 
 Driven by a 45-second timer plus a 5-second kick at mount
-(`src/ui/AppContainerContext.tsx`); the loop body is `runAgentTick`
-(`src/core/agent/AgentLoop.ts`):
+(`src/app-services/AgentScheduler.ts`, armed by `src/ui/AppContainerContext.tsx`);
+the loop body is `runAgentTick` (`src/core/agent/AgentTick.ts`, re-exported by
+the `AgentLoop` barrel):
 
 ```
 GATE      enabled? autonomy != off? LLM loaded? kill-switch off?

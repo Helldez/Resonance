@@ -21,7 +21,7 @@ edges. Arrows point in the direction of the compile-time dependency.
 flowchart TB
     subgraph UI["src/app + src/ui + src/domain — presentation"]
         A1["Expo Router screens<br/>index · compose · thread · map<br/>agent · approvals · activity · settings"]
-        A2["AppContainerContext.tsx<br/>record handler · agent loop driver"]
+        A2["AppContainerContext.tsx<br/>boots + wires src/app-services<br/>(NetworkIngestion · AgentScheduler)"]
         A3["Zustand stores<br/>Bootstrap · Settings · AgentProfile"]
     end
 
@@ -80,11 +80,14 @@ flowchart LR
         IFS["IFileSystem"]
     end
 
+    subgraph Shared["platform/shared (both targets)"]
+        BMail["P2pMailbox"]
+        BNet["P2pNetwork"]
+    end
+
     subgraph Mobile["platform/mobile"]
         QvacLlm["QvacLlmService"]
         QvacEmb["QvacEmbeddingService"]
-        BMail["BareWorkletMailbox"]
-        BNet["BareWorkletNetwork"]
         Ed["Ed25519Identity"]
         ExpoDb["ExpoSqliteDatabase"]
         AsKv["AsyncStorageKv"]
@@ -92,8 +95,6 @@ flowchart LR
     end
 
     subgraph Desktop["platform/desktop"]
-        DMail["DesktopMailbox"]
-        DNet["DesktopNetwork"]
         NodeDb["NodeSqliteDatabase (node:sqlite)"]
         NodeKv["NodeKvStore (JSON-on-disk)"]
         NodeFs["NodeFileSystem"]
@@ -155,7 +156,7 @@ sequenceDiagram
 ## 4. Receive path — two-tier ingestion (announce, then pull)
 
 Handlers: `handleAnnouncement()` + `persistRecord()` in
-`src/ui/AppContainerContext.tsx`; scoring `src/core/inbox/ScoreAgainstOwn.ts`
+`src/app-services/NetworkIngestion.ts`; scoring `src/core/inbox/ScoreAgainstOwn.ts`
 (via `IngestAnnouncement`/`IngestPulledPost`); admission
 `src/core/inbox/InboxAdmission.ts`.
 
@@ -196,9 +197,10 @@ flowchart TD
 
 ## 5. Local-AI agent loop
 
-`src/core/agent/AgentLoop.ts` driven every `AgentConfig.tickIntervalMs` (45 s)
-from `AppContainerContext`. Triage is deterministic (similarity bands); the LLM
-only drafts text; `ActionGovernor` is the gate.
+`src/core/agent/AgentTick.ts` (re-exported by the `AgentLoop` barrel) driven
+every `AgentConfig.tickIntervalMs` (45 s) by `src/app-services/AgentScheduler.ts`.
+Triage is deterministic (similarity bands); the LLM only drafts text;
+`ActionGovernor` is the gate.
 
 ```mermaid
 flowchart TD
@@ -276,7 +278,7 @@ RPC methods worklet exposes: `init`, `append`, `pull`, `joinRoom`, `rescan`,
 ```mermaid
 flowchart TB
     subgraph MobileProc["Android process"]
-        RNm["RN/Hermes JS<br/>(P2pWorklet, FramedRpcClient)"]
+        RNm["RN/Hermes JS<br/>(shared P2pWorker + WorkletTransport, FramedRpcClient)"]
         Bm["Bare worklet p2p.mjs"]
         Qm["QVAC worker (llama.cpp)"]
         RNm -- "framed JSON over Worklet IPC" --> Bm
@@ -284,7 +286,7 @@ flowchart TB
     end
 
     subgraph DesktopProc["Desktop"]
-        El["Electron main / Node CLI<br/>(DesktopP2pWorker)"]
+        El["Electron main / Node CLI<br/>(shared P2pWorker + SubprocessTransport)"]
         Bd["Bare subprocess p2p.mjs<br/>(p2p.desktop-entry.mjs)"]
         Ren["Electron renderer<br/>(RemoteContainer proxies)"]
         Qd["QVAC worker"]
