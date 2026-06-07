@@ -72,8 +72,11 @@ function Gate() {
       }}
     >
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="compose" options={{ title: 'New post' }} />
-      <Stack.Screen name="thread/[id]" options={{ title: 'Thread' }} />
+      <Stack.Screen
+        name="compose"
+        options={{ headerShown: false, presentation: 'modal' }}
+      />
+      <Stack.Screen name="thread/[id]" options={{ headerShown: false }} />
       <Stack.Screen name="settings" options={{ headerShown: false }} />
       <Stack.Screen name="agent-settings" options={{ headerShown: false }} />
     </Stack>

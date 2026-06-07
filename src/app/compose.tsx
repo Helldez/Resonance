@@ -1,21 +1,30 @@
 import { useState } from 'react';
-import { View } from 'react-native';
-import { TextInput, Button, useTheme, HelperText } from 'react-native-paper';
+import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireContainer } from '@ui/AppContainerContext';
+import { useSettingsStore } from '@domain/SettingsStore';
 import { appendOwnEmbedding, rescoreInboxAgainstOwnPosts } from '@services/NetworkIngestion';
 import { createPost } from '@core/posts/CreatePost';
 import { addressOf } from '@core/utils/AddressOf';
+import { RoomConfig } from '@core/config/RoomConfig';
+import { DesignTokens as T } from '@core/config/DesignTokens';
+import { Avatar, Button, IconButton, Text, TextField } from '@ui/design-system';
 
+/**
+ * X-style compose: cancel left, accent Post pill right, avatar + large
+ * borderless input, character counter against the room's signed limit.
+ */
 export default function ComposeScreen() {
   const container = useRequireContainer();
+  const displayName = useSettingsStore((s) => s.displayName);
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
-  const theme = useTheme();
   const insets = useSafeAreaInsets();
+
+  const remaining = RoomConfig.maxPostChars - text.length;
 
   const submit = async (): Promise<void> => {
     setSubmitting(true);
@@ -77,37 +86,57 @@ export default function ComposeScreen() {
   };
 
   return (
-    <View
-      style={{
-        flex: 1,
-        backgroundColor: theme.colors.background,
-        padding: 12,
-        paddingBottom: insets.bottom + 12,
-      }}
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: T.color.bg }}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <TextInput
-        mode="outlined"
-        multiline
-        numberOfLines={8}
-        value={text}
-        onChangeText={setText}
-        placeholder="A thought, a need, a topic — anything you'd want a stranger with a similar question to see."
-      />
-      {error !== null && <HelperText type="error">{error}</HelperText>}
-      <Button
-        mode="contained"
-        onPress={() => {
-          void submit();
+      <View
+        style={{
+          paddingTop: insets.top,
+          flexDirection: 'row',
+          alignItems: 'center',
+          paddingHorizontal: T.space.sm,
+          height: T.size.topBarHeight + insets.top,
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: T.color.border,
         }}
-        loading={submitting}
-        disabled={submitting || text.trim().length === 0}
-        style={{ marginTop: 12 }}
       >
-        Post
-      </Button>
-      <Button onPress={() => router.back()} style={{ marginTop: 4 }}>
-        Cancel
-      </Button>
-    </View>
+        <IconButton icon="x" accessibilityLabel="Cancel" onPress={() => router.back()} />
+        <View style={{ flex: 1 }} />
+        <Text
+          variant="small"
+          color={remaining < 0 ? T.color.danger : T.color.textMuted}
+          style={{ marginRight: T.space.md }}
+        >
+          {String(remaining)}
+        </Text>
+        <Button
+          label="Post"
+          small
+          loading={submitting}
+          disabled={submitting || text.trim().length === 0 || remaining < 0}
+          onPress={() => {
+            void submit();
+          }}
+        />
+      </View>
+
+      <View style={{ flexDirection: 'row', padding: T.space.lg, gap: T.space.md, flex: 1 }}>
+        <Avatar peerId={container.self} label={displayName} />
+        <View style={{ flex: 1 }}>
+          <TextField
+            value={text}
+            onChangeText={setText}
+            placeholder="A thought, a need, a topic — anything you'd want a stranger with a similar question to see."
+            multiline
+            numberOfLines={6}
+            bare
+            large
+            autoFocus
+            error={error}
+          />
+        </View>
+      </View>
+    </KeyboardAvoidingView>
   );
 }
