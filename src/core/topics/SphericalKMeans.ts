@@ -10,7 +10,7 @@
  * (the runtime forbids Math.random), so the same posts always yield the same
  * clusters. No text is involved — clustering is multilingual by construction.
  */
-import { mulberry32 } from '@core/util/SeededRng';
+import { mulberry32 } from '@core/utils/SeededRng';
 
 export interface KMeansResult {
   /** Cluster index per input vector. */

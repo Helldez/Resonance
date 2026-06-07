@@ -1,7 +1,7 @@
 import type { IDatabase } from '@core/ports/IDatabase';
+import type { ActivityKind } from '@core/agent/ActivityTypes';
 
-/** What the daily caps count. Mirrors the governor's cap categories. */
-export type ActivityKind = 'post' | 'comment' | 'reaction';
+export type { ActivityKind } from '@core/agent/ActivityTypes';
 
 /**
  * Deterministic state for the `ActionGovernor`: per-day action counters and a

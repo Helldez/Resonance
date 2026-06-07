@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import type { AppContainer } from '@core/bootstrap/AppContainer';
-import { DesktopConfig } from '@core/config/DesktopConfig';
+import { DesktopConfig } from './DesktopConfig';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 import { StorageConfig } from '@core/config/StorageConfig';
 import { bootstrapIdentity } from '@core/identity/IdentityManager';

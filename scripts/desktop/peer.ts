@@ -23,7 +23,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
-import { DesktopConfig } from '@core/config/DesktopConfig';
+import { DesktopConfig } from '@platform/desktop/DesktopConfig';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 import { bootstrapDesktop, defaultAppDataDir } from '@platform/desktop/bootstrap';
 import { createPost } from '@core/posts/CreatePost';

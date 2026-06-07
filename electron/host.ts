@@ -21,7 +21,7 @@ import { join, resolve, delimiter as PATH_DELIM } from 'node:path';
 import { existsSync } from 'node:fs';
 import { bootstrapDesktop, defaultAppDataDir } from '@platform/desktop/bootstrap';
 import type { DesktopContainer } from '@platform/desktop/bootstrap';
-import { DesktopConfig } from '@core/config/DesktopConfig';
+import { DesktopConfig } from '@platform/desktop/DesktopConfig';
 import type { ModelProgressUpdate } from '@qvac/sdk';
 import type { Announcement, PeerId, SignedRecord } from '@core/domain/types';
 

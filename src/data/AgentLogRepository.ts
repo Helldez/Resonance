@@ -1,20 +1,13 @@
 import type { IDatabase } from '@core/ports/IDatabase';
+import type { AgentLogPhase } from '@core/agent/ActivityTypes';
+
+export type { AgentLogPhase } from '@core/agent/ActivityTypes';
 
 /**
  * One persisted line of agent activity, shown in the in-app Activity dashboard.
- * `phase` is the step in the loop; `verdict`/`detail` carry the human-readable
+ * `phase` is the step in the loop; `summary`/`text` carry the human-readable
  * explanation so the user can see WHAT the agent did and WHY, in real time.
  */
-export type AgentLogPhase =
-  | 'tick'        // a wake-up: how many candidates, autonomy
-  | 'triage'      // relevance judgement on a candidate
-  | 'decide'      // chosen action (respond/react/do_nothing)
-  | 'govern'      // governor verdict (allow/queue/reject + reason)
-  | 'publish'     // an action actually published to the room
-  | 'queue'       // an action queued for approval (suggest mode)
-  | 'post'        // a proactive post attempt
-  | 'error';      // a tick-level failure
-
 export interface AgentLogEntry {
   readonly id: number;
   readonly createdAt: number;

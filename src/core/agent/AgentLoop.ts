@@ -28,13 +28,9 @@ import {
 import { createPost } from '@core/posts/CreatePost';
 import { publishResponse } from '@core/responses/PublishResponse';
 import { publishReaction } from '@core/reactions/PublishReaction';
+import type { ActivityKind, AgentLogPhase } from '@core/agent/ActivityTypes';
 
-/**
- * What the daily caps count. Structurally identical to the data layer's
- * `ActivityKind` so a repository satisfies `ActivityCounters` without the core
- * importing from `@data` (hexagonal boundary).
- */
-export type ActivityKind = 'post' | 'comment' | 'reaction';
+export type { ActivityKind, AgentLogPhase } from '@core/agent/ActivityTypes';
 
 /** A candidate the agent may act on — a post or thread item from the inbox. */
 export interface AgentCandidate {
@@ -95,17 +91,6 @@ export interface PendingSink {
   add(item: AgentPendingItem): Promise<void>;
   hasForTarget(target: string): Promise<boolean>;
 }
-
-/** Phase of a structured activity event, mirrored by AgentLogRepository. */
-export type AgentLogPhase =
-  | 'tick'
-  | 'triage'
-  | 'decide'
-  | 'govern'
-  | 'publish'
-  | 'queue'
-  | 'post'
-  | 'error';
 
 /**
  * Where the loop reports what it is doing, in real time. Backed by

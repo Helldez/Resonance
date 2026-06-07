@@ -3,7 +3,7 @@ import type { ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import type { AddressInfo, Server, Socket } from 'node:net';
 import { createRequire } from 'node:module';
-import { DesktopConfig } from '@core/config/DesktopConfig';
+import { DesktopConfig } from './DesktopConfig';
 
 /**
  * A Duplex-like view on a Bare subprocess. The Bare entry script is

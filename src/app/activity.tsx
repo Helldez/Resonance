@@ -10,7 +10,8 @@ import {
 import { useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireContainer } from '@ui/AppContainerContext';
-import type { AgentLogEntry, AgentLogPhase } from '@data/AgentLogRepository';
+import type { AgentLogEntry } from '@data/AgentLogRepository';
+import type { AgentLogPhase } from '@core/agent/ActivityTypes';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 
 /**

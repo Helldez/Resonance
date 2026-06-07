@@ -1,5 +1,5 @@
 import { UMAP } from 'umap-js';
-import { mulberry32 } from '@core/util/SeededRng';
+import { mulberry32 } from '@core/utils/SeededRng';
 import { projectPca2 } from '@core/matching/Project2D';
 
 /**
