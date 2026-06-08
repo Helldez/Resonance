@@ -218,7 +218,16 @@ Both dependencies sit behind seams, so upgrading is cheap by design:
 
 ## Build and run
 
-USB-attached Android device, Node ≥ 20:
+**Resonance is a mobile app.** The Android build is the real product surface —
+the experience is designed for a phone, and that is where the UX should be
+evaluated. The desktop build is a test peer only: it shares the entire core,
+but exists so you can exercise the P2P layer without a drawer full of phones,
+not as an end-user experience.
+
+### Android (the product)
+
+Connect an Android device over adb (USB **or** Wi-Fi) — or start an emulator —
+then, with Node ≥ 20:
 
 ```powershell
 npm install --legacy-peer-deps
@@ -234,7 +243,12 @@ Type-check:
 npm run typecheck
 ```
 
-Desktop peer (**experimental** — for testing without a second phone, see [`docs/DESKTOP.md`](docs/DESKTOP.md)):
+### Desktop peer (test harness only)
+
+**Experimental.** A second peer for exercising multi-device behaviour without a
+second phone (see [`docs/DESKTOP.md`](docs/DESKTOP.md)). It runs the same core
+as the app, but it is **not** the intended experience — judge the product on
+the phone.
 
 ```powershell
 npm run build:bare:desktop
@@ -244,10 +258,6 @@ npm run desktop:peer
 Two-device test: run the app on a phone and the desktop peer (or a second
 phone) with related "About you" text. Compose a post on one, watch it appear
 in the other's inbox within a few seconds; reply or react; watch it come back.
-
-> The desktop peer exists to make multi-peer testing possible without a
-> drawer full of phones — it shares the entire core with the Android app,
-> but **the Android app is the product surface**.
 
 ## Screenshots
 

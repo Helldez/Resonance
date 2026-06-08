@@ -122,7 +122,7 @@ history lives in [`SEMANTIC_ROUTING.md`](SEMANTIC_ROUTING.md).
   connection slots, possible multi-room partitioning): deferred — see
   [`ROADMAP.md`](ROADMAP.md).
 
-## How to build and run (USB-attached Android device, Node ≥ 20)
+## How to build and run (Android device over adb — USB or Wi-Fi — or emulator, Node ≥ 20)
 
 ```powershell
 npm install --legacy-peer-deps
