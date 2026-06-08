@@ -195,8 +195,11 @@ bridge; no in-process sandbox. A property of the Bare runtime, not a Resonance b
   oversized/ wrong-dimension records up front.
 - **Hypercore append-only ordering** prevents within-feed replay/reordering.
 - **No central server, no analytics, no telemetry.** Only runtime outbound
-  traffic is the public Holepunch DHT; model downloads are one-time public URLs
-  pinned in `HttpModelSources.ts`.
+  traffic is the public Holepunch DHT; model downloads are one-time public
+  HuggingFace URLs listed in `HttpModelSources.ts` (the LLM repo is pinned to a
+  commit; the embedding repo currently tracks `main`). The download itself is
+  delegated to the QVAC SDK and the bytes are **not** checksum-verified locally
+  yet — local hash pinning is on the roadmap.
 - **Minimal Android permissions**: `INTERNET`, `ACCESS_NETWORK_STATE`,
   `POST_NOTIFICATIONS`, `FOREGROUND_SERVICE`.
 - **No regex in security-sensitive paths** (per `AGENTS.md`); canonical serialiser

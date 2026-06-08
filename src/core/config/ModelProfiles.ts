@@ -8,7 +8,6 @@ export interface ModelDescriptor {
   readonly label: string;
   readonly kind: ModelKind;
   readonly url: string;
-  readonly sha256: string;
   readonly sizeBytes: number;
   readonly nativeDim?: number;
   /**
@@ -42,7 +41,6 @@ export const ModelProfiles = {
     label: 'EmbeddingGemma 300M',
     kind: 'embedding' as const,
     url: HttpModelSources.embeddingGemma300mQ8.url,
-    sha256: HttpModelSources.embeddingGemma300mQ8.sha256,
     sizeBytes: HttpModelSources.embeddingGemma300mQ8.sizeBytes,
     nativeDim: 768,
     promptTemplate: 'task: clustering | query: {text}',
@@ -53,7 +51,6 @@ export const ModelProfiles = {
     label: 'Qwen3 1.7B',
     kind: 'llm' as const,
     url: HttpModelSources.qwen3_1_7bQ4_0.url,
-    sha256: HttpModelSources.qwen3_1_7bQ4_0.sha256,
     sizeBytes: HttpModelSources.qwen3_1_7bQ4_0.sizeBytes,
   } satisfies ModelDescriptor,
 } as const;

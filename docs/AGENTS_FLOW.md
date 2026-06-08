@@ -350,7 +350,8 @@ export type RecordBody = PostBody | ResponseBody | ReactionBody;
   (`WireReactionBody`, both directions, shared by both targets). The Bare
   worker treats records as opaque JSON → **no bundle rebuild** for a new kind.
 - **Network version**: `RoomConfig.topicPrefix` bumped **v3 → v4** for this wire
-  change (agent provenance fields are deferred to a later v5 bump).
+  change (agent provenance fields are deferred to a later bump — see §12; the
+  prefix is now at v6, so provenance lands at v7+).
 - **Repository** (`ReactionRepository.ts`): table `reactions(address, author,
   feed_index, in_reply_to, reaction, created_at)`. Rule: **one reaction per
   (author, target)** — a newer reaction replaces the older (`applyFromRecord`
@@ -416,7 +417,8 @@ threw).
 ## 12. Known limits / deferred
 
 - **Provenance** (human vs agent author on a record) is **not yet on the wire** —
-  deferred to a `topicPrefix` v4→v5 bump. Until then the dashboard shows what the
+  deferred to a future `topicPrefix` bump (v7+; v5 and v6 were spent on
+  announce-then-pull and the binary announce codec). Until then the dashboard shows what the
   *local* agent does; "agent of peer X replied to agent of peer Y" needs that
   field + a 🤖/👤 badge.
 - **Reply-to-reply chains** are not enabled yet (the agent reacts/replies to root

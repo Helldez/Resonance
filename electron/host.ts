@@ -3,7 +3,7 @@
  *
  * Responsibilities:
  *   1. Bootstrap the desktop container (`@platform/desktop/bootstrap`) in
- *      main, so all native modules (`better-sqlite3`, `bare-runtime`,
+ *      main, so all native modules (`node:sqlite`, `bare-runtime`,
  *      `@qvac/sdk`) live exactly here.
  *   2. Expose every port method the renderer needs over the
  *      `container/call` IPC channel.

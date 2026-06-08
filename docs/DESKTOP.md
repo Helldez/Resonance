@@ -93,31 +93,31 @@ two DLLs (Git for Windows ships compatible ones under
 ## Electron shell
 
 ```powershell
+npm run app:dev      # web:export + launch Electron in one step
+# or, if dist/ is already built:
 npm run electron:dev
 ```
 
-`electron/main.cjs` spawns the headless peer as a child process and
-exposes its stdio over a typed `window.resonance` bridge defined in
-`electron/preload.cjs`. The placeholder renderer at
-`electron/renderer/index.html` is a thin terminal-style UI for the REPL.
+The desktop app runs the **real Resonance UI** — the Expo Web export, not a
+placeholder. `electron/main.cjs` registers `tsx` and delegates to
+`electron/host.ts`, which:
 
-### Wiring the real Expo Web UI
+1. Bootstraps the desktop container (`@platform/desktop/bootstrap`) **in the
+   main process**, so every native module (`bare-runtime`, `@qvac/sdk`,
+   `node:sqlite`) lives there.
+2. Exposes each port method to the renderer over the `container/call` IPC
+   channel (`electron/preload.cjs` is the contextIsolated bridge), and
+   forwards push events (records, announcements, presence, model progress,
+   LLM stream chunks) to the window via `webContents.send`.
+3. Serves the Expo Web export (`dist/index.html`) under a privileged
+   `resonance://app/` custom scheme and opens a single `BrowserWindow` on it.
+   Under `file://` Expo Router would see the absolute on-disk path and report
+   "Unmatched Route", so the custom scheme keeps the pathname at `/`.
 
-The Electron renderer is intentionally a placeholder. To swap in the
-real Resonance UI:
-
-1. Add `web` to `app.json` `platforms`.
-2. Add deps: `react-native-web`, `react-dom`, `@expo/metro-runtime`.
-3. `npx expo export -p web` → produces `dist/`.
-4. In `electron/main.cjs`, change `RENDERER_ENTRY` to
-   `path.join(__dirname, '..', 'dist', 'index.html')`.
-5. Update the renderer's container layer to dispatch through
-   `window.resonance` instead of importing platform adapters directly.
-
-This step is deferred because (a) `react-native-web` interactions with
-the Bare polyfill in `src/platform/mobile/bootstrap.ts` need validation,
-and (b) the `react-native-svg` semantic map and gesture handler must be
-tested under web before they can be relied on.
+`npm run web:export` produces `dist/` (it also runs
+`scripts/desktop/patch-web-html.mjs`). If `dist/index.html` is missing the
+window shows a "web bundle missing — run `npm run web:export`" placeholder
+instead of crashing.
 
 ## UI smoke driver (Playwright)
 

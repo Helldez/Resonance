@@ -22,7 +22,7 @@ reopening in conversation.
 If you are looking at code, the LSH routing described below **no longer
 exists** — `src/core/matching/LshBucket.ts`, `InterestVector.ts` and
 `ComputeListeningBuckets.ts` were removed in conf 9. The current single-room
-implementation lives in `bare/p2p.mjs` + `bare/room-directory.mjs`, with
+implementation lives in `bare/p2p.mjs` + `bare/announce-directory.mjs`, with
 `src/core/inbox/InboxAdmission.ts` for the bounded inbox and constants in
 `src/core/config/RoomConfig.ts`.
 

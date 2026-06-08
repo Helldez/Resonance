@@ -6,7 +6,7 @@
  * eventually reaches every peer (~log₃₂(N) hops). There are no semantic
  * buckets, no DHT routing table, and no sticky peers — routing is delegated
  * to Hyperswarm peer discovery plus the directory-gossip protocol in
- * `bare/room-directory.mjs`.
+ * `bare/announce-directory.mjs`.
  *
  * All conf-9 knobs live here so nothing is hard-coded in the worker or the
  * UI. Changing `topicPrefix` or `roomId` partitions the network.
@@ -34,8 +34,8 @@ export const RoomConfig = {
 
   /**
    * Topic namespace prefix. Hyperswarm topics are 32-byte values; we derive
-   * ours as `sha256(topicPrefix || roomId)` so we never collide with another
-   * app sharing the public DHT.
+   * ours as `sha256(topicPrefix || networkSalt || roomId)` so we never collide
+   * with another app sharing the public DHT.
    *
    * Version bump history:
    *   v1 → v2 — EmbeddingGemma 256-dim → bge-m3 1024-dim + multi-table LSH.
