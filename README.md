@@ -3,6 +3,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Helldez/Resonance/actions/workflows/android-apk.yml"><img src="https://github.com/Helldez/Resonance/actions/workflows/android-apk.yml/badge.svg" alt="Android APK build"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
   <img src="https://img.shields.io/badge/platform-Android-3DDC84.svg" alt="Platform: Android">
   <img src="https://img.shields.io/badge/AI-100%25%20on--device-8A2BE2.svg" alt="AI: 100% on-device">
