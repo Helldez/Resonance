@@ -4,6 +4,8 @@ import { bootstrapPlatform } from '@platform/bootstrap';
 import { useBootstrapStore } from '@domain/BootstrapStore';
 import { useSettingsStore } from '@domain/SettingsStore';
 import { useAgentProfileStore } from '@domain/AgentProfileStore';
+import { useModelDownloadStore } from '@domain/ModelDownloadStore';
+import { useModelInstallStore } from '@domain/ModelInstallStore';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 import { RoomConfig } from '@core/config/RoomConfig';
 import type { ModelProgressUpdate } from '@qvac/sdk';
@@ -30,6 +32,7 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
   const [container, setContainer] = useState<PlatformContainer | null>(null);
   const setStage = useBootstrapStore((s) => s.setStage);
   const setProgress = useBootstrapStore((s) => s.setProgress);
+  const setStepMode = useBootstrapStore((s) => s.setStepMode);
   const setError = useBootstrapStore((s) => s.setError);
   const setSelf = useBootstrapStore((s) => s.setSelf);
   const aboutYouEmbeddingRef = useRef<Float32Array | null>(null);
@@ -52,9 +55,25 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
         containerRef.current = c;
 
         setStage('embedding-model');
+        // First run downloads the model (show MB); later runs only load the
+        // cached file into memory (no MB — it is not a download). The install
+        // flag is persisted, so wait for AsyncStorage rehydration before
+        // reading it, or a warm start could momentarily read the default
+        // (false) and wrongly show a download.
+        if (!useModelInstallStore.persist.hasHydrated()) {
+          await new Promise<void>((resolve) => {
+            const unsub = useModelInstallStore.persist.onFinishHydration(() => {
+              unsub();
+              resolve();
+            });
+          });
+        }
+        const embeddingInstalled = useModelInstallStore.getState().embeddingInstalled;
+        setStepMode(embeddingInstalled ? 'load' : 'download');
         await c.embedderConcrete.load((p: ModelProgressUpdate) => {
           setProgress(p.downloaded ?? 0, p.total ?? 0);
         });
+        useModelInstallStore.getState().markInstalled('embedding');
         if (cancelled) {
           return;
         }
@@ -140,6 +159,10 @@ export function AppContainerProvider({ children }: { children: ReactNode }) {
         await c.network.rescan();
 
         setStage('ready');
+        // A warm session may already hold the LLM in memory — reflect that as
+        // "ready" everywhere from the first frame. On a cold boot the LLM is not
+        // loaded yet, so this leaves the download status at `idle`.
+        useModelDownloadStore.getState().syncReady(c);
         setContainer(c);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));

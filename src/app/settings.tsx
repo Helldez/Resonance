@@ -2,18 +2,18 @@ import { useState } from 'react';
 import { ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSettingsStore } from '@domain/SettingsStore';
+import { useModelDownloadStore } from '@domain/ModelDownloadStore';
 import { useRequireContainer } from '@ui/AppContainerContext';
 import { ModelProfiles } from '@core/config/ModelProfiles';
 import { MatchingConfig } from '@core/config/MatchingConfig';
 import { DesignTokens as T } from '@core/config/DesignTokens';
-import { useModelDownload } from '@ui/hooks/useModelDownload';
+import { ModelDownloadProgress } from '@ui/components/ModelDownloadProgress';
 import { formatMb } from '@ui/Splash';
 import {
   Button,
   ListGroup,
   ListRow,
   Pill,
-  ProgressBar,
   Sheet,
   Text,
   TextField,
@@ -56,7 +56,13 @@ export default function SettingsScreen() {
   const setDisplayName = useSettingsStore((s) => s.setDisplayName);
 
   const [editing, setEditing] = useState<Editing>('none');
-  const llm = useModelDownload(container, ModelProfiles.llm.sizeBytes);
+  const llmStatus = useModelDownloadStore((s) => s.status);
+  const llmDownloaded = useModelDownloadStore((s) => s.downloaded);
+  const llmTotal = useModelDownloadStore((s) => s.total);
+  const llmError = useModelDownloadStore((s) => s.error);
+  const startLlmDownload = useModelDownloadStore((s) => s.start);
+  const llmReady = llmStatus === 'ready';
+  const llmBusy = llmStatus === 'downloading' || llmStatus === 'preparing';
   const activePreset = presetForValue(similarityThreshold);
 
   return (
@@ -110,33 +116,38 @@ export default function SettingsScreen() {
               label={ModelProfiles.llm.label}
               hint={`Drafts replies and posts · ${formatMb(ModelProfiles.llm.sizeBytes)} MB`}
               right={
-                llm.ready ? (
+                llmReady ? (
                   <Text variant="label" color={T.color.success}>Ready</Text>
-                ) : llm.loading && llm.progress !== null && llm.progress.total > 0 ? (
-                  <Text variant="label" color={T.color.textMuted}>
-                    {`${formatMb(llm.progress.downloaded)} / ${formatMb(llm.progress.total)} MB`}
-                  </Text>
                 ) : undefined
               }
               noDivider
             />
-            {llm.loading && llm.progress !== null && llm.progress.total > 0 && (
+            {llmBusy && (
               <View style={{ paddingHorizontal: T.space.lg, paddingBottom: T.space.md }}>
-                <ProgressBar progress={llm.progress.downloaded / llm.progress.total} />
+                <ModelDownloadProgress
+                  status={llmStatus}
+                  downloaded={llmDownloaded}
+                  total={llmTotal}
+                />
               </View>
             )}
-            {!llm.ready && !llm.loading && (
+            {!llmReady && !llmBusy && (
               <View style={{ paddingHorizontal: T.space.lg, paddingBottom: T.space.md }}>
-                <Button label="Download model" icon="download" small onPress={llm.start} />
+                <Button
+                  label="Download model"
+                  icon="download"
+                  small
+                  onPress={() => startLlmDownload(container)}
+                />
               </View>
             )}
-            {llm.error !== null && (
+            {llmError !== null && (
               <Text
                 variant="small"
                 color={T.color.danger}
                 style={{ paddingHorizontal: T.space.lg, paddingBottom: T.space.md }}
               >
-                {llm.error}
+                {llmError}
               </Text>
             )}
           </View>

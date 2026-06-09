@@ -1,18 +1,19 @@
 import { useState } from 'react';
-import { ScrollView, View } from 'react-native';
+import { View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DesignTokens as T } from '@core/config/DesignTokens';
 import { ModelProfiles } from '@core/config/ModelProfiles';
 import { useSettingsStore } from '@domain/SettingsStore';
 import { useBootstrapStore } from '@domain/BootstrapStore';
 import { useAgentProfileStore } from '@domain/AgentProfileStore';
+import { useModelDownloadStore } from '@domain/ModelDownloadStore';
 import { useAppContainer } from '@ui/AppContainerContext';
-import { useModelDownload } from '@ui/hooks/useModelDownload';
+import { ModelDownloadProgress } from '@ui/components/ModelDownloadProgress';
 import { formatMb } from '@ui/Splash';
 import {
   Button,
   Icon,
-  ProgressBar,
+  KeyboardAwareScreen,
   Skeleton,
   Text,
   TextField,
@@ -50,16 +51,15 @@ export function OnboardingFlow() {
         paddingBottom: insets.bottom + T.space.lg,
       }}
     >
-      <ScrollView
+      <KeyboardAwareScreen
         style={{ flex: 1 }}
         contentContainerStyle={{ flexGrow: 1, padding: T.space.xxl }}
-        keyboardShouldPersistTaps="handled"
       >
         {step === 0 && <StepWelcome onNext={next} />}
         {step === 1 && <StepIdentity onNext={next} />}
         {step === 2 && <StepAboutYou onNext={next} />}
         {step === 3 && <StepAgent onDone={finish} />}
-      </ScrollView>
+      </KeyboardAwareScreen>
 
       <View
         style={{
@@ -177,7 +177,13 @@ function StepAgent(props: { onDone: () => void }) {
   const container = useAppContainer();
   const setProfile = useAgentProfileStore((s) => s.setProfile);
   const [optIn, setOptIn] = useState<boolean | null>(null);
-  const llm = useModelDownload(container, ModelProfiles.llm.sizeBytes);
+  const llmStatus = useModelDownloadStore((s) => s.status);
+  const llmDownloaded = useModelDownloadStore((s) => s.downloaded);
+  const llmTotal = useModelDownloadStore((s) => s.total);
+  const llmError = useModelDownloadStore((s) => s.error);
+  const startLlmDownload = useModelDownloadStore((s) => s.start);
+  const llmReady = llmStatus === 'ready';
+  const llmBusy = llmStatus === 'downloading' || llmStatus === 'preparing';
 
   const choose = (v: boolean): void => {
     setOptIn(v);
@@ -220,25 +226,24 @@ function StepAgent(props: { onDone: () => void }) {
             <Text variant="label" style={{ flex: 1 }}>
               {`${ModelProfiles.llm.label} · ${formatMb(ModelProfiles.llm.sizeBytes)} MB`}
             </Text>
-            {llm.ready && <Text variant="label" color={T.color.success}>Ready</Text>}
+            {llmReady && <Text variant="label" color={T.color.success}>Ready</Text>}
           </View>
-          {llm.loading && llm.progress !== null && llm.progress.total > 0 ? (
-            <View style={{ gap: T.space.xs }}>
-              <ProgressBar progress={llm.progress.downloaded / llm.progress.total} />
-              <Text variant="caption">
-                {`${formatMb(llm.progress.downloaded)} / ${formatMb(llm.progress.total)} MB`}
-              </Text>
-            </View>
-          ) : !llm.ready ? (
+          {llmBusy ? (
+            <ModelDownloadProgress
+              status={llmStatus}
+              downloaded={llmDownloaded}
+              total={llmTotal}
+            />
+          ) : !llmReady ? (
             container !== null ? (
-              <Button label="Download now" small onPress={llm.start} />
+              <Button label="Download now" small onPress={() => startLlmDownload(container)} />
             ) : (
               <Text variant="caption">Finishing device setup — the download unlocks in a moment.</Text>
             )
           ) : null}
-          {llm.error !== null && (
+          {llmError !== null && (
             <Text variant="small" color={T.color.danger}>
-              {llm.error}
+              {llmError}
             </Text>
           )}
         </View>

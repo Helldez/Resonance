@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ScrollView, View } from 'react-native';
+import { View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAgentProfileStore } from '@domain/AgentProfileStore';
 import { useRequireContainer } from '@ui/AppContainerContext';
@@ -7,6 +7,7 @@ import { AgentConfig } from '@core/config/AgentConfig';
 import { DesignTokens as T } from '@core/config/DesignTokens';
 import {
   IconButton,
+  KeyboardAwareScreen,
   ListGroup,
   ListRow,
   Pill,
@@ -53,9 +54,8 @@ export default function AgentSettingsScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: T.color.bg }}>
       <TopBar title="Agent settings" back />
-      <ScrollView
+      <KeyboardAwareScreen
         contentContainerStyle={{ paddingBottom: insets.bottom + T.space.xxl }}
-        keyboardShouldPersistTaps="handled"
       >
         <ListGroup title="Identity">
           <View style={{ paddingHorizontal: T.space.lg, paddingVertical: T.space.sm, gap: T.space.md }}>
@@ -218,7 +218,7 @@ export default function AgentSettingsScreen() {
             noDivider
           />
         </ListGroup>
-      </ScrollView>
+      </KeyboardAwareScreen>
     </View>
   );
 }

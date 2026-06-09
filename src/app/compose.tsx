@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireContainer } from '@ui/AppContainerContext';
+import { useKeyboardHeight } from '@ui/hooks/useKeyboardHeight';
 import { useSettingsStore } from '@domain/SettingsStore';
 import { appendOwnEmbedding, rescoreInboxAgainstOwnPosts } from '@services/NetworkIngestion';
 import { createPost } from '@core/posts/CreatePost';
@@ -23,6 +24,7 @@ export default function ComposeScreen() {
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const keyboardHeight = useKeyboardHeight();
 
   const remaining = RoomConfig.maxPostChars - text.length;
 
@@ -86,10 +88,7 @@ export default function ComposeScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: T.color.bg }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <View style={{ flex: 1, backgroundColor: T.color.bg }}>
       {/* Header: just the cancel — the action lives under the editor. */}
       <View
         style={{
@@ -123,7 +122,13 @@ export default function ComposeScreen() {
       </View>
 
       {/* Counter + a full-width Post right under the editor. */}
-      <View style={{ paddingHorizontal: T.space.lg, gap: T.space.sm }}>
+      <View
+        style={{
+          paddingHorizontal: T.space.lg,
+          paddingBottom: keyboardHeight > 0 ? keyboardHeight + T.space.sm : 0,
+          gap: T.space.sm,
+        }}
+      >
         <Text
           variant="small"
           color={remaining < 0 ? T.color.danger : T.color.textMuted}
@@ -141,6 +146,6 @@ export default function ComposeScreen() {
           }}
         />
       </View>
-    </KeyboardAvoidingView>
+    </View>
   );
 }

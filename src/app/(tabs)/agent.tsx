@@ -3,6 +3,8 @@ import { FlatList, StyleSheet, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useRequireContainer } from '@ui/AppContainerContext';
 import { useAgentProfileStore } from '@domain/AgentProfileStore';
+import { useModelDownloadStore } from '@domain/ModelDownloadStore';
+import { ModelDownloadProgress } from '@ui/components/ModelDownloadProgress';
 import type { Autonomy } from '@core/agent/AgentProfile';
 import type { AgentLogEntry } from '@data/AgentLogRepository';
 import type { AgentLogPhase } from '@core/agent/ActivityTypes';
@@ -67,7 +69,13 @@ export default function AgentScreen() {
   const [today, setToday] = useState({ posts: 0, comments: 0, reactions: 0 });
   const [entries, setEntries] = useState<AgentLogEntry[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
-  const llmReady = container.llmConcrete.isLoaded;
+  const llmStatus = useModelDownloadStore((s) => s.status);
+  const llmDownloaded = useModelDownloadStore((s) => s.downloaded);
+  const llmTotal = useModelDownloadStore((s) => s.total);
+  const llmError = useModelDownloadStore((s) => s.error);
+  const startLlmDownload = useModelDownloadStore((s) => s.start);
+  const llmReady = llmStatus === 'ready' || container.llmConcrete.isLoaded;
+  const llmBusy = llmStatus === 'downloading' || llmStatus === 'preparing';
 
   const refresh = useCallback(async (): Promise<void> => {
     const day = dayKey(container.clock.now());
@@ -171,26 +179,50 @@ export default function AgentScreen() {
             {!llmReady && profile.autonomy !== 'off' && (
               <View
                 style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: T.space.md,
+                  gap: T.space.sm,
                   paddingHorizontal: T.space.lg,
                   paddingVertical: T.space.md,
                   borderBottomWidth: StyleSheet.hairlineWidth,
                   borderBottomColor: T.color.border,
                 }}
               >
-                <Icon name="alert" size={T.size.icon} color={T.color.warning} />
-                <Text variant="small" style={{ flex: 1 }}>
-                  The language model is not loaded — the agent cannot think
-                  without it.
-                </Text>
-                <Button
-                  label="Get it"
-                  small
-                  variant="secondary"
-                  onPress={() => router.push('/settings')}
-                />
+                {llmBusy ? (
+                  <>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: T.space.md }}>
+                      <Icon name="download" size={T.size.icon} color={T.color.accent} />
+                      <Text variant="small" style={{ flex: 1 }}>
+                        Downloading the language model — it powers everything the
+                        agent does.
+                      </Text>
+                    </View>
+                    <ModelDownloadProgress
+                      status={llmStatus}
+                      downloaded={llmDownloaded}
+                      total={llmTotal}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: T.space.md }}>
+                      <Icon name="alert" size={T.size.icon} color={T.color.warning} />
+                      <Text variant="small" style={{ flex: 1 }}>
+                        The language model is not loaded — the agent cannot think
+                        without it.
+                      </Text>
+                      <Button
+                        label="Get it"
+                        small
+                        variant="secondary"
+                        onPress={() => startLlmDownload(container)}
+                      />
+                    </View>
+                    {llmError !== null && (
+                      <Text variant="small" color={T.color.danger}>
+                        {llmError}
+                      </Text>
+                    )}
+                  </>
+                )}
               </View>
             )}
 

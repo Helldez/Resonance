@@ -1,14 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useContext, useEffect, useState, type ReactNode } from 'react';
+import { View } from 'react-native';
 import { Stack } from 'expo-router';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaInsetsContext } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { DesignTokens as T } from '@core/config/DesignTokens';
 import { AppContainerProvider, useAppContainer } from '@ui/AppContainerContext';
 import { useBootstrapStore } from '@domain/BootstrapStore';
 import { useSettingsStore } from '@domain/SettingsStore';
+import { useModelDownloadStore } from '@domain/ModelDownloadStore';
 import { Splash } from '@ui/Splash';
 import { OnboardingFlow } from '@ui/onboarding/OnboardingFlow';
+import { ModelDownloadIndicator } from '@ui/components/ModelDownloadIndicator';
 
 export default function RootLayout() {
   return (
@@ -75,22 +78,49 @@ function Gate() {
   }
 
   return (
-    <Stack
-      screenOptions={{
-        headerStyle: { backgroundColor: T.color.bg },
-        headerTintColor: T.color.text,
-        headerShadowVisible: false,
-        contentStyle: { backgroundColor: T.color.bg },
-      }}
-    >
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen
-        name="compose"
-        options={{ headerShown: false, presentation: 'modal' }}
-      />
-      <Stack.Screen name="thread/[id]" options={{ headerShown: false }} />
-      <Stack.Screen name="settings" options={{ headerShown: false }} />
-      <Stack.Screen name="agent-settings" options={{ headerShown: false }} />
-    </Stack>
+    <View style={{ flex: 1, backgroundColor: T.color.bg }}>
+      <ModelDownloadIndicator />
+      <DownloadTopInset>
+        <Stack
+          screenOptions={{
+            headerStyle: { backgroundColor: T.color.bg },
+            headerTintColor: T.color.text,
+            headerShadowVisible: false,
+            contentStyle: { backgroundColor: T.color.bg },
+          }}
+        >
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen
+            name="compose"
+            options={{ headerShown: false, presentation: 'modal' }}
+          />
+          <Stack.Screen name="thread/[id]" options={{ headerShown: false }} />
+          <Stack.Screen name="settings" options={{ headerShown: false }} />
+          <Stack.Screen name="agent-settings" options={{ headerShown: false }} />
+        </Stack>
+      </DownloadTopInset>
+    </View>
+  );
+}
+
+/**
+ * The download indicator owns the top safe-area inset while it is visible.
+ * Every screen's `TopBar` also pads `insets.top`, so without this the strip and
+ * the header would both reserve the status-bar height and leave an empty gap.
+ * Overriding the inset context to `top: 0` for the screen subtree makes a
+ * single component consume the edge — the standard safe-area-context pattern.
+ */
+function DownloadTopInset({ children }: { children: ReactNode }) {
+  const active = useModelDownloadStore(
+    (s) => s.status === 'downloading' || s.status === 'preparing',
+  );
+  const insets = useContext(SafeAreaInsetsContext);
+  if (!active || insets === null) {
+    return <>{children}</>;
+  }
+  return (
+    <SafeAreaInsetsContext.Provider value={{ ...insets, top: 0 }}>
+      {children}
+    </SafeAreaInsetsContext.Provider>
   );
 }

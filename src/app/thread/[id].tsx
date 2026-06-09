@@ -1,14 +1,9 @@
 import { useState } from 'react';
-import {
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  View,
-} from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireContainer } from '@ui/AppContainerContext';
+import { useKeyboardHeight } from '@ui/hooks/useKeyboardHeight';
 import { useSettingsStore } from '@domain/SettingsStore';
 import { useThread } from '@ui/thread/useThread';
 import { confirmDestructive } from '@ui/confirmDestructive';
@@ -37,6 +32,7 @@ export default function ThreadScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const container = useRequireContainer();
   const insets = useSafeAreaInsets();
+  const keyboardHeight = useKeyboardHeight();
   const receiverContext = useSettingsStore((s) => s.receiverContext);
   const displayName = useSettingsStore((s) => s.displayName);
   const thread = useThread(container, id);
@@ -85,10 +81,7 @@ export default function ThreadScreen() {
       : shortPeer(author);
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: T.color.bg }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <View style={{ flex: 1, backgroundColor: T.color.bg }}>
       <TopBar title="Post" back />
 
       <ScrollView contentContainerStyle={{ paddingBottom: T.space.xxl }}>
@@ -201,7 +194,7 @@ export default function ThreadScreen() {
             borderTopColor: T.color.border,
             paddingHorizontal: T.space.lg,
             paddingTop: T.space.sm,
-            paddingBottom: insets.bottom + T.space.sm,
+            paddingBottom: (keyboardHeight > 0 ? keyboardHeight : insets.bottom) + T.space.sm,
             gap: T.space.sm,
           }}
         >
@@ -244,6 +237,6 @@ export default function ThreadScreen() {
           )}
         </View>
       )}
-    </KeyboardAvoidingView>
+    </View>
   );
 }

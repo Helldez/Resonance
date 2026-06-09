@@ -1,7 +1,7 @@
 import { View } from 'react-native';
 import { useBootstrapStore } from '@domain/BootstrapStore';
 import { DesignTokens as T } from '@core/config/DesignTokens';
-import { Icon, ProgressBar, Text } from '@ui/design-system';
+import { Icon, IndeterminateBar, ProgressBar, Text } from '@ui/design-system';
 import type { BootstrapState } from '@domain/types';
 
 type Stage = BootstrapState['stage'];
@@ -40,6 +40,7 @@ export function Splash() {
   const stage = useBootstrapStore((s) => s.stage);
   const progressBytes = useBootstrapStore((s) => s.progressBytes);
   const totalBytes = useBootstrapStore((s) => s.totalBytes);
+  const stepMode = useBootstrapStore((s) => s.stepMode);
   const error = useBootstrapStore((s) => s.error);
 
   return (
@@ -89,7 +90,14 @@ export function Splash() {
                   {step.label}
                 </Text>
               </View>
+              {state === 'active' && stepMode === 'load' && (
+                <View style={{ gap: T.space.xs, paddingLeft: T.size.iconSmall + T.space.md }}>
+                  <IndeterminateBar />
+                  <Text variant="caption">Loading model…</Text>
+                </View>
+              )}
               {state === 'active' &&
+                stepMode !== 'load' &&
                 progressBytes !== undefined &&
                 totalBytes !== undefined &&
                 totalBytes > 0 && (

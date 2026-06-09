@@ -2,6 +2,7 @@ import { Modal, Pressable, View } from 'react-native';
 import type { ReactNode } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DesignTokens as T } from '@core/config/DesignTokens';
+import { useKeyboardHeight } from '@ui/hooks/useKeyboardHeight';
 import { Text } from './Text';
 
 /** X-style bottom sheet over a scrim. Tap outside (or the handle) to close. */
@@ -12,6 +13,11 @@ export function Sheet(props: {
   children: ReactNode;
 }) {
   const insets = useSafeAreaInsets();
+  const keyboardHeight = useKeyboardHeight();
+  // A bottom-anchored Modal does not get pushed up by the keyboard on Android
+  // (edge-to-edge), so lift the sheet ourselves. The existing safe-area padding
+  // already covers `insets.bottom`, so only add the remainder above it.
+  const keyboardLift = Math.max(0, keyboardHeight - insets.bottom);
   return (
     <Modal visible={props.visible} transparent animationType="slide" onRequestClose={props.onClose}>
       <Pressable
@@ -27,6 +33,7 @@ export function Sheet(props: {
           paddingHorizontal: T.space.lg,
           paddingTop: T.space.md,
           paddingBottom: insets.bottom + T.space.lg,
+          marginBottom: keyboardLift,
         }}
       >
         <View

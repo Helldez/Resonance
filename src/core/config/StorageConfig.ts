@@ -26,4 +26,11 @@ export const StorageConfig = {
 
   /** AsyncStorage key for app-level settings (user prefs). */
   settingsKvKey: 'resonance/settings/v1',
+
+  /**
+   * AsyncStorage key recording which models have completed their first
+   * download. Lets the boot splash tell a genuine download (show MB) from a
+   * subsequent load of an already-downloaded model (no MB).
+   */
+  modelInstallKvKey: 'resonance/models/installed/v1',
 } as const;
