@@ -1,0 +1,73 @@
+name: Android APK
+
+# Builds a debug-signed, installable APK from a clean runner.
+# All build artifacts (bare/qvac bundles and the android/ directory) are
+# gitignored, so this workflow regenerates them from source before Gradle runs.
+# Models (*.gguf) are downloaded by the app at first launch, not at build time.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # required to attach the APK to a GitHub Release on tag builds
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json # reads engines.node, no pinned version
+          cache: npm
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Build Bare P2P worker
+        run: npm run build:bare
+
+      - name: Bundle QVAC SDK worker
+        run: npx qvac bundle sdk
+
+      - name: Expo prebuild (generate android/)
+        run: npx expo prebuild --platform android --clean
+
+      - name: Install the NDK pinned by the generated gradle config
+        run: |
+          NDK_VERSION=$(grep -oP 'ndkVersion\s*=\s*"\K[^"]+' android/build.gradle)
+          echo "Installing NDK ${NDK_VERSION} (read from android/build.gradle)"
+          sdkmanager --install "ndk;${NDK_VERSION}"
+
+      - name: Build release APK
+        run: ./gradlew assembleRelease --no-daemon
+        working-directory: android
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: resonance-apk
+          path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      - name: Attach APK to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: android/app/build/outputs/apk/release/*.apk
