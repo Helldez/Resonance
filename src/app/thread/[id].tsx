@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRequireContainer } from '@ui/AppContainerContext';
 import { useKeyboardHeight } from '@ui/hooks/useKeyboardHeight';
 import { useSettingsStore } from '@domain/SettingsStore';
+import { useModelDownloadStore } from '@domain/ModelDownloadStore';
 import { useThread } from '@ui/thread/useThread';
 import { confirmDestructive } from '@ui/confirmDestructive';
 import { formatRelative } from '@ui/format/relativeTime';
@@ -37,6 +38,21 @@ export default function ThreadScreen() {
   const displayName = useSettingsStore((s) => s.displayName);
   const thread = useThread(container, id);
 
+  // The LLM is downloaded on demand and lives in a global store. The AI draft
+  // needs it loaded; gating on this status (rather than letting `draftWithAi`
+  // trigger an untracked inline 1.1 GB load) is what keeps the button from
+  // spinning forever before the model exists.
+  const llmStatus = useModelDownloadStore((s) => s.status);
+  const startLlmDownload = useModelDownloadStore((s) => s.start);
+  const llmReady = llmStatus === 'ready';
+  const llmBusy = llmStatus === 'downloading' || llmStatus === 'preparing';
+  const aiSetupLabel =
+    llmStatus === 'downloading'
+      ? 'Downloading AI…'
+      : llmStatus === 'preparing'
+        ? 'Preparing AI…'
+        : 'Download AI to draft';
+
   const [draft, setDraft] = useState('');
   const [drafting, setDrafting] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -47,6 +63,11 @@ export default function ThreadScreen() {
   const canReply = post !== null && post.author !== container.self && !alreadyReplied;
 
   const generate = (): void => {
+    // Defensive: the button only calls this when the model is ready, but never
+    // kick off a draft (which would block on an unavailable model) otherwise.
+    if (!llmReady) {
+      return;
+    }
     setDrafting(true);
     setError(null);
     void (async () => {
@@ -214,15 +235,29 @@ export default function ThreadScreen() {
                 error={error}
               />
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: T.space.sm }}>
-                <Button
-                  label={draft.trim().length === 0 ? 'Draft with AI' : 'Rewrite with AI'}
-                  variant="secondary"
-                  small
-                  icon="robot"
-                  loading={drafting}
-                  disabled={drafting || publishing || !canReply}
-                  onPress={generate}
-                />
+                {llmReady ? (
+                  <Button
+                    label={draft.trim().length === 0 ? 'Draft with AI' : 'Rewrite with AI'}
+                    variant="secondary"
+                    small
+                    icon="robot"
+                    loading={drafting}
+                    disabled={drafting || publishing || !canReply}
+                    onPress={generate}
+                  />
+                ) : (
+                  // Model not loaded yet: route to the tracked global download
+                  // (progress shows in the app-wide indicator) instead of
+                  // hanging on an inline load. Disabled while it runs.
+                  <Button
+                    label={aiSetupLabel}
+                    variant="secondary"
+                    small
+                    icon="download"
+                    disabled={llmBusy || publishing}
+                    onPress={() => startLlmDownload(container)}
+                  />
+                )}
                 <View style={{ flex: 1 }} />
                 <Button
                   label="Reply"

@@ -8,11 +8,20 @@ name: Android APK
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main # rebuild the APK on every commit to main
     tags:
       - 'v*'
 
 permissions:
   contents: write # required to attach the APK to a GitHub Release on tag builds
+
+# One build per ref at a time: a newer commit cancels the in-progress build so
+# stale APKs don't pile up. Tag builds get their own group so a release build is
+# never cancelled by a later commit to main.
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
