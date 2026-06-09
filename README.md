@@ -14,7 +14,7 @@
 **The web routes you through an index someone else owns. Resonance routes by
 meaning, on your device.**
 
-> **Demo** ▶ [90-second walkthrough](https://github.com/Helldez/Resonance/releases/download/v0.1.0/Resonance_Twitter_1920x1080_subtitled.mp4) &nbsp;·&nbsp;
+> **Demo** ▶ [watch the walkthrough](https://github.com/Helldez/Resonance/releases/download/v0.1.0/Resonance_Demo_web.mp4) &nbsp;·&nbsp;
 > **QVAC Hackathon I — Unleash Edge AI**, track **Mobile**
 
 > **New to the codebase?** Read [`docs/GUIDE.md`](docs/GUIDE.md) — a single
