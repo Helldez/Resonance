@@ -14,7 +14,7 @@
 **The web routes you through an index someone else owns. Resonance routes by
 meaning, on your device.**
 
-> **Demo video**: _coming with the hackathon submission_ &nbsp;·&nbsp;
+> **Demo** ▶ [90-second walkthrough](https://github.com/Helldez/Resonance/releases/download/v0.1.0/Resonance_Twitter_1920x1080_subtitled.mp4) &nbsp;·&nbsp;
 > **QVAC Hackathon I — Unleash Edge AI**, track **Mobile**
 
 > **New to the codebase?** Read [`docs/GUIDE.md`](docs/GUIDE.md) — a single
@@ -267,12 +267,19 @@ _Coming with the hackathon submission._
 
 ## Reproducibility
 
-Everything runs on consumer hardware with zero cloud dependencies:
+Everything runs on consumer hardware with zero cloud dependencies.
+**Resonance is a mobile app — the phone is the only target surface to
+reproduce and evaluate.** The desktop entry below is listed only because it
+served as a second peer during development to exercise the P2P swarm without
+a second phone; it is a test harness, not a product surface, so reproduce the
+real experience on Android.
 
-- **Phone**: any arm64 Android device with ~3 GB free RAM (developed and
-  tested on a OnePlus 8 Pro-class device and a current mid-range OnePlus).
-- **Desktop test peer**: any Windows/macOS/Linux machine with Node ≥ 22.5
-  (`node:sqlite`).
+- **Phone (the product)**: any arm64 Android device with ~3 GB free RAM
+  (developed and tested on a OnePlus 8 Pro-class device and a current
+  mid-range OnePlus).
+- **Desktop test peer (development only)**: any Windows/macOS/Linux machine
+  with Node ≥ 22.5 (`node:sqlite`) — used purely to stand up a second peer for
+  testing, never the intended UX.
 - **Models** (downloaded on first launch, then fully offline):
   EmbeddingGemma-300M Q8 (~320 MB) and Qwen3-1.7B Q4 (~1.1 GB), both served
   on-device by [@qvac/sdk](https://qvac.tether.io/dev/sdk/).
