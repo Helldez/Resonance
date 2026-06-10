@@ -194,17 +194,21 @@ so nothing build-related needs to be committed.
 - **A `v*` tag** builds the APK *and attaches the raw `app-release.apk` to a
   GitHub Release*. This is the only binary users should download.
 
+**The git tag is the single source of truth for the version.** Do **not** bump
+`app.json`/`package.json` per release — `app.config.js` overrides the version at
+build time from env vars CI derives: `versionName` from the tag (`vX.Y.Z` →
+`X.Y.Z`) and `versionCode` from `git rev-list --count HEAD` (strictly increasing,
+so Android always accepts the update). `app.json`'s static version is only the
+local-dev fallback.
+
 **To cut a release (the user-facing APK):**
 
-1. On a `release/vX.Y.Z` branch, bump `version` in **both** `app.json` and
-   `package.json`, and `android.versionCode` in `app.json` (versionCode must
-   strictly increase or Android refuses the update).
-2. Open a PR into `main`, merge it, delete the branch.
-3. `git checkout main && git pull --ff-only`, then tag the merge commit and
-   push the tag: `git tag vX.Y.Z <merge-sha> && git push origin vX.Y.Z`.
-4. CI builds from the tagged commit and attaches `app-release.apk` to the new
+1. `git checkout main && git pull --ff-only`.
+2. Tag the head of `main` and push the tag — that is the whole release:
+   `git tag vX.Y.Z && git push origin vX.Y.Z`. No branch, no PR, no version bump.
+3. CI builds from the tagged commit and attaches `app-release.apk` to the new
    Release. Confirm with `gh release view vX.Y.Z`.
-5. **Write the release notes — a Release with a bare APK and no body is not
+4. **Write the release notes — a Release with a bare APK and no body is not
    done.** Use the standing template (see `v0.1.1`): install steps, the
    **SHA-256 of the attached APK** (`Get-FileHash app-release.apk -Algorithm
    SHA256` on the CI-built artifact), the debug-signing caveat, and a one-line
