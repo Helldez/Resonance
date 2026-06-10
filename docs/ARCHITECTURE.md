@@ -64,9 +64,9 @@ Node-side embedding model in for offline analysis.
 
 Resonance runs **one shared P2P room** — no semantic buckets, no DHT
 routing table, no sticky peers. Every node joins a single Hyperswarm topic
-derived as `sha256(RoomConfig.topicPrefix || RoomConfig.roomId)`. Signed
-**announcements** (author + outbox key + embedding + digest) gossip
-transitively over the `resonance-announce/v2` channel
+derived as `sha256(RoomConfig.topicPrefix || RoomConfig.roomId)`. Unsigned
+**announcements** (author + outbox key + embedding + digest of the signed
+record) gossip transitively over the `resonance-announce/v2` channel
 (`bare/announce-directory.mjs`; compact-encoding binary via
 `bare/announce-codec.mjs`, batched at `RoomConfig.announceBatchSize` per
 message so the on-open snapshot never exceeds the transport's frame cap) so

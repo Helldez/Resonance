@@ -339,7 +339,7 @@ new peers land in different swarms. The history is encoded right in the config c
 - **v2 → v3:** dropped LSH routing for the single-room model; reverted to
   EmbeddingGemma-300M 768-dim. Signatures incompatible across the boundary.
 - **v3 → v4:** added the signed `reaction` record kind. Old-format peers are isolated.
-- **v4 → v5:** **announce-then-pull** — the directory now gossips signed
+- **v4 → v5:** **announce-then-pull** — the directory now gossips lightweight
   *announcements* instead of feed keys, and peers pull only what they admit.
   The wire protocol is incompatible with v4 peers.
 - **v5 → v6:** the announce channel goes **binary** (compact-encoding,

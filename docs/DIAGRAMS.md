@@ -268,7 +268,8 @@ One Hyperswarm topic = `sha256(topicPrefix + networkSalt || roomId)` (the
 salt is empty on the public network; a shared secret salt yields a private
 one — see `SECURITY.md`). Each peer owns one writable outbox Hypercore; the
 `resonance-announce/v2` protocol (`bare/announce-directory.mjs`) gossips
-signed **announcements** (author + outbox key + embedding + digest)
+unsigned **announcements** (author + outbox key + embedding + digest of the
+signed record; authenticity is verified on the pulled body)
 transitively so every summary reaches every peer (~log₃₂(N) hops, fan-out
 capped at 32). Since v6 the channel is binary (`bare/announce-codec.mjs`,
 compact-encoding: ~3.2KB per announcement vs ~15KB as JSON) and the on-open

@@ -32,8 +32,8 @@ history lives in [`SEMANTIC_ROUTING.md`](SEMANTIC_ROUTING.md).
   `sha256(RoomConfig.topicPrefix + networkSalt || roomId)`
   (`resonance/v6/room/`, `global`; the salt is empty on the public network —
   a shared secret salt yields a private one, see `SECURITY.md`).
-  **No LSH, no buckets, no routing table.** Signed **announcements** (author +
-  outbox key + full float32 embedding + digest) gossip transitively over
+  **No LSH, no buckets, no routing table.** Unsigned **announcements** (author +
+  outbox key + full float32 embedding + digest of the signed record) gossip transitively over
   `resonance-announce/v2` (`bare/announce-directory.mjs`; binary
   compact-encoding via `bare/announce-codec.mjs`, snapshots batched at
   `RoomConfig.announceBatchSize`), reaching every peer
