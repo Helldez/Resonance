@@ -230,8 +230,16 @@ not as an end-user experience.
 
 ### Android (the product)
 
-Connect an Android device over adb (USB **or** Wi-Fi) — or start an emulator —
-then, with Node ≥ 20:
+**Fastest path — install the prebuilt APK.** Every tagged release ships a
+debug-signed `arm64-v8a` APK built by
+[GitHub Actions](https://github.com/Helldez/Resonance/actions/workflows/android-apk.yml).
+Grab the latest one from the
+[Releases page](https://github.com/Helldez/Resonance/releases), copy it to your
+device, and install it (you may need to allow installs from unknown sources).
+No toolchain required — this is the recommended way to try the app.
+
+**Build from source.** Connect an Android device over adb (USB **or** Wi-Fi) —
+or start an emulator — then, with Node ≥ 20:
 
 ```powershell
 npm install --legacy-peer-deps
