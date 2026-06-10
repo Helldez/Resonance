@@ -8,11 +8,13 @@ model.
 
 The current topology is a **single shared Hyperswarm room** running an
 **announce-then-pull** protocol (network version `resonance/v6/room/`).
-Lightweight signed **announcements** gossip to every peer; full record bodies
-are **pulled on demand**, only for the records a node admits into its bounded
-inbox. Ranking is global (every post's embedding is scored); download,
-signature verification and storage are paid only for the bounded set a node
-keeps.
+Lightweight **announcements** gossip to every peer; full record bodies are
+**pulled on demand**, only for the records a node admits into its bounded
+inbox. The announcement itself is unsigned — it carries the digest of a signed
+record, and authenticity is verified on the pulled body, so a forged
+announcement costs at most one wasted pull. Ranking is global (every post's
+embedding is scored); download, signature verification and storage are paid
+only for the bounded set a node keeps.
 
 For the design rationale and the history of earlier topologies (LSH buckets,
 v1–v2; whole-core replication, v3–v4) see

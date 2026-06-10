@@ -11,10 +11,12 @@ server, no telemetry**. The security posture below follows from that.
 > **Topology note (important).** Resonance is a **single shared room with
 > announce-then-pull** (`RoomConfig.topicPrefix = resonance/v6/room/`). The
 > earlier LSH/bucket routing (v1–v2) and the replicate-every-core single room
-> (v3–v4) are **gone**. Lightweight signed announcements (author + embedding +
-> digest) gossip to every peer; full record bodies are sparse-pulled **only for
-> the bounded set a node admits** (~`inboxCapacity`), and signatures are
-> verified only for pulled bodies. This shrinks the per-node blast radius of a
+> (v3–v4) are **gone**. Lightweight announcements (author + embedding + digest
+> of a signed record — the announcement itself is **unsigned**) gossip to every
+> peer; full record bodies are sparse-pulled **only for the bounded set a node
+> admits** (~`inboxCapacity`), and signatures are verified only for pulled
+> bodies — so a forged announcement costs the victim at most one wasted pull
+> that fails verification. This shrinks the per-node blast radius of a
 > flood from "download + verify + store everything" to "score a stream of
 > summaries" — but announcements themselves are still uncapped per author
 > (see S3), and the 32-connection cap still does not bound who can reach you.

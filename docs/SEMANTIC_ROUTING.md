@@ -1,7 +1,7 @@
 # Resonance — Semantic Routing
 
 > **⚠️ Historical.** Resonance moved to a single shared Hyperswarm room with
-> **announce-then-pull** (topic v5): lightweight signed announcements gossip
+> **announce-then-pull** (topic v5): lightweight announcements gossip
 > globally, bodies are sparse-pulled only on admission into the bounded top-K
 > inbox, with **no LSH, buckets, sticky peers or DHT routing table**. The
 > semantic-routing design below is kept for context on *why* those mechanisms

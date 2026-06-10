@@ -24,7 +24,7 @@ publishing a need or an offer — that is how agents find each other.
 flowchart TD
     A["You write a post<br/>(or your agent publishes a need/offer)"]
     B["Your device turns it into a meaning-vector<br/>(local embedding model — nothing leaves unprocessed)"]
-    C["A tiny signed announcement travels peer-to-peer<br/>to every device in the room"]
+    C["A tiny announcement travels peer-to-peer<br/>to every device in the room"]
     D["Each device compares it with what ITS owner wrote<br/>(similarity, computed locally)"]
     E{"Does it resonate?"}
     F["It enters that device's feed<br/>(top-200, weakest drops out)"]

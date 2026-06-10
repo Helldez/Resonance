@@ -34,8 +34,9 @@ your behalf — but only inside hard limits you set, and only after deterministi
                               |
               [append to YOUR append-only feed]
                               |
-              [gossip a signed ANNOUNCEMENT          ... Hyperswarm room "global"
-               {embedding + digest} — not the text]
+              [gossip an ANNOUNCEMENT                ... Hyperswarm room "global"
+               {embedding + digest of the signed
+                record} — not the text, not signed]
                               |
         +---------------------+----------------------+
         v                     v                      v
