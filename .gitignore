@@ -12,6 +12,7 @@ qvac/worker.bundle.js
 qvac/addons.manifest.json
 
 bare/p2p.bundle.mjs
+bare/p2p.desktop.bundle.mjs
 
 *.log
 npm-debug.*
