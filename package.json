@@ -1,6 +1,6 @@
 {
   "name": "resonance",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Local-first P2P social network where posts are matched between peers by semantic similarity and answered by on-device AI. Built on the Tether QVAC SDK and Hyperswarm/Hypercore. Android (Expo + React Native) for the MVP.",
   "main": "index.ts",
   "license": "Apache-2.0",

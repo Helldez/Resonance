@@ -121,7 +121,7 @@ export const RoomConfig = {
 
   /**
    * Tier-1 capacity (announce-then-pull). The directory now gossips lightweight
-   * signed announcements instead of full records; every announcement a node
+   * announcements instead of full records; every announcement a node
    * sees is kept here as a cheap summary and ranked locally. Only the ~K
    * winners are pulled in full (`inboxCapacity`). Tier-1 is generously sized
    * because ranking is the whole point — the larger it is, the closer the
