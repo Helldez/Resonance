@@ -8,8 +8,8 @@
 Resonance is a **local-first P2P social network**. A user writes a thought,
 need or topic. The text is embedded on-device and published into a **single
 shared room** on Hyperswarm. The room runs an **announce-then-pull** protocol
-(v6): every peer gossips a lightweight signed **announcement** (author +
-embedding + digest) for each record it authors; every other peer receives every
+(v6): every peer gossips a lightweight **announcement** (author + embedding +
+digest of the signed record) for each record it authors; every other peer receives every
 announcement, ranks it locally against its own posts (cosine similarity), and
 **pulls the full body only for the records that win a slot** in its bounded
 inbox (sparse Hypercore download of exactly one block). Ranking is therefore
@@ -95,8 +95,9 @@ agent on its behalf (commits, PRs, READMEs, issues, social posts).
   joins one Hyperswarm topic (`sha256(RoomConfig.topicPrefix +
   RoomConfig.networkSalt || RoomConfig.roomId)` — the salt is empty on the
   public network; a shared secret salt yields a private test network, see
-  `SECURITY.md`); signed **announcements** (author + outbox key + full
-  float32 embedding + digest) gossip transitively over the
+  `SECURITY.md`); **announcements** (author + outbox key + full float32
+  embedding + digest of the signed record — the announcement itself is
+  unsigned; authenticity is verified on the pulled body) gossip transitively over the
   `resonance-announce/v2` protocol (`bare/announce-directory.mjs`) as
   compact-encoding binary (`bare/announce-codec.mjs`), batched at
   `RoomConfig.announceBatchSize` per message so the on-open snapshot never
@@ -195,21 +196,52 @@ so nothing build-related needs to be committed.
 
 **To cut a release (the user-facing APK):**
 
-1. On a `release/vX.Y.Z` branch, bump `version` **and** `android.versionCode`
-   in `app.json` (versionCode must strictly increase or Android refuses the
-   update).
-2. Open a PR into `main`. The user merges it (agents cannot merge — the
-   classifier blocks it); tick **Delete branch**.
+1. On a `release/vX.Y.Z` branch, bump `version` in **both** `app.json` and
+   `package.json`, and `android.versionCode` in `app.json` (versionCode must
+   strictly increase or Android refuses the update).
+2. Open a PR into `main`, merge it, delete the branch.
 3. `git checkout main && git pull --ff-only`, then tag the merge commit and
    push the tag: `git tag vX.Y.Z <merge-sha> && git push origin vX.Y.Z`.
-   (Pushing a tag is allowed; pushing commits directly to `main` is not.)
 4. CI builds from the tagged commit and attaches `app-release.apk` to the new
    Release. Confirm with `gh release view vX.Y.Z`.
+5. **Write the release notes — a Release with a bare APK and no body is not
+   done.** Use the standing template (see `v0.1.1`): install steps, the
+   **SHA-256 of the attached APK** (`Get-FileHash app-release.apk -Algorithm
+   SHA256` on the CI-built artifact), the debug-signing caveat, and a one-line
+   changelog. The README tells users to verify their download against these
+   notes, so a missing hash breaks the documented install path.
 
-**Gotcha that has bitten us:** a Release asset is frozen at the tagged commit.
-Code merged *after* a tag is **not** in that Release — even though the same fix
-is already live in newer `main` artifacts. Always tag *after* the fix is merged,
-and never point users to the Releases page unless the latest tag includes it.
+Note that a Release asset is frozen at the tagged commit: code merged *after*
+a tag is **not** in that Release — even though the same fix is already live in
+newer `main` artifacts. Always tag *after* the fix is merged, and never point
+users to the Releases page unless the latest tag includes it.
+
+## Publication checklist (any public output)
+
+Run through this before pushing docs, cutting a release, or changing anything
+user-visible on GitHub:
+
+- **LICENSE stays canonical.** The file must be the full, unmodified
+  Apache-2.0 text (~11 KB), or GitHub's license detector reports "Other" and
+  automated compliance checks fail. Copyright lives in `NOTICE`; never trim
+  the license body down to its appendix notice.
+- **Doc claims must be verifiable in code.** Every security- or
+  protocol-relevant word — "signed", "encrypted", "verified", "bounded" —
+  must describe what the code actually does. When protocol behaviour changes,
+  sweep README, `SECURITY.md` and `docs/` for the stale claim.
+- **No placeholders in the README.** No "coming soon" sections: add the
+  content or remove the section until it exists.
+- **No generated artifacts in git.** Bundles (`bare/*.bundle.mjs`,
+  `qvac/worker.bundle.js`) are gitignored and rebuilt by their scripts and by
+  CI; committing one contradicts the reproducibility claim.
+- **No absolute local paths** (`C:\Users\...` leaks the machine username) and
+  no machine-specific details (device serials, local IPs) in docs, code or
+  commit messages.
+- **Versions stay in sync**: git tag == `app.json` `version` ==
+  `package.json` `version`.
+- **Commit messages**: conventional commits, English, no tool-attribution
+  footers or trailers.
+- **English only, product/engineering register** — see Project posture above.
 
 ## File map for orientation
 
