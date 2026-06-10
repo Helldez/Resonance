@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="assets/brand/resonance-logo.svg" alt="Resonance" width="360" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/resonance-logo-dark.svg" />
+    <img src="assets/brand/resonance-logo-light.svg" alt="Resonance" width="360" />
+  </picture>
 </p>
 
 <p align="center">
@@ -77,9 +80,10 @@ You write a post.
  Sign it and append to your personal outbox Hypercore
    │
    ▼
- One shared Hyperswarm room: a lightweight signed ANNOUNCEMENT
- (author + embedding + digest) gossips peer-to-peer, reaching
- every node in ~log₃₂(N) hops; bodies are pulled only on admission
+ One shared Hyperswarm room: a lightweight ANNOUNCEMENT
+ (author + embedding + digest of the signed record) gossips
+ peer-to-peer, reaching every node in ~log₃₂(N) hops; bodies are
+ pulled only on admission and signature-verified on pull
    │
    ▼
  Each peer scores the post against their own posts on-device
@@ -165,10 +169,12 @@ demonstrates:
 - ✅ Ed25519 identity, on-device key generation, signed records
 - ✅ EmbeddingGemma 300M Q8 + Qwen 3 1.7B Q4 running locally via @qvac/sdk
 - ✅ Single shared Hyperswarm room with **announce-then-pull** convergence:
-  lightweight signed announcements (embedding + digest) gossip globally
-  (~log₃₂(N) hops, ≤32 connections per node); full bodies are sparse-pulled
-  only for the posts a node admits, so download/verify/store costs are
-  bounded by the inbox, not by the size of the room
+  lightweight announcements (embedding + digest of the signed record;
+  the announcement itself is unsigned) gossip globally (~log₃₂(N) hops,
+  ≤32 connections per node); full bodies are sparse-pulled only for the
+  posts a node admits and signature-verified on pull, so a forged
+  announcement costs at most one wasted pull, and download/verify/store
+  costs are bounded by the inbox, not by the size of the room
 - ✅ Bounded top-200 local inbox, ranked by cosine vs your own posts (plus a
   capped Tier-1 store of announcement summaries for re-ranking)
 - ✅ Signed reactions (a single "like")
@@ -230,13 +236,24 @@ not as an end-user experience.
 
 ### Android (the product)
 
-**Fastest path — install the prebuilt APK.** Every tagged release ships a
-debug-signed `arm64-v8a` APK built by
+**Fastest path — install the prebuilt APK.** Every tagged release ships an
+`arm64-v8a` APK (~218 MB; on-device models are downloaded at first launch)
+built from a clean runner by
 [GitHub Actions](https://github.com/Helldez/Resonance/actions/workflows/android-apk.yml).
-Grab the latest one from the
+Download the latest from the
 [Releases page](https://github.com/Helldez/Resonance/releases), copy it to your
-device, and install it (you may need to allow installs from unknown sources).
-No toolchain required — this is the recommended way to try the app.
+phone, and install it (Android will ask you to allow installs from this source).
+No toolchain required.
+
+> **This is a demo / hackathon build.** It is **debug-signed** — convenient to
+> install, but the signature is *not* a proof of origin (the Android debug key
+> is public), so don't treat it as a hardened production release. Before
+> installing, verify the download against the **SHA-256 published in that
+> release's notes**, which must match the artifact built by CI:
+>
+> ```powershell
+> Get-FileHash app-release.apk -Algorithm SHA256
+> ```
 
 **Build from source.** Connect an Android device over adb (USB **or** Wi-Fi) —
 or start an emulator — then, with Node ≥ 20:
@@ -270,12 +287,6 @@ npm run desktop:peer
 Two-device test: run the app on a phone and the desktop peer (or a second
 phone) with related "About you" text. Compose a post on one, watch it appear
 in the other's inbox within a few seconds; reply or react; watch it come back.
-
-## Screenshots
-
-_Coming with the hackathon submission._
-
-<!-- screenshots: home feed · compose · thread · agent hub · topic atlas -->
 
 ## Reproducibility
 
