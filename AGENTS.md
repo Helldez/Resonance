@@ -179,6 +179,38 @@ npm run build:bare:desktop
 npm run desktop:peer
 ```
 
+## Releasing (GitHub APK)
+
+CI lives in `.github/workflows/android-apk.yml`. It regenerates the gitignored
+build artifacts (`bare/`, `qvac/`, `android/`) from source on a clean runner,
+so nothing build-related needs to be committed.
+
+**Two distinct outputs — do not confuse them:**
+
+- **Every push to `main`** auto-builds an APK and uploads it as a *workflow
+  artifact* (a temporary zip on the Actions run page, auto-expires). Use it for
+  quick internal testing; never link users to it.
+- **A `v*` tag** builds the APK *and attaches the raw `app-release.apk` to a
+  GitHub Release*. This is the only binary users should download.
+
+**To cut a release (the user-facing APK):**
+
+1. On a `release/vX.Y.Z` branch, bump `version` **and** `android.versionCode`
+   in `app.json` (versionCode must strictly increase or Android refuses the
+   update).
+2. Open a PR into `main`. The user merges it (agents cannot merge — the
+   classifier blocks it); tick **Delete branch**.
+3. `git checkout main && git pull --ff-only`, then tag the merge commit and
+   push the tag: `git tag vX.Y.Z <merge-sha> && git push origin vX.Y.Z`.
+   (Pushing a tag is allowed; pushing commits directly to `main` is not.)
+4. CI builds from the tagged commit and attaches `app-release.apk` to the new
+   Release. Confirm with `gh release view vX.Y.Z`.
+
+**Gotcha that has bitten us:** a Release asset is frozen at the tagged commit.
+Code merged *after* a tag is **not** in that Release — even though the same fix
+is already live in newer `main` artifacts. Always tag *after* the fix is merged,
+and never point users to the Releases page unless the latest tag includes it.
+
 ## File map for orientation
 
 - Entry: `src/app/_layout.tsx` → `src/app/(tabs)/_layout.tsx` (tab shell:
