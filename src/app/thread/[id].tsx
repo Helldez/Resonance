@@ -59,8 +59,11 @@ export default function ThreadScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const { post, responses, reactions } = thread;
-  const alreadyReplied = responses.some((r) => r.author === container.self);
-  const canReply = post !== null && post.author !== container.self && !alreadyReplied;
+  const isOwnPost = post !== null && post.author === container.self;
+  // The one-reply-per-peer rule only protects other people's posts. On your own
+  // post you own the conversation, so you may reply freely to each commenter.
+  const alreadyReplied = !isOwnPost && responses.some((r) => r.author === container.self);
+  const canReply = post !== null && !alreadyReplied;
 
   const generate = (): void => {
     // Defensive: the button only calls this when the model is ready, but never
@@ -207,8 +210,9 @@ export default function ThreadScreen() {
         )}
       </ScrollView>
 
-      {/* Sticky reply composer. One reply per peer per post (product rule). */}
-      {post !== null && post.author !== container.self && (
+      {/* Sticky reply composer. One reply per peer on others' posts; on your
+          own post you can reply freely to engage with everyone who commented. */}
+      {post !== null && (
         <View
           style={{
             borderTopWidth: StyleSheet.hairlineWidth,
@@ -235,29 +239,33 @@ export default function ThreadScreen() {
                 error={error}
               />
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: T.space.sm }}>
-                {llmReady ? (
-                  <Button
-                    label={draft.trim().length === 0 ? 'Draft with AI' : 'Rewrite with AI'}
-                    variant="secondary"
-                    small
-                    icon="robot"
-                    loading={drafting}
-                    disabled={drafting || publishing || !canReply}
-                    onPress={generate}
-                  />
-                ) : (
-                  // Model not loaded yet: route to the tracked global download
-                  // (progress shows in the app-wide indicator) instead of
-                  // hanging on an inline load. Disabled while it runs.
-                  <Button
-                    label={aiSetupLabel}
-                    variant="secondary"
-                    small
-                    icon="download"
-                    disabled={llmBusy || publishing}
-                    onPress={() => startLlmDownload(container)}
-                  />
-                )}
+                {/* The AI draft replies *to* the post as if it were someone
+                    else's (it only sees the root text, not a specific comment),
+                    so it is meaningless on your own post — hide it there. */}
+                {!isOwnPost &&
+                  (llmReady ? (
+                    <Button
+                      label={draft.trim().length === 0 ? 'Draft with AI' : 'Rewrite with AI'}
+                      variant="secondary"
+                      small
+                      icon="robot"
+                      loading={drafting}
+                      disabled={drafting || publishing || !canReply}
+                      onPress={generate}
+                    />
+                  ) : (
+                    // Model not loaded yet: route to the tracked global download
+                    // (progress shows in the app-wide indicator) instead of
+                    // hanging on an inline load. Disabled while it runs.
+                    <Button
+                      label={aiSetupLabel}
+                      variant="secondary"
+                      small
+                      icon="download"
+                      disabled={llmBusy || publishing}
+                      onPress={() => startLlmDownload(container)}
+                    />
+                  ))}
                 <View style={{ flex: 1 }} />
                 <Button
                   label="Reply"

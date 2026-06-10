@@ -181,14 +181,18 @@ export function useThread(container: PlatformContainer, id: string): Thread {
       if (post === null) {
         return;
       }
-      const existing = await container.responses.countByAuthorAndPost(
-        container.self,
-        post.address as RecordAddress,
-      );
-      if (existing >= MatchingConfig.maxResponsesPerPeerPerPost) {
-        throw new Error(
-          'You already responded to this post. Delete your existing response before publishing a new one.',
+      // The per-peer cap is anti-flood for *other people's* posts. On your own
+      // post you own the conversation, so you may reply to each commenter.
+      if (post.author !== container.self) {
+        const existing = await container.responses.countByAuthorAndPost(
+          container.self,
+          post.address as RecordAddress,
         );
+        if (existing >= MatchingConfig.maxResponsesPerPeerPerPost) {
+          throw new Error(
+            'You already responded to this post. Delete your existing response before publishing a new one.',
+          );
+        }
       }
       const record = await publishResponse(
         {
