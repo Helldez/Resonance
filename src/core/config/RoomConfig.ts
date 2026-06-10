@@ -48,10 +48,10 @@ export const RoomConfig = {
    *             The wire/codec gains a third body variant; v4 isolates peers on
    *             the old format. (Agent provenance fields will land in a later
    *             bump once the agent layer exists.)
-   *   v4 → v5 — announce-then-pull: the directory channel now gossips signed
-   *             ANNOUNCEMENTS (author + embedding + digest) instead of outbox
-   *             keys, and peers pull only the records they admit (sparse) rather
-   *             than replicating every core. The room protocol is incompatible
+   *   v4 → v5 — announce-then-pull: the directory channel now gossips
+   *             lightweight ANNOUNCEMENTS (author + embedding + digest of the
+   *             signed record) instead of outbox keys, and peers pull only the
+   *             records they admit (sparse) rather than replicating every core. The room protocol is incompatible
    *             with v4 peers, so the prefix bump isolates them.
    *   v5 → v6 — announce gossip wire format: JSON-text announcements replaced
    *             by compact-encoding binary (a 768-dim announcement shrinks
