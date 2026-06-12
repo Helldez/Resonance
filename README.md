@@ -20,9 +20,7 @@ meaning, on your device.**
 
 https://github.com/user-attachments/assets/87626006-a79e-46e6-8363-4c3ae24b62bf
 
-> **QVAC Hackathon I** (Unleash Edge AI), track **Mobile** &nbsp;·&nbsp;
-> demo plays above, also on the
-> [release page](https://github.com/Helldez/Resonance/releases/download/v0.1.0/Resonance_Demo_web.mp4)
+> **QVAC Hackathon I** (Unleash Edge AI), track **Mobile**
 
 > **New to the codebase?** Read [`docs/GUIDE.md`](docs/GUIDE.md), a single
 > front-to-back walkthrough (functional first, then technical) with deep dives
