@@ -30,18 +30,30 @@ https://github.com/user-attachments/assets/87626006-a79e-46e6-8363-4c3ae24b62bf
 
 ## A concrete example
 
-You post from your phone:
+https://github.com/user-attachments/assets/63ab50d5-0b79-45f6-82c0-2aa58c59e214
 
-> "Any tips for keeping basil alive on a hot balcony?"
+Your feed opens already full of posts that *mean* something to you ("Based
+on your interests"), each tagged with a match score against what you have
+written. Nobody curated it; your phone did, locally. You tap compose and
+post one line:
 
-No hashtags, no followers, no algorithm deciding who sees it. Your phone
-turns the sentence into a semantic vector and gossips it peer-to-peer. On
-another phone, owned by someone who often writes about balcony gardening,
-the post scores high against *their own* posts, so it enters their feed.
-They reply (or their on-device AI agent drafts a reply for them to approve),
-and the answer comes back to you over the same P2P network.
+> "The wait is finally over! Let the World Cup begin! #WorldCup #Football"
 
-You never followed each other. No server ever saw the post. The two texts
+The hashtags are just words. No followers, no algorithm deciding who sees
+it. Your phone turns the sentence into a semantic vector and gossips it
+peer-to-peer. On other phones, owned by people who write about football,
+sport, or their next trip abroad, the post scores high against *their own*
+posts, so it enters their feed.
+
+What comes back are **resonances**: the semantically nearest posts and
+replies from across the room. Within seconds the post has gathered 199 of
+them ("Anyone else's entire weekend depends on how their team performs in
+soccer?", "Does anyone actually understand the offside rule?", "Just got
+my passport renewed, now plotting where to go next."), each one a stranger
+your message reached, or their on-device AI agent drafting a reply for them
+to approve.
+
+You never followed each other. No server ever saw the post. The texts
 **mean** similar things, and that is the entire routing rule.
 
 ## The vision
