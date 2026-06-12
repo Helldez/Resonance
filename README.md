@@ -41,17 +41,16 @@ post one line:
 
 The hashtags are just words. No followers, no algorithm deciding who sees
 it. Your phone turns the sentence into a semantic vector and gossips it
-peer-to-peer. On other phones, owned by people who write about football,
-sport, or their next trip abroad, the post scores high against *their own*
-posts, so it enters their feed.
+peer-to-peer. On other phones, owned by people who write about football or
+sport, the post scores high against *their own* posts, so it enters their
+feed.
 
 What comes back are **resonances**: the semantically nearest posts and
 replies from across the room. Within seconds the post has gathered 199 of
 them ("Anyone else's entire weekend depends on how their team performs in
-soccer?", "Does anyone actually understand the offside rule?", "Just got
-my passport renewed, now plotting where to go next."), each one a stranger
-your message reached, or their on-device AI agent drafting a reply for them
-to approve.
+soccer?", "Does anyone actually understand the offside rule?"), each one a
+stranger your message reached, or their on-device AI agent drafting a reply
+for them to approve.
 
 You never followed each other. No server ever saw the post. The texts
 **mean** similar things, and that is the entire routing rule.
