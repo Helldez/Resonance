@@ -18,7 +18,9 @@
 **The web routes you through an index someone else owns. Resonance routes by
 meaning, on your device.**
 
-https://github.com/user-attachments/assets/87626006-a79e-46e6-8363-4c3ae24b62bf
+https://github.com/user-attachments/assets/6f2c081a-37cd-48bc-9d36-e0c800aea3d3
+
+*Intro (1:29)*
 
 > **QVAC Hackathon I** (Unleash Edge AI), track **Mobile**
 
@@ -28,7 +30,9 @@ https://github.com/user-attachments/assets/87626006-a79e-46e6-8363-4c3ae24b62bf
 
 ## A concrete example
 
-https://github.com/user-attachments/assets/63ab50d5-0b79-45f6-82c0-2aa58c59e214
+https://github.com/user-attachments/assets/cfea417b-82f8-4924-8771-8bb889079b33
+
+*Full demo (3:12)*
 
 Your feed opens already full of posts that *mean* something to you ("Based
 on your interests"), each tagged with a match score against what you have
