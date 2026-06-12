@@ -141,8 +141,10 @@ also what makes this driver deterministic.
 - **`@qvac/sdk` under Node**: the desktop QVAC services re-export the
   mobile adapters under the assumption that `@qvac/sdk` resolves its
   Bare worker through the same standalone runtime used by
-  the shared `P2pWorker`. The first `npm run desktop:peer` invocation that
-  actually calls `embedder.embed(...)` will validate this assumption.
+  the shared `P2pWorker`. **Validated**: a `npm run desktop:peer` →
+  `publish <text>` run loads the EmbeddingGemma model and returns a 768-dim
+  embedding (`embedding.embed dim=768`), then signs and appends the record,
+  so the embed path works end-to-end under Node on win32-x64.
 - **SQLite in Electron**: the desktop adapter uses Node's built-in
   `node:sqlite`, so there is **no native addon to rebuild** for Electron's
   ABI (this replaced an earlier `better-sqlite3` dependency that broke under

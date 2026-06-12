@@ -319,15 +319,40 @@ npm run build:bare:desktop
 npm run desktop:peer
 ```
 
-Two-device test: run the app on a phone and the desktop peer (or a second
-phone) with related "About you" text. Compose a post on one, watch it appear
-in the other's inbox within a few seconds; reply or react; watch it come back.
+> **You need at least two peers.** Resonance matches your posts against
+> *other people's* devices, so a single node has nothing to resonate with and
+> its feed stays empty by design. To see anything, run two peers: a phone plus
+> the desktop test peer, or two phones.
+
+Two-device test:
+
+1. **Peer A (the product):** install/run the app on a phone and set an "About
+   you" text.
+2. **Peer B (the test peer):** on a desktop with Node ≥ 22.5, from the repo
+   root run:
+   ```powershell
+   npm install --legacy-peer-deps
+   npm run desktop:peer
+   ```
+   It boots a headless node, joins the single shared room, and at the
+   `resonance>` prompt acts as a mirror that pulls every announced post. (On
+   Windows, if the first `publish`/embed fails with module-load error
+   `0xC0000409`, apply the OpenSSL-DLL workaround in
+   [`docs/DESKTOP.md`](docs/DESKTOP.md#windows-gotcha-qvacembed-llamacpp-needs-openssl-3-dlls).)
+3. Compose a post on one peer; within a few seconds it appears in the other's
+   inbox. On the desktop peer, type `publish <text>` to send the other way.
+   Reply or react and watch it come back.
+
+Verified on this machine end-to-end: boot → join room → `embed()` (768-dim) →
+sign → append → publish, with the QVAC embedding model served on-device.
 
 ## Reproducibility
 
 Everything runs on consumer hardware with zero cloud dependencies.
 **Resonance is a mobile app: the phone is the only target surface to
-reproduce and evaluate.** The desktop entry below is listed only because it
+reproduce and evaluate.** Note that you need **at least two peers running at
+once** (two phones, or one phone plus the desktop test peer); a lone device
+has no other posts to match against, so its feed will be empty. The desktop entry below is listed only because it
 served as a second peer during development to exercise the P2P swarm without
 a second phone; it is a test harness, not a product surface, so reproduce the
 real experience on Android.
