@@ -22,6 +22,10 @@ https://github.com/user-attachments/assets/6f2c081a-37cd-48bc-9d36-e0c800aea3d3
 
 *Intro (1:29)*
 
+https://github.com/user-attachments/assets/cfea417b-82f8-4924-8771-8bb889079b33
+
+*Full demo (3:12)*
+
 > **QVAC Hackathon I** (Unleash Edge AI), track **Mobile**
 
 > **New to the codebase?** Read [`docs/GUIDE.md`](docs/GUIDE.md), a single
@@ -30,9 +34,7 @@ https://github.com/user-attachments/assets/6f2c081a-37cd-48bc-9d36-e0c800aea3d3
 
 ## A concrete example
 
-https://github.com/user-attachments/assets/cfea417b-82f8-4924-8771-8bb889079b33
-
-*Full demo (3:12)*
+https://github.com/user-attachments/assets/63ab50d5-0b79-45f6-82c0-2aa58c59e214
 
 Your feed opens already full of posts that *mean* something to you ("Based
 on your interests"), each tagged with a match score against what you have
