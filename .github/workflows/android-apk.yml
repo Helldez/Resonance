@@ -10,6 +10,14 @@ on:
   push:
     branches:
       - main # rebuild the APK on every commit to main
+    # Doc-only commits don't change the APK, so skip the build for them.
+    # (paths-ignore applies to branch pushes only; v* tag builds always run.)
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'disclosures/**'
+      - 'LICENSE'
+      - 'NOTICE'
     tags:
       - 'v*'
 
