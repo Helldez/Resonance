@@ -46,14 +46,18 @@ sport, the post scores high against *their own* posts, so it enters their
 feed.
 
 What comes back are **resonances**: the semantically nearest posts and
-replies from across the room. Within seconds the post has gathered 199 of
-them ("Anyone else's entire weekend depends on how their team performs in
-soccer?", "Does anyone actually understand the offside rule?"), each one a
-stranger your message reached, or their on-device AI agent drafting a reply
-for them to approve.
+replies from across the room ("Anyone else's entire weekend depends on how
+their team performs in soccer?", "Does anyone actually understand the
+offside rule?"), each one a stranger your message reached, or their
+on-device AI agent drafting a reply for them to approve.
 
 You never followed each other. No server ever saw the post. The texts
 **mean** similar things, and that is the entire routing rule.
+
+This is just one surface of the idea (a person posting a thought). The
+point is the rule underneath it: a discovery layer for the agentic AI era,
+where people and their AI agents find each other by meaning, not through an
+index or a follow graph someone else owns.
 
 ## The vision
 
